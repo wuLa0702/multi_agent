@@ -6,7 +6,7 @@
 你是 multi-agent 项目的开发 Agent。项目是**学习项目**（面试导向），核心价值 = 你能讲清每个架构决策的 Why。
 
 ## 工作流程（6 步）
-1. **读蓝图画图**：动手前先读 `docs/多agent项目-架构目录-v1.md`（权威蓝图，v2.3）
+1. **读蓝图画图**：动手前先读 `docs/架构/多agent项目-架构目录-v1.md`（权威蓝图，v2.3）
 2. **读规则**：`CLAUDE.md` + `.claude/rules/`（安全/风格/API/测试/手写纪律）
 3. **查经验**：`docs/learnings/`（踩坑记录，先查再动手）
 4. **实现**：核心逻辑手写（Graph/State），样板 AI 提速
@@ -23,9 +23,9 @@
 ## 关键文件索引
 | 文件 | 作用 |
 |------|------|
-| `docs/多agent项目-架构目录-v1.md` | 架构蓝图（决策记录 §6 / 前置清单 §7） |
-| `docs/harness 学习.md` | 原始学习问题清单 |
-| `docs/harness 学习-梳理.md` | 问题梳理与回答（29 问 → 8 主题） |
+| `docs/架构/多agent项目-架构目录-v1.md` | 架构蓝图（决策记录 §6 / 前置清单 §7） |
+| `docs/学习/harness 学习.md` | 原始学习问题清单 |
+| `docs/学习/harness 学习-梳理.md` | 问题梳理与回答（29 问 → 8 主题） |
 | `docker-compose.yml` | 环境编排（redis + opensandbox） |
 | `backend/src/core/config.py` | 配置中心（双 .env 驱动） |
 | `backend/src/core/paths.py` | 路径自适应 |

@@ -2,13 +2,17 @@
 
 > 📋 **规范**：遵循 `docs/文档规范.md`
 > 📌 **更新时间**：2026-08-02
-> 🔄 **最近三次改动**：
+> 📝 **版本变更记录**（永久保存，只追加不删除）：
 > 
-> | 版本 | 日期 | 改动 |
+> | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
-> | v2.3 | 2026-08-02 | Docker 编排落地：docker-compose + 资源限额 + LangSmith Key |
-> | v2.2 | 2026-08-02 | 环境策略拍板：OpenSandbox/Redis 云端化，配置驱动切换 |
-> | v2.1 | 2026-08-02 | 前端拍板 React 19 + shadcn；OpenSandbox 查证关闭 |
+> | v2.4 | 2026-08-02 | 目录迁移：移入 `docs/架构/`；版本记录按新规范并入文档头（v1 → v2.3 全保留），正文版本表移除 |
+> | v2.3 | 2026-08-02 | §3 基础设施：docker-compose 编排落地（redis + opensandbox 服务，backend 占位）；OpenSandbox server 官方镜像 opensandbox/server + 挂载 docker.sock + deploy/opensandbox/sandbox.toml 配置；资源限额适配 2核4g（redis 256m / sandbox 512m / backend 1g）；§4 .env 补 SANDBOX_PORT / REDIS_PASSWORD；LangSmith Key 已配置验证 |
+> | v2.2 | 2026-08-02 | §3 环境策略拍板：OpenSandbox 不本地部署，直接云端（本地/生产都连云端沙箱）；Redis 同理云端——环境分离改为「配置驱动切换」，.env.dev/.env.prod 双配置，同一套 docker-compose；§7 前置清单调整：OpenSandbox/Redis 本地部署项移除 |
+> | v2.1 | 2026-08-02 | §6 前端拍板方案 A（React 19 + shadcn 复用）；业务暂缓，技术架构先行；OpenSandbox 查证：确系阿里开源（Apache 2.0），可自托管，待决策 #3 关闭；§7 新增「开工前置条件清单」（可勾选） |
+> | v2 | 2026-08-02 | §6 拍板固化：决策点 1-4/6-8 已拍板；§1 架构主线改为 deepagents + LangGraph 演进预留；沙箱 OpenSandbox；§4 部署 CI runner + 路径自适应；待决策项高亮（前端框架/业务场景/OpenSandbox 本地模式） |
+> | v1.1 | 2026-08-02 | 自省修订：①决策点节号修正 ②决策点 1 组合表述修正（deepagents 是整体 harness 非子 Agent 库）③沙箱 5 态不再编造第 3 态 ④补 llm/ 适配层与 auth/ ⑤补 CI ⑥内存标注经验估算 |
+> | v1 | 2026-08-02 | 初版架构目录：§1 分层 + §2 目录树 + §3 基建 + §5 工程经验映射，待审核 |
 > 
 > **目录**：
 > - §0 格式规则
@@ -36,17 +40,6 @@
 2. 版本记录：v1 待审核 → v2 拍板 → v3 定稿（接口签名细化）
 4. 工程经验用 📌 标注来源（当前项目踩坑 / image 1 / 通用实践）
 5. 标识约定：🔧 已修正 / ⚠️ 存疑待核实 / 【推断】解读性推测 / 📊 经验估算 / ✅ 已拍板
-
-## 版本表
-
-| 版本 | 日期 | 内容 |
-|------|------|------|
-| v1 | 2026-08-02 | 初版架构目录：分层 + 目录树 + 基建 + 工程经验映射，待审核 |
-| v1.1 | 2026-08-02 | 自省修订：①决策点节号修正 ②决策点 1 组合表述修正（deepagents 是整体 harness 非子 Agent 库）③沙箱 5 态不再编造第 3 态 ④补 llm/ 适配层与 auth/ ⑤补 CI ⑥内存标注经验估算 |
-| v2 | 2026-08-02 | 拍板固化：①决策点 1-4/6-8 已拍板 ②架构主线改为 deepagents + LangGraph 演进预留 ③沙箱 OpenSandbox ④部署 CI runner + 路径自适应 ⑤待决策项高亮（前端框架/业务场景/OpenSandbox 本地模式） |
-| v2.1 | 2026-08-02 | ①前端拍板方案 A（React 19 + shadcn 复用）②业务暂缓，技术架构先行 ③OpenSandbox 查证：确系阿里开源（Apache 2.0），可自托管，待决策 #3 关闭 ④新增第 7 节「开工前置条件清单」（可勾选） |
-| v2.2 | 2026-08-02 | 环境策略拍板：①**OpenSandbox 不本地部署，直接云端**（本地/生产都连云端沙箱）②**Redis 同理云端**——环境分离改为「配置驱动切换」，.env.dev/.env.prod 双配置，同一套 docker-compose ③第 7 节清单调整：OpenSandbox/Redis 本地部署项移除 |
-| v2.3 | 2026-08-02 | Docker 编排落地：①docker-compose.yml 已建（redis + opensandbox 服务，backend 占位）②OpenSandbox server 官方镜像 opensandbox/server + 挂载 docker.sock + deploy/opensandbox/sandbox.toml 配置 ③资源限额适配 2核4g（redis 256m / sandbox 512m / backend 1g）④.env 补 SANDBOX_PORT / REDIS_PASSWORD ⑤LangSmith Key 已配置验证 |
 
 ---
 
