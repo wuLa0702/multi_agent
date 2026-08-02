@@ -336,7 +336,7 @@ docker compose --env-file .env.prod up -d
 - [ ] **云端 OpenSandbox 部署**（已在云环境上部署 OpenSandbox 服务端，SDK 连云端地址）— 开工时我协助落地
 ✅ **Git 仓库初始化**（GitHub 私有仓库，部署 runner 需要）
 - [ ] **环境配置双份**：`.env.dev`（本地）+ `.env.prod`（云端），同一套 docker-compose 切换
-
+ -----------云环境----------
 ### 7.2 部署阶段（本地验证通过后再做）
 
 - [ ] **云服务器**：2核4g（阿里云 ECS / 腾讯云轻量），准备账号 + 密码/密钥 + 公网 IP — 已有 ✅ 使用云上 OpenSandbox + Redis
