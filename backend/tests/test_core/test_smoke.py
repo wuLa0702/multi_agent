@@ -12,7 +12,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from src.core.config import settings  # noqa: E402
+from src.core.config import get_settings, settings  # noqa: E402
 from src.core.paths import get_app_dir, get_db_path, get_log_dir, is_cloud  # noqa: E402
 
 
@@ -51,3 +51,12 @@ def test_config_never_exposes_raw_secrets_in_defaults() -> None:
         # 未配置时为空串，绝不等于示例 key 或占位符
         assert "lsv2_pt" not in v
         assert "95af8b85" not in v
+
+
+def test_redis_url_never_points_to_clowder_prod_port(monkeypatch) -> None:
+    """安全护栏：环境注入 6399（Clowder 生产端口）也会被拦截替换为 6398。"""
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6399/0")
+    get_settings.cache_clear()
+    guarded = get_settings()
+    assert guarded.redis_url == "redis://localhost:6398/0"  # 护栏替换后的 dev 端口
+    get_settings.cache_clear()  # 还原缓存，避免污染其他测试

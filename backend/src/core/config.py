@@ -12,9 +12,11 @@
 from __future__ import annotations
 
 import os
+import warnings
 from functools import lru_cache
+from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ── 环境文件选择（v2.2 配置驱动切换）──
@@ -22,6 +24,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 或本地 export APP_ENV=dev）。绝不叠加读取多个 .env（会互相覆盖，难排查）。
 _APP_ENV = os.getenv("APP_ENV", "dev").lower()
 _ENV_FILE = ".env.prod" if _APP_ENV == "prod" else ".env.dev"
+
+# ── 安全护栏：Clowder AI 生产 Redis 端口 ──
+# 家规硬约束：6399 是 Clowder AI 生产 Redis，外部项目严禁连接；dev/test 用 6398。
+# 风险点：本机运行环境可能注入 REDIS_URL=redis://localhost:6399（pydantic-settings
+# 优先级：环境变量 > .env 文件 > 默认值），直接读取会连到 Clowder 生产存储。
+# 护栏在 Settings 层统一拦截——无论 REDIS_URL 来自环境变量还是 .env，端口 6399
+# 一律替换为本地 dev 端口，保证本项目任何代码路径都触碰不到生产 Redis。
+_CLOWDER_PROD_REDIS_PORT = 6399
+_SAFE_DEV_REDIS_URL = "redis://localhost:6398/0"
 
 
 class Settings(BaseSettings):
@@ -58,6 +69,24 @@ class Settings(BaseSettings):
     # ── 记忆/存储 ──
     redis_url: str = "redis://localhost:6379/0"
     db_path: str = "./data/wiki.db"
+
+    @model_validator(mode="after")
+    def _guard_clowder_prod_redis(self) -> "Settings":
+        """护栏：任何来源的 redis_url 若指向 6399（Clowder 生产 Redis），
+        替换为本地 dev 端口 6398 并告警——外部项目永不触碰 Clowder 生产存储。
+
+        触发场景：Clowder 运行环境注入 REDIS_URL=redis://localhost:6399，
+        pydantic-settings 会让环境变量覆盖 .env.dev 的值。
+        """
+        port = urlparse(self.redis_url).port
+        if port == _CLOWDER_PROD_REDIS_PORT:
+            warnings.warn(
+                f"REDIS_URL={self.redis_url!r} 指向 Clowder 生产端口 {_CLOWDER_PROD_REDIS_PORT}，"
+                f"已拦截并替换为 {_SAFE_DEV_REDIS_URL}（家规硬约束：外部项目禁连 6399）",
+                stacklevel=2,
+            )
+            self.redis_url = _SAFE_DEV_REDIS_URL
+        return self
 
     # ── 监控 ──
     langchain_tracing_v2: bool = True
