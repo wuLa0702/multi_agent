@@ -7,7 +7,7 @@
 - **学习目标**：手写核心逻辑 + 多 Agent 工程化落地（面试导向）
 - **核心拍板**（详见架构文档 §6）：
   - Agent 层：deepagents 搭建主体，`agent/graph/` 预留 LangGraph 手写主图（演进平行智能体）
-  - 沙箱：OpenSandbox（阿里开源），**不本地部署，连云端**
+  - 沙箱：OpenSandbox（阿里开源），**本地开发连本地 Docker，生产连云端**
   - 前端：React 19 + shadcn/ui（复用 wiki-ui-v2）
   - 部署：CI runner 远程 + 路径自适应
   - 环境：`.env.dev / .env.prod` 双配置，同一套 docker-compose 切换
@@ -37,7 +37,7 @@ backend/src/
 1. **密钥只进 `.env.dev` / `.env.prod`**（已 gitignore），永不入库、不进聊天
 2. 环境切换用 APP_ENV：`dev`（读 .env.dev）/ `prod`（读 .env.prod），**禁止叠加读取多个 .env**
 3. 路径自适应：dev 用项目 `data/`、`logs/`；prod 用云端 `/data`、`/logs`（`core/paths.py`）
-4. 沙箱/Redis 连云端（OpenSandbox server + Redis，见 docker-compose.yml）
+4. 沙箱/Redis：本地开发连本地 Docker（`scripts/dev.sh` 一键起 compose 资源，redis 6398 / opensandbox 8080），生产连云端
 5. 所有工具调用做路径前缀校验（防越权）；LLM 调用必须 timeout + retry
 
 ## 开发命令

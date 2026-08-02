@@ -6,6 +6,7 @@
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.5 | 2026-08-02 | §6.1 决策 6/9 修正：本地开发连本地 Docker（redis 6398 + opensandbox 8080），生产连云端；§6.2 待决策 #3 关闭（本地开发模式拍板）；§3 基础设施 docker-compose redis 端口对齐 6398；新增 §4 scripts/dev.sh 一键启动 |
 > | v2.4 | 2026-08-02 | 目录迁移：移入 `docs/架构/`；版本记录按新规范并入文档头（v1 → v2.3 全保留），正文版本表移除 |
 > | v2.3 | 2026-08-02 | §3 基础设施：docker-compose 编排落地（redis + opensandbox 服务，backend 占位）；OpenSandbox server 官方镜像 opensandbox/server + 挂载 docker.sock + deploy/opensandbox/sandbox.toml 配置；资源限额适配 2核4g（redis 256m / sandbox 512m / backend 1g）；§4 .env 补 SANDBOX_PORT / REDIS_PASSWORD；LangSmith Key 已配置验证 |
 > | v2.2 | 2026-08-02 | §3 环境策略拍板：OpenSandbox 不本地部署，直接云端（本地/生产都连云端沙箱）；Redis 同理云端——环境分离改为「配置驱动切换」，.env.dev/.env.prod 双配置，同一套 docker-compose；§7 前置清单调整：OpenSandbox/Redis 本地部署项移除 |
@@ -327,16 +328,16 @@ docker compose --env-file .env.prod up -d
 | 3 | 子 Agent 拓扑 | ✅ 起步**主从**，后续拓展**平行**差异化 | 先 supervisor-worker 委派；graph/ 演进期引入 Send API 平行路径 |
 | 4 | 业务演示场景 | ✅ **暂缓**：先开发技术架构，业务后接（架构与业务解耦，业务可快速拓展） | 子 Agent YAML/MCP 工具集留到业务定后填充；技术栈先行不阻塞 |
 | 5 | **前端框架** | ✅ **方案 A：沿用 React 19 + shadcn/ui + Tailwind 4**（复用本项目 wiki-ui-v2 组件） | frontend/ 目录按 React 展开：组件/图谱(vis-network)/流式(ai SDK) 复用；图谱可视化沿用 |
-| 6 | **沙箱** | ✅ **OpenSandbox**（阿里开源，github.com/alibaba/OpenSandbox，Apache 2.0）——**不本地部署，直接云端** | sandbox/ 层改为 OpenSandbox 适配（adapter + opensandbox 实现，多语言 SDK + 统一 API）；**本地开发与生产都连云端 OpenSandbox**（SDK 指向云端地址，本地不装 Docker 沙箱运行时）；含 MCP Server 集成；⚠️ 云端部署细节以官方 README 为准 |
+| 6 | **沙箱** | ✅ **OpenSandbox**（阿里开源，github.com/alibaba/OpenSandbox，Apache 2.0）——**本地开发连本地 Docker 起 server，生产连云端**（v2.5 修正） | sandbox/ 层为 OpenSandbox 适配（adapter + opensandbox 实现，多语言 SDK + 统一 API）；本地 `scripts/dev.sh` 一键起 compose 资源（redis + opensandbox），SANDBOX_URL 指 localhost:8080；生产 .env.prod 切云端地址；含 MCP Server 集成；⚠️ 云端部署细节以官方 README 为准 |
 | 7 | 数据库 | ✅ **Redis + SQLite** | 短期记忆 Redis、长期 SQLite；向量检索后续可加 |
 | 8 | **部署** | ✅ **提交项目触发 runner 远程部署**；先本地验证基础论证 | 新增 CI runner 部署流程；**路径自适应**（见 4.3）：本机/云/其他机器均可运行，路径与读取不写死常量 |
-| 9 | **环境策略** | ✅ **配置驱动切换**：本地一套 + 生产一套，**.env.dev / .env.prod 双配置**；OpenSandbox 与 Redis **都连云端**（不本地部署） | 同一份代码 + 同一份 docker-compose.yml，只换 .env 指向不同 REDIS_URL / SANDBOX_URL / LLM keys；本地访问方便排查问题（日志/断点），云端环境一致最小化差异 |
+| 9 | **环境策略** | ✅ **配置驱动切换**：本地一套 + 生产一套，**.env.dev / .env.prod 双配置**；**本地开发连本地 Docker（redis 6398 + opensandbox 8080），生产连云端**（v2.5 修正） | 同一份代码 + 同一份 docker-compose.yml，只换 .env 指向不同 REDIS_URL / SANDBOX_URL / LLM keys；本地连本地方便审查调试（v2.5 拍板，本机性能足够），生产连云端环境一致最小化差异 |
 
 ### 6.2 待你决策（⚠️ 高亮，影响搭建开工）
 
 | # | 待决策 | 选项 | 我的建议 | 影响 |
 |---|--------|------|----------|------|
-| **3** | OpenSandbox 本地开发模式 | ✅ **已关闭（v2.2 拍板）：不本地部署**——本地与生产**都连云端 OpenSandbox**（已有云环境，SDK 指向云端地址即可），不装本地 Docker 沙箱 | 开发/生产环境差异最小化；云端部署细节开工时按官方 README 落地 | 沙箱层实现 |
+| **3** | OpenSandbox 本地开发模式 | ✅ **已关闭（v2.5 拍板）：本地开发连本地 Docker**——compose 起本地 opensandbox server（8080），生产连云端；本机性能足够，方便审查调试 | 本地 SANDBOX_URL=localhost:8080；生产 .env.prod 指向云端；一键脚本 `scripts/dev.sh` | 沙箱层实现 |
 
 ---
 
