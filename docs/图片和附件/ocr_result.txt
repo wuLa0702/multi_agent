@@ -1,0 +1,251 @@
+==================== image.png ====================
+[y=287,x=374] RAG:
+[y=204,x=372] Agent: (
+[y=518,x=375] 理解神经网络、
+[y=598,x=376] 理解和使用Pytorch
+[y=776,x=366] Vibe coding工具:
+[y=432,x=379] 后端部署、Agent，Rag评估
+[y=88,x=107] AI大模型的工程化落地方向：
+[y=515,x=833] Transformer架构、
+[y=691,x=371] LangChain + LangGraph + DeepAgents
+[y=353,x=371] 大模型的推理和部署：vLLM，SGLang，包括理解源码。
+[y=520,x=1374] 掌握各种微调算法(SFT、
+[y=777,x=1003] Codex，Claude Code熟练其中一个
+[y=276,x=519] 向量数据库，多链路召回，切片，重排，评估，问题重写。
+[y=526,x=2055] LoRA.
+[y=204,x=592] Context Engineering , Harness Engineering, Skills, Sandboxes
+[y=519,x=2288] P-tuning)
+==================== image 1.png ====================
+[y=1168,x=49] 21
+[y=1201,x=49] 22
+[y=1499,x=50] 31
+[y=1532,x=49] 32
+[y=1862,x=49] 41
+[y=2258,x=49] 51
+[y=2290,x=50] 52
+[y=3071,x=51] 67
+[y=530,x=49] 11
+[y=772,x=49] 12
+[y=937,x=50] 15
+[y=1037,x=49] 17
+[y=1070,x=49] 18
+[y=1103,x=49] 19
+[y=1136,x=49] 20
+[y=1235,x=49] 23
+[y=1268,x=49] 24
+[y=1301,x=49] 25
+[y=1367,x=49] 27
+[y=1400,x=49] 28
+[y=1432,x=49] 29
+[y=1467,x=50] 30
+[y=1598,x=49] 34
+[y=1631,x=49] 35
+[y=1665,x=50] 36
+[y=1697,x=49] 37
+[y=1730,x=49] 38
+[y=1763,x=49] 39
+[y=1796,x=49] 40
+[y=1896,x=50] 42
+[y=1928,x=49] 43
+[y=1961,x=50] 44
+[y=2027,x=49] 45
+[y=2092,x=49] 47
+[y=2126,x=50] 48
+[y=2192,x=50] 49
+[y=2507,x=50] 54
+[y=2540,x=50] 55
+[y=2607,x=50] 57
+[y=2838,x=50] 62
+[y=2871,x=50] 63
+[y=2937,x=50] 64
+[y=2969,x=50] 65
+[y=3168,x=50] 70
+[y=3333,x=50] 75
+[y=3366,x=49] 76
+[y=3399,x=49] 77
+[y=3465,x=50] 79
+[y=497,x=49] 10
+[y=839,x=49] 13
+[y=905,x=50] 14
+[y=970,x=49] 16
+[y=1334,x=49] 26
+[y=2060,x=49] 46
+[y=2225,x=49] 50
+[y=2574,x=50] 56
+[y=2738,x=50] 60
+[y=3037,x=50] 66
+[y=3102,x=50] 68
+[y=118,x=61] 代码块
+[y=1990,x=108] 化)
+[y=2900,x=108] 载)
+[y=167,x=108] src/
+[y=1827,x=106] 图表)
+[y=1002,x=106] order)
+[y=3268,x=164] test/
+[y=498,x=164] agent/
+[y=805,x=111] 沙箱连接参数)
+[y=2871,x=157]  skills/
+[y=2159,x=113] →Mongo→新建)
+[y=333,x=192] - api/
+[y=201,x=165] api_view/
+[y=3433,x=151]  download/
+[y=399,x=108] state、history
+[y=2937,x=190] - main/
+[y=1763,x=214] tools/
+[y=2606,x=186] - tools/
+[y=2475,x=163] mcp_server/
+[y=1103,x=213] memory/
+[y=2706,x=108] part_by_supplier
+[y=2999,x=107] download_skill.py
+[y=768,x=160]  config.py
+[y=836,x=157]  schema.py
+[y=2091,x=202] : backends/
+[y=1236,x=217] subagents/
+[y=3466,x=197]   report_*.md
+[y=230,x=191] - web_main.py
+[y=3364,x=201] . test_mcp.py
+[y=361,x=211]  chat.py
+[y=2773,x=110] order_search_details
+[y=36,x=20] 2、Agent核心代码架构
+[y=3039,x=216] procurement/
+[y=903,x=199] - env_utils.py
+[y=935,x=189] - log_utils.py
+[y=1433,x=216] middlewares/
+[y=2569,x=184]  http_base.py
+[y=1297,x=238] - configs/
+[y=528,x=162]  main_agent.py
+[y=263,x=186] - web_config.py
+[y=3301,x=216] agent_test.py
+[y=1263,x=216]  loader.py
+[y=1136,x=216]  AGENTS.md
+[y=429,x=234] - history.py
+[y=2504,x=214] server_main.py
+[y=1167,x=239] - prompts.py
+[y=297,x=186] - agent_loader.py
+[y=2537,x=213] server_config.py
+[y=3167,x=240] - web-scraper/
+[y=565,x=107] precompute_agent_context()
+[y=1035,x=201]  mcp_tools_bean.py
+[y=3331,x=193] - test_all_tools.py
+[y=1694,x=244] - tool_error.py
+[y=1793,x=213]  mcp_client.py
+[y=1924,x=237] - hitl_tools.py
+[y=1891,x=248] - web_search.py
+[y=2672,x=243] - parts_tools.py
+[y=2736,x=245] - order_tools.py
+[y=1532,x=262]  skills_sync.py
+[y=3103,x=243] - chart_params.md
+[y=1959,x=263] assign_skill.py
+[y=871,x=108] UserPreferences、ChatRequest)
+[y=967,x=193] - middleware_config.py
+[y=2191,x=252]  sandbox_setup.py
+[y=2256,x=247] - sandbox_proxy.py
+[y=1630,x=264] memory_update.py
+[y=2969,x=245] - skill-management/
+[y=1462,x=263]  sandbox_health.py
+[y=2124,x=240] - sandbox_manager.py
+[y=2638,x=238] - suppliers_tools.py
+[y=2803,x=250]  inventory_tools.py
+[y=1860,x=240] - chart_generator.py
+[y=1660,x=250] - sandbox_breaker.py
+[y=3200,x=249]  web-content-fetcher/
+[y=3135,x=237] - supplier-price-urls/
+[y=1497,x=264] context_injection.py
+[y=3070,x=242] - procurement-analysis/
+[y=2222,x=247] : custom_opensandbox.py
+[y=1563,x=264] user_skills_restore.py
+[y=1595,x=265] tools_summarization.py
+[y=2025,x=252] : download_sandbox_file.py
+[y=1368,x=297] - procurement_order.yaml
+[y=1336,x=264]  procurement_analyst.yaml
+[y=3263,x=645] 测试
+[y=1761,x=643] 工具层
+[y=933,x=637] 日志工具
+[y=1102,x=650] 记忆模块
+[y=2091,x=647] 沙箱后端
+[y=3331,x=638] 全工具测试
+[y=3365,x=635] MCP 连接测试
+[y=3432,x=646] 报告下载目录
+[y=1664,x=641] 7．沙箱熔断器
+[y=3300,x=635] Agent 集成测试
+[y=3069,x=638] 采购分析操作手册
+[y=1431,x=647] 中间件栈 (8 个)
+[y=1335,x=627] #采购分析专家配置
+[y=265,x=636] MongoDB 连接配置
+[y=3103,x=639] 26种图表参数速查
+[y=1366,x=625] #采购订单专家配置
+[y=1499,x=639] 2．用户上下文注入
+[y=1564,x=639] 4．持久化技能恢复
+[y=3167,x=639] 沙箱内网页抓取工具
+[y=1895,x=642] 智谱搜狗 Web 搜索
+[y=2026,x=642] 沙箱文件下载到本地
+[y=1033,x=634] MCP 工具分类 Bean
+[y=1861,x=641] 26→1 图表工具合并
+[y=3134,x=639] 供应商报价URL映射
+[y=1168,x=640] 主 Agent 系统提示词
+[y=2968,x=640] 技能管理 SKILL.md +
+[y=1531,x=638] 3．本地技能同步到沙箱
+[y=1268,x=641] YAML 加载 ＋ 工具名解析
+[y=1236,x=651] 子 Agent 配置 (声明式)
+[y=3464,x=632] Agent 生成的采购分析报告
+[y=3201,x=636] HTML→Markdown 转换工具
+[y=2641,x=636] supplier_query McP 工具
+[y=1465,x=640] 1．沙箱健康检查＋自动恢复
+[y=2507,x=637] MCP Server 入 (FastMCP)
+[y=200,x=645] Web 层 － FastAPI 对外服务
+[y=1135,x=641] Agent 全局操作手册 (226 行)
+[y=497,x=645] Agent 层 － DeepAgent 核心
+[y=2540,x=638] ERP 后端地址 + MCP 监听配置
+[y=2804,x=637] inventory_warning MCP 工具
+[y=1629,x=637] 6．用户偏好自动提取＋持久化
+[y=2192,x=639] 沙箱创建 + Python 环境初始化
+[y=2674,x=637] part_query / part_search /
+[y=837,x=637] 数据模型（ProcurementContext、
+[y=1598,x=638] 5. compact_conversation 工具
+[y=968,x=637] 子 Agent 中间件工厂（analyst／
+[y=2473,x=584] # - MCP 网关 － Agent  Java ERP
+[y=298,x=636] AgentLoader 单例 (生命周期管理)
+[y=2740,x=638] order_create / order_update /
+[y=2257,x=639] 代理层(热替换，18个方法显式委托)
+[y=1696,x=643] (废弃 － ToolNode 已内置错误处理)
+[y=2574,x=635] httpx Asyncclient (连接池、超时)
+[y=2126,x=638] 沙箱生命周期管理（5态：预热→缓存
+[y=233,x=639] FastAPI应用入口(CORS、路由注册)
+[y=368,x=640] /api/chat/stream (ssE)、resume、
+[y=432,x=638] /api/history CRUD ＋ 展示消息存取
+[y=529,x=637] ★ 主入口:create_main_agent(）+
+[y=902,x=636] 环境变量加载（.env → os.environ)
+[y=1928,x=641] HITL人工介入（(request_order_info)
+[y=769,x=636] 全局配置（LLM、Store、Checkpointer、
+[y=1960,x=642] 技能分配（下载→创建→测试→分配→持久
+[y=1793,x=638] MCP 工具加载（本地 ERP + ModelScope
+[y=2870,x=647] 技能库（Markdown ＋ Python，渐进式加
+[y=2225,x=638] OpenSandbox 封装（注入SANDBOX_PATH)
+==================== image 2.png ====================
+[y=1267,x=90] 业务价值：
+[y=301,x=89] 核心实现：
+[y=816,x=142] 操作拦截和审计上报。
+[y=713,x=140] 减少Token消耗并提升长任务稳定性。
+[y=1018,x=143] 史排查结论，支持跨会话恢复复杂任务。
+[y=1217,x=138] Kafka将审计日志上送到公司链路追踪平台，
+[y=1164,x=119] ·链路追踪：对用户请求、Agent规划、子Age
+[y=245,x=91] 成从业务问题输入到策略验证、审批材料生成和结果分析的闭环。
+[y=512,x=141] 测试报告、日志快照、审批附件作为Agent可持续操作的工作资产。
+[y=612,x=141] 各子Agent独立上下文执行任务，仅返回结构化结论，降低主上下文污染。
+[y=409,x=140] 为可执行子任务，并维护pending、in_progress、completed、failed等状态。
+[y=1115,x=140] 险动作进行沙箱隔离，结合人工审批机制保障线上规则变更与灰度发布的安全合规。
+[y=915,x=140] Agent中，根据历史任务复盘沉淀新的排查模式和提示模板，实现领域能力复用与自我进化。
+[y=1176,x=768] 这是我们的同学简历啊
+[y=82,x=90] 运行时能力层，核心包括任务规划、虚拟文件系统、子Agent委派、上下文管理、可插拔中间件、Skills技能系统和持久化记忆。主
+[y=135,x=90] Agent根据用户目标生成任务清单并持续追踪执行状态，将特征分析、规则配置、测试验证、异常排查、知识检索等任务委派给专业子
+[y=1168,x=1412] 批、中间评估等关键步骤进行理点，通过
+[y=865,x=123] ·Skills技能系统：将风控规则模板、策略排查SOP、Prompt、领域文档、SQL模板和脚本打包为可复用Skill；采取渐进式披露的方式加载到
+[y=968,x=122] ·全生命周期记忆管理：Redis保存短期对话历史、任务计划、审批断点和临时数据：Milvus保存长期规则经验、常用策略模板、用户偏好和历
+[y=462,x=122] ·虚拟文件系统：抽象/workspace、/reports、/logs、/policies、/memories等目录，支持文件读写、编辑、搜索和版本留痕；将策略DSL、
+[y=763,x=124] ·可插拨中间件：在模型调用、工具调用、文件读写、任务状态变更等节点注入HooK，支持缓存、重试、日志采集、PII检测、权限校验、敏感
+[y=1063,x=121] ·安全沙箱：基于OpenSandBox研发“主机+沙箱”双层文件访问平面，实现网络、进程及文件系统隔离，对代码脚本执行、Skil调用等高风
+[y=189,x=89] Agent；通过虚拟文件系统管理策略DSL、测试报告、日志快照和审批材料，并结合Redis、Milvus实现短期上下文与长期经验沉淀，形
+[y=360,x=121] ·任务规划：内置任务清单机制，将“风险问题分析->特征与历史案例查询->规则调整建议->回归测试->策略效果对比->结果分析”拆解
+[y=561,x=121] ·子Agent委派：主Agent通过task委派机制创建特征分析Agent、规则配置Agent、测试验证Agent、异常排查Agent、知识检索Agent，
+[y=662,x=122] ·上下文管理：将大工具结果、长日志、规则diff、测试报告沉淀到虚拟文件系统，仅把阶段性摘要、文件链接和下一步计划保留在模型上下文中，
+[y=26,x=88] 项目描述：后端采用FastAPlI+ASGI实现高性能服务，集成Java接口扩展能力，项目目围绕风控策略运维复杂任务构建AgentiHaness二
