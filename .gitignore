@@ -1,0 +1,33 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── 环境配置（密钥不入库；.env.example 保留）──
+.env
+.env.dev
+.env.prod
+.env.local
+
+# ── 数据/日志 ──
+data/
+logs/
+*.db
+*.sqlite3
+
+# ── IDE / 系统 ──
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ── 前端 ──
+frontend/node_modules/
+frontend/dist/

@@ -1,0 +1,100 @@
+# ============================================================
+# multi-agent 统一编排（v2.2 环境策略：一套编排，配置驱动切换）
+#
+# 用法：
+#   本地开发：  docker compose --env-file .env.dev up -d redis opensandbox
+#   云端部署：  docker compose --env-file .env.prod up -d
+#
+# 说明：
+#   - backend 服务：FastAPI + Agent 应用（Dockerfile 待 v3 搭建时补）
+#   - opensandbox：官方 server 镜像，需访问宿主机 Docker daemon
+#     （server 用 Docker runtime 动态创建沙箱容器 → 挂载 docker.sock）
+#   - 资源限额适配 2核4g：redis 256m / opensandbox 512m / backend 1g
+#   - 沙箱镜像需预拉：opensandbox/code-interpreter:v1.1.0（见下方注释）
+# ============================================================
+
+services:
+  # ── 短期记忆（Redis）──
+  redis:
+    image: redis:7-alpine
+    container_name: multi-agent-redis
+    restart: unless-stopped
+    command: >
+      redis-server --appendonly yes
+      ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+    networks:
+      - multi-agent-net
+
+  # ── 云端沙箱（OpenSandbox server）──
+  # 官方镜像：opensandbox/server（Docker Hub）
+  # 需预拉沙箱镜像（国内用阿里云加速）：
+  #   docker pull opensandbox/code-interpreter:v1.1.0
+  #   # 或国内：docker pull sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.1.0
+  opensandbox:
+    image: opensandbox/server:latest
+    container_name: multi-agent-opensandbox
+    restart: unless-stopped
+    # server 需访问 Docker daemon 才能创建沙箱容器（docker runtime）
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./deploy/opensandbox/sandbox.toml:/root/.sandbox.toml:ro
+      - opensandbox-store:/root/.opensandbox
+    environment:
+      - OPENSANDBOX_API_KEY=${SANDBOX_API_KEY}
+      # 若未配置 api_key，官方要求显式确认（非交互环境用此开关）
+      # - OPENSANDBOX_INSECURE_SERVER=YES
+    ports:
+      - "${SANDBOX_PORT:-8080}:8080"
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+    networks:
+      - multi-agent-net
+
+  # ── 后端应用（FastAPI + Agent）──
+  # Dockerfile 在 v3 接口细化后补建；现阶段先注释，避免 build 报错
+  # backend:
+  #   build: ./backend
+  #   container_name: multi-agent-backend
+  #   restart: unless-stopped
+  #   env_file: .env.prod
+  #   ports:
+  #     - "8000:8000"
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #     opensandbox:
+  #       condition: service_started
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 1g
+  #         cpus: "1.5"
+  #   networks:
+  #     - multi-agent-net
+
+volumes:
+  redis-data:
+  opensandbox-store:
+
+networks:
+  multi-agent-net:
+    driver: bridge

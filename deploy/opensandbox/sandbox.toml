@@ -1,0 +1,36 @@
+# ============================================================
+# OpenSandbox server 配置（docker runtime）
+# 来源：官方 example.config.toml 结构（opensandbox-group/OpenSandbox）
+# ⚠️ 字段细节以官方 README / example.config.toml 为准，开工部署时复核
+# ============================================================
+
+[runtime]
+type = "docker"
+# 执行守护镜像（server 用它在沙箱容器内执行命令）
+execd_image = "opensandbox/execd:v1.0.21"
+
+[server]
+host = "0.0.0.0"
+port = 8080
+# api key：空则要求显式确认（非交互用 OPENSANDBOX_INSECURE_SERVER=YES）
+# 建议从环境变量注入，不写死在配置文件
+# api_key = ""
+
+[docker]
+network_mode = "bridge"
+# 宿主机端口映射范围（沙箱容器动态分配）
+port_range_start = 40000
+port_range_end = 60000
+# 安全加固：沙箱容器降权、禁止特权提升、限制 pid
+no_new_privileges = true
+pids_limit = 4096
+# dropped_capabilities 按官方默认（见 example.config.toml）
+
+[egress]
+# 网络出口代理镜像（沙箱网络隔离）
+image = "opensandbox/egress:v1.1.4"
+
+[store]
+type = "sqlite"
+# 元数据存储（容器内挂载卷持久化）
+path = "/root/.opensandbox/opensandbox.db"

@@ -1,0 +1,32 @@
+# 与 pyproject.toml dependencies 保持一致（部署/CI 便捷入口）
+# 安装：pip install -r requirements.txt
+
+# Web 层
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sse-starlette>=2.0
+
+# Agent 层
+langgraph>=0.2
+langgraph-checkpoint-sqlite>=2.0
+langchain>=0.3
+langchain-openai>=0.2
+langchain-deepagents>=0.5
+
+# MCP 网关层
+fastmcp>=2.0
+
+# 沙箱层（云端 OpenSandbox）
+opensandbox>=0.1
+
+# 记忆/存储
+redis>=5.0
+aiosqlite>=0.20
+
+# 基建
+pydantic>=2.8
+pydantic-settings>=2.4
+httpx>=0.27
+langsmith>=0.1
+python-dotenv>=1.0
+pyyaml>=6.0
