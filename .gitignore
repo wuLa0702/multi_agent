@@ -28,6 +28,14 @@ logs/
 .DS_Store
 Thumbs.db
 
+# ── Clowder AI harness 运行时（挂载/生成物，可再生，不入库）──
+.cat-cafe/
+.claude/hooks/
+.claude/skills/
+.codex/
+.gemini/
+.kimi/
+
 # ── 前端 ──
 frontend/node_modules/
 frontend/dist/

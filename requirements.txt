@@ -11,7 +11,7 @@ langgraph>=0.2
 langgraph-checkpoint-sqlite>=2.0
 langchain>=0.3
 langchain-openai>=0.2
-langchain-deepagents>=0.5
+deepagents>=0.5   # 主 harness；更正：PyPI 包名是 deepagents（langchain-deepagents 不存在）
 
 # MCP 网关层
 fastmcp>=2.0

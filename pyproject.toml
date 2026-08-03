@@ -14,7 +14,7 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=2.0",  # Checkpointer 持久化（SQLite）
     "langchain>=0.3",
     "langchain-openai>=0.2",        # DeepSeek/豆包/智谱均走 OpenAI 兼容协议
-    "langchain-deepagents>=0.5",    # 主 harness（声明式子 Agent + write_todos + SKILL.md）
+    "deepagents>=0.5",              # 主 harness（声明式子 Agent + write_todos + SKILL.md）；更正：PyPI 包名是 deepagents
 
     # ── MCP 网关层 ──
     "fastmcp>=2.0",                 # MCP server（工具网关）
