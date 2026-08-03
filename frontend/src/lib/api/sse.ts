@@ -30,7 +30,6 @@ export interface StreamCallbacks {
   onEnd(): void;
 }
 
-const EVENT_DELIMITER = "\n\n";
 const DATA_PREFIX = "data:";
 
 /** 单帧解析结果：null = 帧内无 data 行（注释/空帧，忽略） */
@@ -50,6 +49,9 @@ export function parseSseFrame(frame: string): string | null {
 /**
  * 流式帧解析器：吞入 chunk 文本，产出完整帧。
  * 边界处理：半帧（分片到达）、粘包（一 chunk 多帧）、空行容错。
+ *
+ * 帧分隔兼容 \n\n（LF）与 \r\n\r\n（CRLF）——SSE 规范允许两种行尾，
+ * FastAPI StreamingResponse 实际输出 CRLF（2026-08-03 实测字节级确认）。
  */
 export function createSseParser(
   onFrame: (data: string) => void,
@@ -59,13 +61,26 @@ export function createSseParser(
     buffer += chunk;
     let idx: number;
     // 一 chunk 可能含多帧（粘包），循环切完
-    while ((idx = buffer.indexOf(EVENT_DELIMITER)) >= 0) {
+    while ((idx = findFrameDelimiter(buffer)) >= 0) {
+      const isCrlf = buffer.startsWith("\r\n\r\n", idx);
       const frame = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + EVENT_DELIMITER.length);
+      buffer = buffer.slice(idx + (isCrlf ? 4 : 2));
       const data = parseSseFrame(frame);
       if (data !== null) onFrame(data);
     }
   };
+}
+
+/**
+ * 找帧分隔符位置（\n\n 或 \r\n\r\n，取最早出现）；无完整分隔符返回 -1。
+ * CRLF 序列 \r\n\r\n 中不含连续 \n\n，两种搜索互不干扰。
+ */
+function findFrameDelimiter(buf: string): number {
+  const lf = buf.indexOf("\n\n");
+  const crlf = buf.indexOf("\r\n\r\n");
+  if (lf < 0) return crlf;
+  if (crlf < 0) return lf;
+  return Math.min(lf, crlf);
 }
 
 /** 解析事件 JSON，非法帧返回 null（健壮性：不崩流，跳过坏帧） */

@@ -75,6 +75,40 @@ describe("createSseParser", () => {
     parser('data: {"type":"a"}\n\n');
     expect(frames).toEqual(['{"type":"a"}']);
   });
+
+  it("CRLF 帧分隔（后端 FastAPI 实际输出 \r\n\r\n）", () => {
+    const frames: string[] = [];
+    const parser = createSseParser((d) => frames.push(d));
+    parser('data: {"type":"token","text":"OK"}\r\n\r\n');
+    expect(frames).toEqual(['{"type":"token","text":"OK"}']);
+  });
+
+  it("CRLF 粘包：一 chunk 多帧", () => {
+    const frames: string[] = [];
+    const parser = createSseParser((d) => frames.push(d));
+    parser(
+      'data: {"type":"a"}\r\n\r\ndata: {"type":"b"}\r\n\r\n',
+    );
+    expect(frames).toEqual(['{"type":"a"}', '{"type":"b"}']);
+  });
+
+  it("CRLF 帧边界跨 chunk（\r\n\r\n 被切开）", () => {
+    const frames: string[] = [];
+    const parser = createSseParser((d) => frames.push(d));
+    parser('data: {"type":"a"}');
+    parser("\r\n");
+    parser('\r\ndata: {"type":"b"}\r');
+    parser('\n\r\n');
+    expect(frames).toEqual(['{"type":"a"}', '{"type":"b"}']);
+  });
+
+  it("混合 LF/CRLF 流均能切帧", () => {
+    const frames: string[] = [];
+    const parser = createSseParser((d) => frames.push(d));
+    parser('data: {"type":"a"}\n\n');
+    parser('data: {"type":"b"}\r\n\r\n');
+    expect(frames).toEqual(['{"type":"a"}', '{"type":"b"}']);
+  });
 });
 
 describe("streamChat", () => {
