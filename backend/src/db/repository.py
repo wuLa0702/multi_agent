@@ -126,12 +126,30 @@ async def append_message(conn: aiosqlite.Connection, message: Message) -> Messag
 
 
 async def list_messages(
-    conn: aiosqlite.Connection, session_id: str, limit: int = 200
+    conn: aiosqlite.Connection,
+    session_id: str,
+    limit: int = 200,
+    before_id: int | None = None,
 ) -> list[Message]:
-    """会话消息流（时间正序，最旧在前）。"""
-    cursor = await conn.execute(
-        "SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC LIMIT ?",
-        (session_id, limit),
-    )
+    """会话消息流（时间正序，最旧在前；分页时取「最新一页」）。
+
+    Args:
+        conn: SQLite 连接（已初始化 schema）
+        session_id: 会话 ID
+        limit: 返回条数上限
+        before_id: cursor 分页——只取 id 小于该值的更早消息（契约 §3.4）。
+                   第一页（None）返回会话最新 limit 条；调用方需 DESC 取 + 反转保证升序。
+
+    Returns:
+        消息实体列表（id 升序）
+    """
+    if before_id is None:
+        sql = "SELECT * FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?"
+        params: tuple = (session_id, limit)
+    else:
+        sql = "SELECT * FROM messages WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?"
+        params = (session_id, before_id, limit)
+    cursor = await conn.execute(sql, params)
     rows = await cursor.fetchall()
-    return [_row_to_message(r) for r in rows]
+    # DESC 取（最新在前）后反转回 id 升序，保持「会话内自然顺序」契约
+    return [_row_to_message(r) for r in reversed(rows)]
