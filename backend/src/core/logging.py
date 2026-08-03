@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import sys
+import time
 from pathlib import Path
 
 from src.core.paths import get_log_dir
@@ -62,6 +63,27 @@ class SizeTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
             return int(self.stream.tell() + len(record.getMessage())) >= self.max_bytes
         except (OSError, AttributeError):
             return 0
+
+    def doRollover(self) -> None:
+        """滚动失败容错（Windows 多进程持有句柄）。
+
+        uvicorn --reload 下 reloader 父进程与 spawn 子进程同时打开同一日志文件，
+        跨天滚动时 rename 会被占用文件的进程拒绝（WinError 32）。
+        滚动非致命：失败一次即放弃本次滚动、把下次滚动时间推到明天并重开文件流，
+        避免每条日志都触发滚动失败 → 每次 emit 都打一条 "Logging error" traceback 刷屏。
+        """
+        try:
+            super().doRollover()
+        except OSError as exc:
+            logging.getLogger(__name__).warning(
+                "日志滚动失败（文件被其他进程占用，WinError %s），放弃本次滚动，下次再试",
+                exc.errno,
+            )
+            # super().doRollover() 中断时文件流已被关闭且 rolloverAt 未推进：
+            # 重开流继续写当前文件，并把滚动时间推到下一个周期，避免重复尝试
+            self.rolloverAt = self.computeRollover(int(time.time()))
+            if not self.delay and self.stream is None:
+                self.stream = self._open()
 
 
 def setup_logging(level: int = logging.INFO) -> logging.Logger:
