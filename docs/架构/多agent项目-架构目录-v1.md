@@ -6,6 +6,7 @@
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.7 | 2026-08-03 | §2 新增「能力落地位置对照」（三类能力：代码工具 / SKILL.md 技能 / 远程 MCP 工具——位置、本质、Agent 使用方式） |
 > | v2.6 | 2026-08-03 | §2 目录树更新为权威版（与代码落地对照，✅/⏳/✏️ 状态标注）；§2 models/ 更名 schemas/（代码已随迁）；§2 增补 core/db.py、redis.py、api/health.py 等实际落地项；新增「落地状态对照表」；同步说明：demo 脚本归 scripts/、tabbit-code 删除、测试结构以 20-testing.md 为准 |
 > | v2.5 | 2026-08-02 | §6.1 决策 6/9 修正：本地开发连本地 Docker（redis 6398 + opensandbox 8080），生产连云端；§6.2 待决策 #3 关闭（本地开发模式拍板）；§3 基础设施 docker-compose redis 端口对齐 6398；新增 §4 scripts/dev.sh 一键启动 |
 > | v2.4 | 2026-08-02 | 目录迁移：移入 `docs/架构/`；版本记录按新规范并入文档头（v1 → v2.3 全保留），正文版本表移除 |
@@ -225,6 +226,22 @@ multi-agent-project/
 > | skill-resources/ · download/ | ⏳ | 蓝图规划空资源目录，尚未创建 |
 > | docs/architecture · agent-manual | ⏳ | 蓝图规划目录，当前文档在 docs/ 根下 |
 >
+
+### 2.1 能力落地位置对照（2026-08-03，Skill Market 落地后确立）
+
+> 背景：`mcp/tools/`、`data/skills/`、`mcp_servers` 表三个位置容易混淆。
+> **一句话区分：tool 是"手"（Agent 可调用的函数），skill 是"脑内知识"（Agent 怎么做的说明），subagent 是"下属"（专职角色）。**
+
+| 能力 | 落地位置 | 本质 | Agent 使用方式 | 新增方式 |
+|------|---------|------|---------------|---------|
+| **代码工具 tool** | `backend/src/mcp/tools/`（search.py / sandbox_tool.py）+ 注册 `mcp/registry.py` | Python 函数 | 直接挂载为工具，Agent 可**调用**（函数式工具） | 手写代码 + 注册表登记（需改代码） |
+| **SKILL.md 技能 skill** | `data/skills/skill_md/{名称}/SKILL.md`（本地文件；`core/paths.py` 的 `get_skill_md_dir()`） | 说明书（YAML frontmatter + Markdown 正文） | 渐进披露注入提示词，Agent 按说明执行 | 市场安装（Skill Market）或手写文件——**无需改代码**，Agent 重启自动扫描 |
+| **远程 MCP 工具** | `mcp_servers` 表（SQLite，一行一个 server 连接配置） | 远程服务（Smithery 等托管，本地只存 URL + 鉴权 headers） | `McpClientManager` 连接后注入 Agent，调用时走网络 | Skill Market 市场一键安装（自动建连接） |
+| **子代理 subagent** | `backend/src/agent/subagents/*.yaml` | 专职角色声明（prompt + tools 清单） | `task` 工具委派 | 写 YAML 文件（tools 名查 registry） |
+
+补充：
+- 增删切换（安装/卸载/启用停用/升级）→ 自动触发 Agent 热刷新（`McpClientManager.reload()` + `rebuild_agent()`），下次对话即生效
+- Skill Market 下载的 SKILL.md 与手写个人技能**同目录**（`data/skills/skill_md/`），一视同仁
 
 ---
 
