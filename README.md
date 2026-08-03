@@ -28,7 +28,7 @@ cp .env.example .env.dev     # 本地开发（APP_ENV=dev）
 docker compose --env-file .env.dev up -d redis opensandbox
 
 # 4. 启动后端
-cd backend && uvicorn src.api.main:app --reload --port 8000
+cd backend && uvicorn src.api.main:app --reload --port 8010
 ```
 
 ## 当前状态
