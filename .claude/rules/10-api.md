@@ -10,7 +10,7 @@ async def chat_stream(req: ChatRequest): ...
 ```
 
 ## 请求/响应模型
-- 全部 Pydantic v2 BaseModel（`src/models/`，禁裸 dict）
+- 全部 Pydantic v2 BaseModel（`src/schemas/`，禁裸 dict；2026-08-03 随架构目录 v2.6 由 models/ 更名）
 - POST 用请求体，GET 用查询参数
 - 响应含 `status` 字段；错误统一 `ErrorResponse`（error/detail/code）
 
