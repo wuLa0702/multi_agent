@@ -17,6 +17,7 @@ import { streamChat } from "@/lib/api/sse";
 import type {
   ApproveEvent,
   Message,
+  ProviderInfo,
   SSEEvent,
   ToolCallEvent,
 } from "@/lib/api/types";
@@ -58,6 +59,8 @@ interface ChatState {
   streamStatus: StreamStatus;
   pendingApproval: ApproveEvent | null;
   pendingRunId: string | null; // localStorage 镜像（刷新恢复用）
+  providers: ProviderInfo[]; // 模型下拉数据源（GET /v1/providers）
+  selectedModelId: number | null; // 用户选择；null = 默认模型
 
   send(text: string): Promise<void>;
   resume(runId: string): Promise<void>;
@@ -66,6 +69,8 @@ interface ChatState {
   cancel(): void;
   loadHistory(sessionId: string): Promise<void>;
   clearChat(): void;
+  loadProviders(): Promise<void>;
+  setSelectedModelId(modelId: number | null): void;
 }
 
 let abortRef: AbortController | null = null;
@@ -77,7 +82,12 @@ export const useChatStore = create<ChatState>((set, get) => {
     set((s) => ({ notices: [...s.notices, notice] }));
 
   /** 开始一个流（send / resume 共用入口） */
-  const startStream = (req: { session_id?: string | null; message?: string | null; resume_run_id?: string | null }) => {
+  const startStream = (req: {
+    session_id?: string | null;
+    message?: string | null;
+    resume_run_id?: string | null;
+    model_id?: number | null;
+  }) => {
     abortRef?.abort();
     const controller = new AbortController();
     abortRef = controller;
@@ -113,6 +123,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     streamStatus: "idle",
     pendingApproval: null,
     pendingRunId: localStorage.getItem(PENDING_RUN_KEY),
+    providers: [],
+    selectedModelId: null,
 
     async send(text: string) {
       const trimmed = text.trim();
@@ -145,7 +157,33 @@ export const useChatStore = create<ChatState>((set, get) => {
           return;
         }
       }
-      startStream({ session_id: sessionId, message: trimmed });
+      startStream({
+        session_id: sessionId,
+        message: trimmed,
+        model_id: get().selectedModelId, // null → 后端用默认模型
+      });
+    },
+
+    async loadProviders() {
+      try {
+        const data = await api.listProviders();
+        const providers = data.providers;
+        let selected = get().selectedModelId;
+        if (selected === null) {
+          // 初始选中：第一个厂商的默认模型（后端按 sort_order 返回，首厂商 = llm_provider）
+          const first = providers[0];
+          const def = first?.models.find((m) => m.is_default) ?? first?.models[0];
+          selected = def?.id ?? null;
+        }
+        set({ providers, selectedModelId: selected });
+      } catch {
+        // 拉取失败静默降级：下拉不渲染，请求不带 model_id（后端用默认）
+        set({ providers: [], selectedModelId: null });
+      }
+    },
+
+    setSelectedModelId(modelId: number | null) {
+      set({ selectedModelId: modelId });
     },
 
     async resume(runId: string) {

@@ -17,9 +17,11 @@ import { showConfirm } from "@/components/ui/confirm-dialog";
 export default function ChatPage() {
   const loadList = useSessionStore((s) => s.loadList);
   const resume = useChatStore((s) => s.resume);
+  const loadProviders = useChatStore((s) => s.loadProviders);
 
   useEffect(() => {
     void loadList().catch(() => undefined);
+    void loadProviders();
 
     // 审批断点恢复（刷新后 localStorage 里残留 run_id）
     const runId = useChatStore.getState().pendingRunId;

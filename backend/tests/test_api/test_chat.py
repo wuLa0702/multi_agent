@@ -153,35 +153,47 @@ async def test_chat_stream_session_not_found_404(mock_chat_llm, tmp_db_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_with_provider(mocker, fake_deep_agent_model, tmp_db_path) -> None:
-    """运行时切换：provider=ark 透传 context，模型调用仍走 mock（不实际调 API）。"""
-    calls: list[str | None] = []
+async def test_chat_stream_with_model_id(
+    mocker, fake_deep_agent_model, seeded_registry
+) -> None:
+    """运行时切换：model_id 透传 context，模型调用仍走 mock（不实际调 API）。"""
+    # seed 后找豆包（ark）的模型 ID
+    ark_models = [
+        m
+        for p in seeded_registry.list_providers()
+        if p.slug == "ark"
+        for m in p.models
+    ]
+    assert ark_models, "seed 应包含豆包模型"
+    target_id = ark_models[0].id
 
-    def _fake_get_chat_model(provider: str | None = None):
-        calls.append(provider)
+    calls: list[int | None] = []
+
+    def _fake_get_chat_model(model_id: int | None = None):
+        calls.append(model_id)
         return fake_deep_agent_model
 
     mocker.patch("src.agent.main_agent.get_chat_model", side_effect=_fake_get_chat_model)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        status, body = await _post_stream(client, {"message": "hi", "provider": "ark"})
+        status, body = await _post_stream(client, {"message": "hi", "model_id": target_id})
 
     assert status == 200
-    # 首次调用 = 单例构建兜底模型（provider=None）；后续模型调用 = middleware 按 context 路由
+    # 首次调用 = 单例构建兜底模型（model_id=None）；后续 = middleware 按 context 路由
     assert calls[0] is None
-    assert "ark" in calls, f"middleware 应按请求上下文路由 provider，实际调用序列：{calls}"
+    assert target_id in calls, f"middleware 应按请求上下文路由 model_id，实际调用序列：{calls}"
     events = parse_sse(body)
     assert events[-1]["type"] == "done"
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_invalid_provider_400(tmp_db_path) -> None:
-    """边界：provider 不在白名单 → 400（运行时切换参数校验）。"""
+async def test_chat_stream_invalid_model_id_400(tmp_db_path) -> None:
+    """边界：model_id 不存在 → 400（运行时切换参数校验）。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        status, body = await _post_stream(client, {"message": "hi", "provider": "foo"})
+        status, body = await _post_stream(client, {"message": "hi", "model_id": 99999})
 
     assert status == 400
-    assert "provider" in body
+    assert "model_id" in body
 
 
 @pytest.mark.asyncio

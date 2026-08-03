@@ -2,6 +2,7 @@
 
 架构（12-backend.md）：api → core → {db, llm, mcp, sandbox}，禁止反向依赖。
 - lifespan 启动：Redis 连接预热（失败不阻断——health 降级标记）
+- lifespan 启动：模型注册表 seed + 加载（失败不阻断——adapter 回落 settings）
 - lifespan 关闭：释放 Redis 连接池
 - SQLite 惰性按请求开连接（单文件库，无常驻连接）
 
@@ -10,6 +11,7 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -18,8 +20,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.chat import router as chat_router
 from src.api.health import router as health_router
+from src.api.providers import router as providers_router
+from src.core import db as core_db
 from src.core.config import settings
 from src.core.logging import setup_logging
+from src.core.model_registry import get_registry
 from src.core.redis import close_redis, get_redis
 
 # 日志配置（UTF-8 + 双滚动 + 2 周保留，见 .claude/rules/04-logging.md）
@@ -28,11 +33,21 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """启动预热 Redis 连接（失败仅日志降级），关闭时释放连接池。"""
+    """启动预热 Redis + 加载模型注册表；关闭释放连接池。"""
     try:
         await get_redis().ping()
     except Exception:
         pass  # 本地没 Redis 也能起，/v1/health 会标记 disconnected
+
+    # 模型注册表：seed（幂等）+ 全量加载 → adapter 每次模型调用查内存缓存
+    conn = await core_db.get_connection()
+    try:
+        await get_registry().load(conn)
+    except Exception:
+        logging.exception("模型注册表加载失败——运行时模型选择将回落 .env 配置")
+    finally:
+        await conn.close()
+
     yield
     await close_redis()
 
@@ -54,3 +69,4 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(chat_router)
+app.include_router(providers_router)

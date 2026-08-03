@@ -46,6 +46,28 @@ export interface HealthResponse {
   env: string;
 }
 
+// ── 模型配置（GET /v1/providers，二级选择数据源）─────────────────────────────
+
+export interface ModelInfo {
+  id: number; // DB 模型 ID，请求体 model_id 用
+  provider_id: number;
+  name: string; // 模型名（API 透传标识，如 deepseek-v4-flash）
+  is_default: boolean; // 该厂商的默认模型
+  is_active: boolean;
+}
+
+export interface ProviderInfo {
+  id: number;
+  slug: string; // 厂商标识（deepseek / ark / zhipu）
+  name: string; // 厂商显示名（DeepSeek / 豆包 / 智谱）
+  is_active: boolean;
+  models: ModelInfo[];
+}
+
+export interface ProvidersResponse {
+  providers: ProviderInfo[];
+}
+
 // ── 请求体 ───────────────────────────────────────────────────────────────────
 
 /** POST /v1/chat/stream 请求体（message 与 resume_run_id 互斥） */
@@ -53,6 +75,7 @@ export interface ChatStreamRequest {
   session_id?: string | null;
   message?: string | null;
   resume_run_id?: string | null;
+  model_id?: number | null; // DB 模型 ID（GET /v1/providers 查询）；null/缺省 = 默认模型
 }
 
 export interface ApproveRequest {

@@ -12,6 +12,7 @@ import type {
   ErrorResponse,
   HealthResponse,
   MessagePage,
+  ProvidersResponse,
   Session,
   SessionListResponse,
   SessionUpdateRequest,
@@ -52,6 +53,11 @@ export const api = {
   /** GET /v1/health */
   health(): Promise<HealthResponse> {
     return request<HealthResponse>("/v1/health");
+  },
+
+  /** GET /v1/providers — 厂商 + 模型列表（模型下拉数据源） */
+  listProviders(): Promise<ProvidersResponse> {
+    return request<ProvidersResponse>("/v1/providers");
   },
 
   /** POST /v1/sessions — 创建会话（无 body） */

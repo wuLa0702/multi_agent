@@ -4,6 +4,8 @@
 表：
 - sessions(id TEXT PK, title, created_at, updated_at) — 会话元数据
 - messages(id INTEGER PK AUTOINCREMENT, session_id FK, role, content, created_at) — 消息流
+- providers(id PK, slug UNIQUE, name, base_url, api_key_env, is_active, sort_order) — 厂商配置
+- models(id PK, provider_id FK, name, is_default, is_active, sort_order) — 厂商下具体模型
 - 索引：messages(session_id)、messages(session_id, created_at) — 会话维度查询
 - WAL 模式在连接层（core/db.py）PRAGMA 开启，这里只建表
 """
@@ -36,6 +38,36 @@ CREATE INDEX IF NOT EXISTS idx_messages_session
 
 CREATE INDEX IF NOT EXISTS idx_messages_session_created
     ON messages(session_id, created_at);
+
+-- 厂商配置（模型元数据真相源；API key 不入库，按 api_key_env 读 .env）
+CREATE TABLE IF NOT EXISTS providers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug        TEXT NOT NULL UNIQUE,
+    name        TEXT NOT NULL,
+    base_url    TEXT NOT NULL,
+    api_key_env TEXT NOT NULL,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+-- 模型配置（provider 下具体模型，二级选择）
+CREATE TABLE IF NOT EXISTS models (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id INTEGER NOT NULL,
+    name        TEXT NOT NULL,
+    is_default  INTEGER NOT NULL DEFAULT 0,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+    UNIQUE(provider_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_models_provider
+    ON models(provider_id);
 """
 
 

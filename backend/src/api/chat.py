@@ -23,13 +23,11 @@ from sse_starlette.sse import EventSourceResponse
 from src.agent.main_agent import ChatContext, build_agent, stream_agent_tokens
 from src.core import db as core_db
 from src.core.errors import RetryableError
+from src.core.model_registry import get_registry
 from src.schemas.events import DoneEvent, ErrorEvent, StartEvent, TokenEvent
 from src.schemas.message import Message
 
 router = APIRouter(prefix="/v1/chat", tags=["chat"])
-
-# 运行时模型切换白名单（与 core/config.py provider_config 一致）
-ALLOWED_PROVIDERS = {"deepseek", "ark", "zhipu"}
 
 
 class ChatStreamRequest(BaseModel):
@@ -38,9 +36,9 @@ class ChatStreamRequest(BaseModel):
     session_id: str | None = Field(default=None, description="会话 ID；None → 自动新建")
     message: str | None = Field(default=None, description="新消息模式：用户输入")
     resume_run_id: str | None = Field(default=None, description="恢复模式：审批后携带 run_id 重连")
-    provider: str | None = Field(
+    model_id: int | None = Field(
         default=None,
-        description="运行时切换模型 provider：deepseek / ark / zhipu；None=默认",
+        description="数据库模型 ID（GET /v1/providers 查询）；None=默认模型",
     )
 
 
@@ -84,12 +82,12 @@ def _validate_request(req: ChatStreamRequest) -> None:
                 code="BAD_REQUEST",
             ).model_dump(),
         )
-    if req.provider and req.provider.lower() not in ALLOWED_PROVIDERS:
+    if req.model_id is not None and get_registry().get_model(req.model_id) is None:
         raise HTTPException(
             status_code=400,
             detail=ErrorResponse(
                 error="参数非法",
-                detail=f"provider={req.provider} 不支持，可选：{sorted(ALLOWED_PROVIDERS)}",
+                detail=f"model_id={req.model_id} 不存在，请先 GET /v1/providers 查询可用模型",
                 code="BAD_REQUEST",
             ).model_dump(),
         )
@@ -165,7 +163,7 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
             # 4. Agent 流式执行（LLM 异常 → error 事件后关闭）
             try:
                 agent = build_agent()  # 进程单例（模型经 middleware 按请求选择）
-                chat_context = ChatContext(provider=req.provider)
+                chat_context = ChatContext(model_id=req.model_id)
                 full_text_parts: list[str] = []
                 async for text in stream_agent_tokens(agent, lc_messages, context=chat_context):
                     full_text_parts.append(text)

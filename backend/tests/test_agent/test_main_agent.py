@@ -2,8 +2,8 @@
 
 覆盖（20-testing.md：正常 / 边界 / 错误）：
 - 单例：多次 get_agent() 只构建一次编译图
-- middleware：按 ChatContext.provider 路由到 get_chat_model(provider)
-- middleware：provider=None → 回落默认配置
+- middleware：按 ChatContext.model_id 路由到 get_chat_model(model_id)
+- middleware：model_id=None → 回落默认模型
 """
 
 from __future__ import annotations
@@ -39,17 +39,16 @@ def test_get_agent_singleton(mocker) -> None:
     assert kwargs["context_schema"] is main_agent.ChatContext
 
 
-@pytest.mark.asyncio
-async def test_configurable_model_routes_provider(mocker) -> None:
-    """middleware：ChatContext(provider="ark") → get_chat_model("ark") 换模型。"""
+async def _route_model_id(mocker, model_id: int | None) -> tuple[list[int | None], list[object]]:
+    """构造 ModelRequest 走 middleware，返回 get_chat_model 收到的参数与 handler 收到的模型。"""
     from langchain.agents.middleware.types import ModelRequest
     from langgraph.runtime import Runtime
 
-    calls: list[str | None] = []
+    calls: list[int | None] = []
     sentinel_model = object()
 
-    def _fake_get_chat_model(provider: str | None = None):
-        calls.append(provider)
+    def _fake_get_chat_model(model_id: int | None = None):
+        calls.append(model_id)
         return sentinel_model
 
     mocker.patch.object(main_agent, "get_chat_model", side_effect=_fake_get_chat_model)
@@ -57,7 +56,7 @@ async def test_configurable_model_routes_provider(mocker) -> None:
     request = ModelRequest(
         model=object(),
         messages=[],
-        runtime=Runtime(context=main_agent.ChatContext(provider="ark")),
+        runtime=Runtime(context=main_agent.ChatContext(model_id=model_id)),
     )
     received: list[object] = []
 
@@ -67,35 +66,22 @@ async def test_configurable_model_routes_provider(mocker) -> None:
 
     result = await main_agent._configurable_model.awrap_model_call(request, _handler)
 
-    assert calls == ["ark"], "模型工厂应按请求上下文 provider 调用"
-    assert received == [sentinel_model], "handler 应收到 override 后的模型"
+    assert result == "ok"
+    return calls, received
 
 
 @pytest.mark.asyncio
-async def test_configurable_model_default_provider(mocker) -> None:
-    """middleware：provider=None → get_chat_model(None) 回落默认配置。"""
-    from langchain.agents.middleware.types import ModelRequest
-    from langgraph.runtime import Runtime
+async def test_configurable_model_routes_model_id(mocker) -> None:
+    """middleware：ChatContext(model_id=3) → get_chat_model(model_id=3) 换模型。"""
+    calls, received = await _route_model_id(mocker, model_id=3)
 
-    calls: list[str | None] = []
-    sentinel_model = object()
-    mocker.patch.object(
-        main_agent,
-        "get_chat_model",
-        side_effect=lambda provider=None: (calls.append(provider), sentinel_model)[1],
-    )
-
-    request = ModelRequest(
-        model=object(),
-        messages=[],
-        runtime=Runtime(context=main_agent.ChatContext(provider=None)),
-    )
-    result = await main_agent._configurable_model.awrap_model_call(request, _pass_through)
-
-    assert result == "ok"
-    assert calls == [None], "不指定 provider 时应回落默认（settings.llm_provider）"
+    assert calls == [3], "模型工厂应按请求上下文 model_id 调用"
+    assert received, "handler 应收到 override 后的模型"
 
 
-async def _pass_through(request):
-    """handler 桩：透传模型并返回固定值。"""
-    return "ok"
+@pytest.mark.asyncio
+async def test_configurable_model_default_model_id(mocker) -> None:
+    """middleware：model_id=None → get_chat_model(None) 回落默认模型。"""
+    calls, _ = await _route_model_id(mocker, model_id=None)
+
+    assert calls == [None], "不指定 model_id 时应回落默认模型"

@@ -126,3 +126,23 @@ def reset_agent_singleton():
     main_agent._agent = None
     yield
     main_agent._agent = None
+
+
+@pytest.fixture
+async def seeded_registry(tmp_db_path):
+    """基于隔离 DB 加载默认 seed 的模型注册表（模型 ID 测试用）。
+
+    providers/models 表 + 内存缓存均在 tmp 库上重建，测试后清空。
+    """
+    from src.core import db as core_db
+    from src.core.model_registry import get_registry
+
+    registry = get_registry()
+    registry.reset()
+    conn = await core_db.get_connection()
+    try:
+        await registry.load(conn)
+    finally:
+        await conn.close()
+    yield registry
+    registry.reset()

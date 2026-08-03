@@ -18,9 +18,10 @@
 
 运行时模型切换（2026-08-03，官方 deepagents models 文档模式）：
 - agent 单例复用：编译图无状态（无 checkpointer），进程内只构建一次
-- 每次模型调用经 _configurable_model middleware 按 ChatContext.provider 选模型
+- 每次模型调用经 _configurable_model middleware 按 ChatContext.model_id 选模型
   （request.override(model=...) 只替换本次调用，不动 agent 本体）
-- 请求不带 provider → 回落 settings.llm_provider 默认（.env）
+- 模型配置真相源 = SQLite（providers/models 表，lifespan 加载进注册表）；
+  请求不带 model_id → 默认模型
 """
 
 from __future__ import annotations
@@ -57,30 +58,30 @@ class ChatContext:
     """请求级运行时上下文（context_schema）：携带模型选择。
 
     Attributes:
-        provider: 本次请求使用的 provider（deepseek / ark / zhipu）；
-            None → 回落 settings.llm_provider 默认
+        model_id: 数据库模型 ID（providers/models 表，GET /v1/providers
+            返回）；None → 默认模型（settings.llm_provider 厂商的默认模型）
     """
 
-    provider: str | None = None
+    model_id: int | None = None
 
 
 @wrap_model_call
 async def _configurable_model(request, handler):
-    """模型调用拦截：按请求上下文 provider 动态选模型（运行时切换）。
+    """模型调用拦截：按请求上下文 model_id 动态选模型（运行时切换）。
 
     每次模型调用（含主 agent 多轮）都经此换模型；context 缺省或
-    provider 为空时用默认配置。`request.override(model=...)` 仅替换
+    model_id 为空时用默认模型。`request.override(model=...)` 仅替换
     本次调用的模型实例，agent 本体保持单例复用。
 
     注意：必须是 async 函数——项目走 astream_events（异步流式），
     wrap_model_call 装饰同步函数时只提供同步钩子，异步上下文会抛错
     （官方示例用同步 invoke，异步场景需 async 版本）。
     """
-    provider = None
+    model_id = None
     context = getattr(request.runtime, "context", None) if request.runtime else None
     if context is not None:
-        provider = getattr(context, "provider", None)
-    model = get_chat_model(provider=provider)
+        model_id = getattr(context, "model_id", None)
+    model = get_chat_model(model_id=model_id)
     return await handler(request.override(model=model))
 
 
