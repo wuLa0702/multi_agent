@@ -122,9 +122,19 @@ class Settings(BaseSettings):
         """CORS 白名单（逗号分隔 → 列表）。"""
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
-    def provider_config(self) -> dict[str, str]:
-        """当前默认 provider 的调用参数（base_url + api_key + model）。"""
-        provider = self.llm_provider.lower()
+    def provider_config(self, name: str | None = None) -> dict[str, str]:
+        """查询指定 provider 的调用参数（base_url + api_key + model）。
+
+        Args:
+            name: provider 名（deepseek / ark / zhipu）；None → llm_provider 默认值
+
+        Returns:
+            {"base_url": ..., "api_key": ..., "model": ...}
+
+        Raises:
+            ValueError: 未知 provider 名（含 .env 里 llm_provider 配错的情况）
+        """
+        provider = (name or self.llm_provider).lower()
         if provider == "ark":
             return {
                 "base_url": self.ark_base_url,
@@ -137,11 +147,13 @@ class Settings(BaseSettings):
                 "api_key": self.zhipu_api_key,
                 "model": self.zhipu_model,
             }
-        return {
-            "base_url": self.deepseek_base_url,
-            "api_key": self.deepseek_api_key,
-            "model": self.deepseek_model,
-        }
+        if provider == "deepseek":
+            return {
+                "base_url": self.deepseek_base_url,
+                "api_key": self.deepseek_api_key,
+                "model": self.deepseek_model,
+            }
+        raise ValueError(f"未知 LLM provider={provider}，可选：deepseek / ark / zhipu")
 
 
 @lru_cache

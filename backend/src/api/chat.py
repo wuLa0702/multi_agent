@@ -20,14 +20,16 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from src.agent.main_agent import build_agent, stream_agent_tokens
+from src.agent.main_agent import ChatContext, build_agent, stream_agent_tokens
 from src.core import db as core_db
 from src.core.errors import RetryableError
-from src.llm.adapter import get_chat_model
 from src.schemas.events import DoneEvent, ErrorEvent, StartEvent, TokenEvent
 from src.schemas.message import Message
 
 router = APIRouter(prefix="/v1/chat", tags=["chat"])
+
+# 运行时模型切换白名单（与 core/config.py provider_config 一致）
+ALLOWED_PROVIDERS = {"deepseek", "ark", "zhipu"}
 
 
 class ChatStreamRequest(BaseModel):
@@ -36,6 +38,10 @@ class ChatStreamRequest(BaseModel):
     session_id: str | None = Field(default=None, description="会话 ID；None → 自动新建")
     message: str | None = Field(default=None, description="新消息模式：用户输入")
     resume_run_id: str | None = Field(default=None, description="恢复模式：审批后携带 run_id 重连")
+    provider: str | None = Field(
+        default=None,
+        description="运行时切换模型 provider：deepseek / ark / zhipu；None=默认",
+    )
 
 
 class ErrorResponse(BaseModel):
@@ -75,6 +81,15 @@ def _validate_request(req: ChatStreamRequest) -> None:
             detail=ErrorResponse(
                 error="参数缺失",
                 detail="message 或 resume_run_id 至少提供一个",
+                code="BAD_REQUEST",
+            ).model_dump(),
+        )
+    if req.provider and req.provider.lower() not in ALLOWED_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorResponse(
+                error="参数非法",
+                detail=f"provider={req.provider} 不支持，可选：{sorted(ALLOWED_PROVIDERS)}",
                 code="BAD_REQUEST",
             ).model_dump(),
         )
@@ -149,10 +164,10 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
 
             # 4. Agent 流式执行（LLM 异常 → error 事件后关闭）
             try:
-                model = get_chat_model()
-                agent = build_agent(model)
+                agent = build_agent()  # 进程单例（模型经 middleware 按请求选择）
+                chat_context = ChatContext(provider=req.provider)
                 full_text_parts: list[str] = []
-                async for text in stream_agent_tokens(agent, lc_messages):
+                async for text in stream_agent_tokens(agent, lc_messages, context=chat_context):
                     full_text_parts.append(text)
                     yield {"data": TokenEvent(text=text).model_dump_json()}
             except Exception as exc:  # noqa: BLE001 - 流内错误统一转 error 事件

@@ -2,7 +2,8 @@
 
 - 主链路：deepagents 直接接收 langchain ChatOpenAI 实例（get_chat_model 工厂）
 - 兜底通道：LLMAdapter.chat 提供最简同步对话（工具/Agent 之外的场景）
-- provider 切换：settings.llm_provider 驱动（.env 配置，见 core/config.py provider_config）
+- provider 选择：get_chat_model(provider) 显式传参 = 运行时切换（请求级）；
+  不传 = settings.llm_provider 默认（.env 配置，见 core/config.py provider_config）
 
 规范（10-api.md / 00-security.md）：
 - LLM 调用必须 timeout + retry（构造时固化，调用方无需重复配置）
@@ -21,8 +22,12 @@ _LLM_TIMEOUT_SECONDS = 60
 _LLM_MAX_RETRIES = 2
 
 
-def get_chat_model() -> ChatOpenAI:
-    """构造当前默认 provider 的 ChatOpenAI 实例（deepagents 主链路用）。
+def get_chat_model(provider: str | None = None) -> ChatOpenAI:
+    """构造指定 provider 的 ChatOpenAI 实例（deepagents 主链路用）。
+
+    Args:
+        provider: provider 名（deepseek / ark / zhipu）；None → settings.llm_provider
+            默认（运行时切换：middleware 每次模型调用按请求上下文传入）
 
     Returns:
         已配置 base_url / api_key / model 的 ChatOpenAI（OpenAI 兼容协议）
@@ -30,10 +35,10 @@ def get_chat_model() -> ChatOpenAI:
     Raises:
         ValueError: provider 配置非法（key/model 缺失）
     """
-    cfg = settings.provider_config()
+    cfg = settings.provider_config(provider)
     if not cfg["api_key"]:
         raise ValueError(
-            f"LLM provider={settings.llm_provider} 未配置 api_key，请检查 .env 配置"
+            f"LLM provider={provider or settings.llm_provider} 未配置 api_key，请检查 .env 配置"
         )
     return ChatOpenAI(
         model=cfg["model"],

@@ -108,6 +108,21 @@ def fake_deep_agent_model() -> FakeDeepAgentModel:
 
 @pytest.fixture
 def mock_chat_llm(mocker, fake_deep_agent_model: FakeDeepAgentModel) -> FakeDeepAgentModel:
-    """patch src.api.chat.get_chat_model → fake 模型（chat SSE 测试用）。"""
-    mocker.patch("src.api.chat.get_chat_model", return_value=fake_deep_agent_model)
+    """patch main_agent.get_chat_model → fake 模型（chat SSE 测试用）。
+
+    模型调用链：chat.py 不再直连 get_chat_model，agent 单例的
+    _configurable_model middleware 在每次模型调用时经它取模型——
+    patch 它即全链路 mock（含单例构建兜底模型）。
+    """
+    mocker.patch("src.agent.main_agent.get_chat_model", return_value=fake_deep_agent_model)
     return fake_deep_agent_model
+
+
+@pytest.fixture(autouse=True)
+def reset_agent_singleton():
+    """每个测试重置 agent 单例（模块级缓存，跨测试隔离）。"""
+    from src.agent import main_agent
+
+    main_agent._agent = None
+    yield
+    main_agent._agent = None

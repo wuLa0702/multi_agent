@@ -153,12 +153,44 @@ async def test_chat_stream_session_not_found_404(mock_chat_llm, tmp_db_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_with_provider(mocker, fake_deep_agent_model, tmp_db_path) -> None:
+    """运行时切换：provider=ark 透传 context，模型调用仍走 mock（不实际调 API）。"""
+    calls: list[str | None] = []
+
+    def _fake_get_chat_model(provider: str | None = None):
+        calls.append(provider)
+        return fake_deep_agent_model
+
+    mocker.patch("src.agent.main_agent.get_chat_model", side_effect=_fake_get_chat_model)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        status, body = await _post_stream(client, {"message": "hi", "provider": "ark"})
+
+    assert status == 200
+    # 首次调用 = 单例构建兜底模型（provider=None）；后续模型调用 = middleware 按 context 路由
+    assert calls[0] is None
+    assert "ark" in calls, f"middleware 应按请求上下文路由 provider，实际调用序列：{calls}"
+    events = parse_sse(body)
+    assert events[-1]["type"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_invalid_provider_400(tmp_db_path) -> None:
+    """边界：provider 不在白名单 → 400（运行时切换参数校验）。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        status, body = await _post_stream(client, {"message": "hi", "provider": "foo"})
+
+    assert status == 400
+    assert "provider" in body
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_llm_error_event(mocker, tmp_db_path) -> None:
     """LLM 异常：不发 done，发 error 事件收尾（流内错误不崩 HTTP 层）。"""
     def _boom() -> None:
         raise TimeoutError("llm timeout")
 
-    mocker.patch("src.api.chat.get_chat_model", side_effect=_boom)
+    mocker.patch("src.agent.main_agent.get_chat_model", side_effect=_boom)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         status, body = await _post_stream(client, {"message": "hi"})

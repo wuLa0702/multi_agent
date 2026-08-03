@@ -15,17 +15,27 @@
 
 当前目标：start → token×N → done 流式闭环（接口文档 §5），
 对话中 agent 可按需委派搜索子代理 / 调用沙箱工具。
+
+运行时模型切换（2026-08-03，官方 deepagents models 文档模式）：
+- agent 单例复用：编译图无状态（无 checkpointer），进程内只构建一次
+- 每次模型调用经 _configurable_model middleware 按 ChatContext.provider 选模型
+  （request.override(model=...) 只替换本次调用，不动 agent 本体）
+- 请求不带 provider → 回落 settings.llm_provider 默认（.env）
 """
 
 from __future__ import annotations
 
+import threading
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from deepagents import create_deep_agent
+from langchain.agents.middleware import wrap_model_call
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
 from src.agent.subagents.loader import load_subagents
+from src.llm.adapter import get_chat_model
 from src.mcp.tools.sandbox_tool import run_code_in_sandbox
 
 DEFAULT_SYSTEM_PROMPT = """你是一名资深研究员，负责开展深入调研，并输出一份精炼的研究报告。
@@ -42,35 +52,79 @@ DEFAULT_SYSTEM_PROMPT = """你是一名资深研究员，负责开展深入调�
 """
 
 
-def build_agent(
-    model: BaseChatModel,
-    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-):
-    """构建 deepagents 主 Agent（搜索子代理 + 沙箱执行工具）。
+@dataclass
+class ChatContext:
+    """请求级运行时上下文（context_schema）：携带模型选择。
 
-    子代理来自 agent/subagents/*.yaml（loader 解析），工具来自
-    mcp/tools + registry——新增子代理 = 加 YAML，新增工具 = 注册表登记。
+    Attributes:
+        provider: 本次请求使用的 provider（deepseek / ark / zhipu）；
+            None → 回落 settings.llm_provider 默认
+    """
 
-    注意：不配置 checkpointer——流式路径（astream_events）无 thread_id
-    可传，提前配置会报错；resume 功能接入时再配（见模块 docstring）。
+    provider: str | None = None
+
+
+@wrap_model_call
+async def _configurable_model(request, handler):
+    """模型调用拦截：按请求上下文 provider 动态选模型（运行时切换）。
+
+    每次模型调用（含主 agent 多轮）都经此换模型；context 缺省或
+    provider 为空时用默认配置。`request.override(model=...)` 仅替换
+    本次调用的模型实例，agent 本体保持单例复用。
+
+    注意：必须是 async 函数——项目走 astream_events（异步流式），
+    wrap_model_call 装饰同步函数时只提供同步钩子，异步上下文会抛错
+    （官方示例用同步 invoke，异步场景需 async 版本）。
+    """
+    provider = None
+    context = getattr(request.runtime, "context", None) if request.runtime else None
+    if context is not None:
+        provider = getattr(context, "provider", None)
+    model = get_chat_model(provider=provider)
+    return await handler(request.override(model=model))
+
+
+# 模块级单例：编译图无状态（无 checkpointer），进程内只构建一次
+_agent = None
+_agent_lock = threading.Lock()
+
+
+def get_agent():
+    """线程安全懒加载单例：deepagents 编译图（首次调用时构建一次）。
+
+    构建仅做内存图装配（无网络 I/O）；模型每次调用经
+    _configurable_model middleware 按 ChatContext.provider 动态选择，
+    单例本身不绑定具体 provider。
+    """
+    global _agent
+    if _agent is None:
+        with _agent_lock:
+            if _agent is None:
+                _agent = create_deep_agent(
+                    model=get_chat_model(),  # 默认 provider 兜底（middleware 会覆盖）
+                    system_prompt=DEFAULT_SYSTEM_PROMPT,
+                    subagents=load_subagents(),
+                    tools=[run_code_in_sandbox],
+                    middleware=[_configurable_model],
+                    context_schema=ChatContext,
+                )
+    return _agent
+
+
+def build_agent(model: BaseChatModel | None = None):
+    """获取主 Agent（历史签名兼容：model 参数已弃用，走进程单例）。
 
     Args:
-        model: ChatOpenAI 实例（get_chat_model 工厂产出）
-        system_prompt: 系统提示词
+        model: 兼容旧调用方；单例模式下忽略（模型经 middleware 运行时选择）
 
     Returns:
         deepagents 编译后的 Agent（LangGraph CompiledStateGraph）
     """
-    return create_deep_agent(
-        model=model,
-        system_prompt=system_prompt,
-        subagents=load_subagents(),
-        tools=[run_code_in_sandbox],
-    )
+    return get_agent()
 
 
 async def stream_agent_tokens(
-    agent, messages: list[BaseMessage]
+    agent, messages: list[BaseMessage], context: ChatContext | None = None
 ) -> AsyncIterator[str]:
     """流式执行 Agent，产出对话文本增量。
 
@@ -81,11 +135,14 @@ async def stream_agent_tokens(
     Args:
         agent: build_agent 的产物
         messages: LangChain 消息列表（含历史，按时间正序）
+        context: 请求级上下文（provider 选择）；None → 默认 provider
 
     Yields:
         模型生成文本增量（每片非空）
     """
-    async for evt in agent.astream_events({"messages": messages}, version="v2"):
+    async for evt in agent.astream_events(
+        {"messages": messages}, version="v2", context=context
+    ):
         if evt.get("event") != "on_chat_model_stream":
             continue
         chunk = evt.get("data", {}).get("chunk")
