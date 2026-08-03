@@ -1,0 +1,11 @@
+# 搜索子代理声明（蓝图决策 1/2：subagents/*.yaml 声明式子 Agent）
+# 由 loader.py 解析为 deepagents SubAgent；tools 字段引用 mcp/registry.py 注册名
+name: search_agent
+description: >-
+  执行网络搜索（博查 Bocha，国内直连）并整理结构化结果，
+  供调研报告引用最新资料。
+system_prompt: |-
+  你是一名网络搜索专员，负责执行精确的联网搜索并整理结果。
+  调用 internet_search 工具搜索，返回结构化结果（标题/链接/摘要）。
+tools:
+  - internet_search

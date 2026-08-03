@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import warnings
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
@@ -23,7 +24,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 由进程环境变量 APP_ENV 决定加载哪个 .env（docker compose --env-file 注入，
 # 或本地 export APP_ENV=dev）。绝不叠加读取多个 .env（会互相覆盖，难排查）。
 _APP_ENV = os.getenv("APP_ENV", "dev").lower()
-_ENV_FILE = ".env.prod" if _APP_ENV == "prod" else ".env.dev"
+
+# 项目根（backend/src/core → 项目根，与 paths.py 同一约定）。
+# 必须用绝对路径：pydantic-settings 从进程 cwd 找相对 env_file，而后端从
+# backend/ 启动（uvicorn -m），cwd 不含 .env.dev，会静默读到全空配置。
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_ENV_FILE = _PROJECT_ROOT / (".env.prod" if _APP_ENV == "prod" else ".env.dev")
 
 # ── 安全护栏：Clowder AI 生产 Redis 端口 ──
 # 家规硬约束：6399 是 Clowder AI 生产 Redis，外部项目严禁连接；dev/test 用 6398。
@@ -50,7 +56,7 @@ class Settings(BaseSettings):
     # ── LLM 多 provider（OpenAI 兼容协议）──
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/v1"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-v4-flash"
 
     ark_api_key: str = ""
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
@@ -62,13 +68,17 @@ class Settings(BaseSettings):
 
     llm_provider: str = Field(default="deepseek", description="deepseek / ark / zhipu")
 
-    # ── 沙箱（云端 OpenSandbox，本地不部署）──
+    # ── 沙箱（OpenSandbox：本地 dev 连 docker 8080，prod 连云端）──
     sandbox_url: str = ""
     sandbox_api_key: str = ""
 
     # ── 记忆/存储 ──
     redis_url: str = "redis://localhost:6379/0"
     db_path: str = "./data/wiki.db"
+
+    # ── 搜索（博查 Bocha：国内 Tavily 平替，2026-08-03 拍板）──
+    bocha_api_key: str = ""
+    bocha_base_url: str = "https://api.bocha.cn/v1"
 
     @model_validator(mode="after")
     def _guard_clowder_prod_redis(self) -> "Settings":
