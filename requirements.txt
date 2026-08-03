@@ -15,6 +15,7 @@ deepagents>=0.5   # 主 harness；更正：PyPI 包名是 deepagents（langchain
 
 # MCP 网关层
 fastmcp>=2.0
+langchain-mcp-adapters>=0.3.1   # MCP client：MultiServerMCPClient 连接外部 server
 
 # 沙箱层（云端 OpenSandbox）
 opensandbox>=0.1

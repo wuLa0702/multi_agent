@@ -68,6 +68,21 @@ CREATE TABLE IF NOT EXISTS models (
 
 CREATE INDEX IF NOT EXISTS idx_models_provider
     ON models(provider_id);
+
+-- 外部 MCP server 连接配置（McpClientManager 消费；stdio 时 url 为空）
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    transport   TEXT NOT NULL DEFAULT 'sse',   -- sse / streamable_http / stdio
+    url         TEXT NOT NULL DEFAULT '',      -- HTTP endpoint（stdio 时为空）
+    command     TEXT NOT NULL DEFAULT '',      -- stdio 可执行文件
+    args        TEXT NOT NULL DEFAULT '[]',    -- stdio 参数（JSON 数组）
+    headers     TEXT NOT NULL DEFAULT '{}',    -- HTTP headers（JSON 对象，含 auth token）
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
 """
 
 

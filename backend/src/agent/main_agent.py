@@ -37,6 +37,7 @@ from langchain_core.messages import BaseMessage
 
 from src.agent.subagents.loader import load_subagents
 from src.llm.adapter import get_chat_model
+from src.mcp.client import get_mcp_client_manager
 from src.mcp.tools.sandbox_tool import run_code_in_sandbox
 
 DEFAULT_SYSTEM_PROMPT = """你是一名资深研究员，负责开展深入调研，并输出一份精炼的研究报告。
@@ -101,11 +102,14 @@ def get_agent():
     if _agent is None:
         with _agent_lock:
             if _agent is None:
+                # 工具 = 内部工具 + 外部 MCP 工具（lifespan 连接收集，见 src/mcp/client.py）
+                internal_tools = [run_code_in_sandbox]
+                mcp_tools = get_mcp_client_manager().get_tools()
                 _agent = create_deep_agent(
                     model=get_chat_model(),  # 默认 provider 兜底（middleware 会覆盖）
                     system_prompt=DEFAULT_SYSTEM_PROMPT,
                     subagents=load_subagents(),
-                    tools=[run_code_in_sandbox],
+                    tools=internal_tools + mcp_tools,
                     middleware=[_configurable_model],
                     context_schema=ChatContext,
                 )
