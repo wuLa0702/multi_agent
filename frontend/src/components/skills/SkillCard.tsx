@@ -13,16 +13,16 @@ interface Props {
   item: SkillMarketItem;
   installing: boolean;
   installed: boolean;
-  onInstall: (item: SkillMarketItem) => Promise<void>;
+  onInstall: (item: SkillMarketItem, force?: boolean) => Promise<void>;
 }
 
 export default function SkillCard({ item, installing, installed, onInstall }: Props) {
   const [error, setError] = useState<string | null>(null);
 
-  const handleInstall = async () => {
+  const handleInstall = async (force = false) => {
     setError(null);
     try {
-      await onInstall(item);
+      await onInstall(item, force);
     } catch (e) {
       setError(e instanceof Error ? e.message : "安装失败");
     }
@@ -50,13 +50,26 @@ export default function SkillCard({ item, installing, installed, onInstall }: Pr
           </div>
         </div>
         {installed ? (
-          <Badge variant="secondary" className="shrink-0">已安装</Badge>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Badge variant="secondary">已安装</Badge>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2.5 text-xs"
+              onClick={() => handleInstall(true)}
+              disabled={installing}
+              title="重新拉取最新版本（升级）"
+            >
+              {installing && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+              升级
+            </Button>
+          </div>
         ) : (
           <Button
             size="sm"
             variant="outline"
             className="shrink-0 h-7 px-2.5 text-xs"
-            onClick={handleInstall}
+            onClick={() => handleInstall(false)}
             disabled={installing}
           >
             {installing && <Loader2 className="h-3 w-3 animate-spin mr-1" />}

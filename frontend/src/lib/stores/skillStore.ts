@@ -35,7 +35,7 @@ interface SkillState {
   searchMarket(source: string, type: "mcp_server" | "skill_md", query: string): Promise<void>;
   loadMoreMarket(): Promise<void>;
   loadInstalled(): Promise<void>;
-  installSkill(item: SkillMarketItem): Promise<void>;
+  installSkill(item: SkillMarketItem, force?: boolean): Promise<void>;
   toggleSkill(id: number, active: boolean): Promise<void>;
   uninstallSkill(id: number): Promise<void>;
 }
@@ -98,7 +98,7 @@ export const useSkillStore = create<SkillState>((set, get) => ({
     set({ installed: res.items, installedLoaded: true });
   },
 
-  async installSkill(item) {
+  async installSkill(item, force = false) {
     const key = item.source_url;
     if (get().installing.has(key)) return;
     set((s) => ({ installing: new Set(s.installing).add(key) }));
@@ -113,8 +113,11 @@ export const useSkillStore = create<SkillState>((set, get) => ({
         command: item.command,
         args: item.args,
         git_url: item.git_url,
+        force,
       });
-      set((s) => ({ installed: [installed, ...s.installed] }));
+      set((s) => ({
+        installed: [installed, ...s.installed.filter((it) => it.source_url !== item.source_url)],
+      }));
     } finally {
       set((s) => {
         const next = new Set(s.installing);

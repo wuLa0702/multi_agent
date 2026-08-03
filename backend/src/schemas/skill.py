@@ -67,6 +67,7 @@ class InstallRequest(BaseModel):
     """安装请求：按市场来源定位条目。
 
     mcp_server 类提供连接配置（由市场详情补全）；skill_md 类提供 git_url 下载。
+    force=True 时已安装也重新拉取覆盖（一键升级）；默认幂等跳过。
     """
 
     source: str = SKILL_SOURCE_SMITHERY
@@ -78,6 +79,7 @@ class InstallRequest(BaseModel):
     command: str = ""
     args: list[str] = Field(default_factory=list)
     git_url: str = ""
+    force: bool = False
 
 
 class SkillUpdateRequest(BaseModel):

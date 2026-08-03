@@ -130,9 +130,9 @@ function MarketView() {
             item={item}
             installing={installing.has(item.source_url)}
             installed={installedUrls.has(item.source_url)}
-            onInstall={async (it) => {
-              await installSkill(it);
-              showToast(`已安装 ${it.name}`, "success");
+            onInstall={async (it, force) => {
+              await installSkill(it, force);
+              showToast(force ? `已升级 ${it.name}` : `已安装 ${it.name}`, "success");
             }}
           />
         ))}

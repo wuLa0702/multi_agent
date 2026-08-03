@@ -75,7 +75,7 @@ async def install(req: InstallRequest):
 
     mcp_server 类：先拉市场详情补全连接地址，再写入 mcp_servers + 记录；
     skill_md 类：从 git_url 下载 SKILL.md 到本地目录。
-    已安装（同来源同条目）幂等返回现有记录。
+    已安装（同来源同条目）幂等返回现有记录；req.force=True 重新拉取覆盖（升级）。
     """
     if req.skill_type not in (SKILL_TYPE_MCP, SKILL_TYPE_MD):
         raise _error(400, "INVALID_SKILL_TYPE", f"未知 skill_type：{req.skill_type}")
@@ -91,7 +91,7 @@ async def install(req: InstallRequest):
 
     conn = await core_db.get_connection()
     try:
-        record = await installer.install_skill(conn, item)
+        record = await installer.install_skill(conn, item, force=req.force)
     except ValueError as e:
         raise _error(400, "INSTALL_FAILED", str(e)) from e
     finally:

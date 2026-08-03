@@ -125,24 +125,32 @@ def _auth_headers_for(item: SkillMarketItem) -> str:
     })
 
 
-async def install_skill(conn: aiosqlite.Connection, item: SkillMarketItem) -> InstalledSkill:
-    """安装市场条目到本地；已安装则幂等跳过。
+async def install_skill(
+    conn: aiosqlite.Connection,
+    item: SkillMarketItem,
+    force: bool = False,
+) -> InstalledSkill:
+    """安装市场条目到本地；已安装则幂等跳过（force=True 重新拉取覆盖 = 一键升级）。
 
     Args:
         conn: SQLite 连接（已初始化 schema）
         item: 市场条目（已含连接配置或 git_url）
+        force: True 时已存在也先卸载再全新安装（升级路径，复用 uninstall 清理逻辑）
 
     Returns:
-        已安装记录（新装或已存在）
+        已安装记录（新装 / 升级后 / 已存在）
 
     Raises:
         ValueError: 参数不完整 / skill 名不合法 / 下载失败
     """
-    # 幂等：同来源同条目已装 → 直接返回现有记录
+    # 幂等：同来源同条目已装 → force=False 直接返回现有记录；force=True 先清理再重装
     existing = await repo.get_installed_by_source(conn, item.source, item.source_url)
     if existing is not None:
-        logger.info("Skill 已安装，跳过：%s", item.source_url)
-        return existing
+        if not force:
+            logger.info("Skill 已安装，跳过：%s", item.source_url)
+            return existing
+        logger.info("Skill 升级（force）：卸载旧版本后重装 %s（id=%s）", item.source_url, existing.id)
+        await uninstall_skill(conn, existing.id)
 
     if item.skill_type == SKILL_TYPE_MCP:
         url, headers = await _resolve_mcp_connection(item)

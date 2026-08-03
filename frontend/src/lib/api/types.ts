@@ -114,7 +114,7 @@ export interface InstalledSkillListResponse {
   total: number;
 }
 
-/** POST /v1/skills/install 请求体 */
+/** POST /v1/skills/install 请求体（force=true 已安装也重新拉取覆盖 = 升级） */
 export interface InstallRequest {
   source: string;
   source_url: string;
@@ -125,6 +125,7 @@ export interface InstallRequest {
   command: string;
   args: string[];
   git_url: string;
+  force?: boolean;
 }
 
 // ── 请求体 ───────────────────────────────────────────────────────────────────
