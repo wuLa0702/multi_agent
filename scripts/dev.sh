@@ -23,32 +23,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# 清理指定端口旧进程（兼容 Linux/macOS lsof 与 Windows Git Bash netstat+taskkill）
-kill_port() {
-  local PORT="$1"
-  if command -v lsof >/dev/null 2>&1; then
-    local pids
-    pids=$(lsof -ti:"$PORT" 2>/dev/null || true)
-    if [ -n "$pids" ]; then
-      kill $pids 2>/dev/null || true
-      echo "✅ 已清理 $PORT 旧进程: $pids"
-    else
-      echo "ℹ️  $PORT 无残留进程"
-    fi
-  elif command -v netstat >/dev/null 2>&1; then
-    local pids p
-    pids=$(netstat -ano 2>/dev/null | grep ":$PORT" | grep -i "LISTENING" | awk '{print $NF}' | sort -u || true)
-    if [ -n "$pids" ]; then
-      for p in $pids; do
-        taskkill //F //PID "$p" >/dev/null 2>&1 && echo "✅ 已清理 $PORT 旧进程 PID=$p" || echo "⚠️  PID=$p 清理失败"
-      done
-    else
-      echo "ℹ️  $PORT 无残留进程"
-    fi
-  else
-    echo "⚠️  无 lsof/netstat，跳过 $PORT 旧进程清理"
-  fi
-}
+# 共享函数：kill_port（杀端口进程，Windows 走 PowerShell 精确杀 uvicorn 树+孤儿）、open_browser
+source "$ROOT/scripts/lib/common.sh"
 
 echo "=============================================="
 echo "  multi-agent 一键启动 (dev)"
@@ -134,6 +110,8 @@ if command -v curl >/dev/null 2>&1; then
 fi
 if [ "$FE_OK" = "1" ]; then
   echo "✅ 前端就绪: http://localhost:5176 （日志: logs/frontend-dev.log）"
+  # 自动弹出浏览器（Windows: cmd start；Linux: xdg-open；macOS: open）
+  open_browser "http://localhost:5176"
 else
   echo "⚠️  前端暂未就绪（可能仍在编译），查看 logs/frontend-dev.log"
 fi
