@@ -140,15 +140,21 @@ async def insert_mcp_server(
     source: str,
     source_url: str,
     version: str,
+    headers: str = "{}",
 ) -> int:
-    """插入外部 MCP server 连接配置；返回新行 id。"""
+    """插入外部 MCP server 连接配置；返回新行 id。
+
+    Args:
+        headers: HTTP headers JSON 字符串（如 {"Authorization": "Bearer ..."}，
+            市场托管 server 鉴权用；默认空对象）
+    """
     now = _now_iso()
     cursor = await conn.execute(
         """INSERT INTO mcp_servers
            (name, transport, url, command, args, headers, is_active, sort_order,
             source, source_url, version, installed_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, '{}', 1, 0, ?, ?, ?, ?, ?, ?)""",
-        (name, transport, url, command, args, source, source_url, version, now, now, now),
+           VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?)""",
+        (name, transport, url, command, args, headers, source, source_url, version, now, now, now),
     )
     await conn.commit()
     return cursor.lastrowid

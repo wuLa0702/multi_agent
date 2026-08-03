@@ -21,6 +21,7 @@ import httpx
 from src.core.paths import get_skill_md_dir
 from src.db import skill_repository as repo
 from src.schemas.skill import (
+    SKILL_SOURCE_SMITHERY,
     SKILL_TYPE_MCP,
     SKILL_TYPE_MD,
     InstalledSkill,
@@ -78,6 +79,52 @@ async def _download_skill_md(git_url: str, name: str) -> Path:
     return skill_file
 
 
+async def _resolve_mcp_connection(item: SkillMarketItem) -> tuple[str, str]:
+    """解析 mcp_server 的连接地址与鉴权 headers。
+
+    Smithery 托管 server：调 Connect 网关建 connection，URL 用
+    /connect/{ns}/{connectionId}/mcp（*.run.tools 直连 401，见 marketplace.py）；
+    需要 OAuth 的 server（state=auth_required）抛错提示授权。
+    其他来源（manual / 第三方直连 URL）：直接用条目自带 url + 空 headers。
+    """
+    if item.source == SKILL_SOURCE_SMITHERY:
+        from src.skills.marketplace import create_smithery_connection
+
+        version = item.version or item.name
+        conn = await create_smithery_connection(version)
+        if conn["state"] == "auth_required":
+            setup = conn.get("setup_url") or "Smithery 官网该 server 页面"
+            raise ValueError(
+                f"{item.name} 需要 OAuth 授权：请先在浏览器访问 {setup} 完成授权后重试安装"
+            )
+        if not conn["mcp_url"]:
+            raise ValueError(f"Smithery 连接创建失败：{item.name}")
+        return conn["mcp_url"], _auth_headers_for(item)
+    if not item.url:
+        raise ValueError(f"MCP server 缺少连接地址：{item.name}")
+    return item.url, "{}"
+
+
+def _auth_headers_for(item: SkillMarketItem) -> str:
+    """Smithery Connect 网关的鉴权 headers（JSON 字符串）。
+
+    - Authorization: Bearer API key（个人账号）
+    - MCP-Session-Id: smithery-stateless（官方 SDK 同款——跳过 MCP 握手，
+      Smithery 网关无状态）
+    未配置 key 时返回空对象（server 连接失败由 McpClientManager 降级跳过）。
+    """
+    if item.source != SKILL_SOURCE_SMITHERY:
+        return "{}"
+    from src.core.config import settings
+
+    if not settings.smithery_api_key:
+        return "{}"
+    return json.dumps({
+        "Authorization": f"Bearer {settings.smithery_api_key}",
+        "MCP-Session-Id": "smithery-stateless",
+    })
+
+
 async def install_skill(conn: aiosqlite.Connection, item: SkillMarketItem) -> InstalledSkill:
     """安装市场条目到本地；已安装则幂等跳过。
 
@@ -98,19 +145,22 @@ async def install_skill(conn: aiosqlite.Connection, item: SkillMarketItem) -> In
         return existing
 
     if item.skill_type == SKILL_TYPE_MCP:
-        if not item.url:
-            raise ValueError(f"MCP server 缺少连接地址：{item.name}")
+        url, headers = await _resolve_mcp_connection(item)
         args_json = json.dumps(item.args)
+        # name 必须 slug 化：McpClientManager tool_name_prefix=True 用它当工具前缀，
+        # DeepSeek 等模型 API 要求工具名只含 [a-zA-Z0-9_-]（"Vercel Grep_xxx" 含空格会被 400 拒绝）
+        server_name = re.sub(r"[^a-zA-Z0-9_-]", "_", item.name).strip("_") or "mcp_server"
         server_id = await repo.insert_mcp_server(
             conn,
-            name=item.name,
+            name=server_name,
             transport=item.transport,
-            url=item.url,
+            url=url,
             command=item.command,
             args=args_json,
             source=item.source,
             source_url=item.source_url,
             version=item.version,
+            headers=headers,
         )
         record = await repo.insert_installed(
             conn,

@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 9000
 
+    # ── Skill Market（Smithery 托管 server 连接鉴权；浏览无需 key）──
+    smithery_api_key: str = ""
+
     @property
     def is_prod(self) -> bool:
         """是否生产环境。"""

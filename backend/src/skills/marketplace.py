@@ -72,18 +72,25 @@ def _parse_server_item(raw: dict) -> SkillMarketItem:
 
 
 def _parse_skill_item(raw: dict) -> SkillMarketItem:
-    """Smithery /skills 条目 → SkillMarketItem（skill_md 类）。"""
+    """Smithery /skills 条目 → SkillMarketItem（skill_md 类）。
+
+    注意：热门列表的 qualifiedName 可能为 null（实测 2026-08-03）——
+    source_url 用 gitUrl 兜底，保证每个条目唯一（React key + 幂等去重都依赖它）。
+    """
     qn = raw.get("qualifiedName") or ""
+    git_url = raw.get("gitUrl") or ""
+    fallback = git_url or raw.get("id") or ""
+    source_url = f"https://smithery.ai/skills/{qn}" if qn else fallback
     return SkillMarketItem(
         name=raw.get("displayName") or qn or "unknown",
         description=raw.get("description") or "",
         source=SKILL_SOURCE_SMITHERY,
-        source_url=f"https://smithery.ai/skills/{qn}",
-        version=qn,
+        source_url=source_url,
+        version=qn or fallback,
         skill_type=SKILL_TYPE_MD,
         use_count=raw.get("totalActivations") or 0,
         verified=bool(raw.get("verified")),
-        git_url=raw.get("gitUrl") or "",
+        git_url=git_url,
     )
 
 
@@ -136,6 +143,80 @@ async def _fetch_server_detail(qualified_name: str) -> dict:
         resp = await client.get(f"{SMITHERY_API_BASE}/servers/{qualified_name}")
         resp.raise_for_status()
         return resp.json()
+
+
+# ── Smithery Connect 网关（托管 server 的正确连接方式）──
+# 实测（2026-08-03）：托管端点 *.run.tools 直接连 401；正确链路是
+# GET /namespaces 拿个人 namespace → POST /connect/{ns} 建 connection →
+# 连 https://api.smithery.ai/connect/{ns}/{connectionId}/mcp（Bearer API key
+# + MCP-Session-Id: smithery-stateless 跳过握手）。官方 @smithery/api 源码同款。
+
+_namespace_cache: str | None = None
+
+
+async def _smithery_namespace() -> str:
+    """取个人 Smithery namespace（注册时自动生成，进程内缓存）。
+
+    Raises:
+        ValueError: 未配置 SMITHERY_API_KEY
+        httpx.HTTPError: API 不可达
+    """
+    from src.core.config import settings
+
+    global _namespace_cache
+    if not settings.smithery_api_key:
+        raise ValueError("SMITHERY_API_KEY 未配置（.env.dev）——Smithery 托管 server 需鉴权")
+    if _namespace_cache:
+        return _namespace_cache
+    async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+        resp = await client.get(
+            f"{SMITHERY_API_BASE}/namespaces",
+            headers={"Authorization": f"Bearer {settings.smithery_api_key}"},
+        )
+        resp.raise_for_status()
+        namespaces = resp.json().get("namespaces") or []
+    if not namespaces:
+        raise ValueError("Smithery 账号无 namespace（注册后自动生成，请刷新页面确认）")
+    _namespace_cache = namespaces[0]["name"]
+    return _namespace_cache
+
+
+async def create_smithery_connection(qualified_name: str) -> dict:
+    """创建 Smithery connection，返回连接信息。
+
+    Args:
+        qualified_name: Smithery registry server 名（如 github / vercel/grep）
+
+    Returns:
+        {"connection_id": ..., "state": "connected"|"auth_required"|"error",
+         "mcp_url": ..., "setup_url": ... | None}
+
+    Raises:
+        ValueError: 未配置 key / namespace 缺失
+        httpx.HTTPError: API 不可达
+    """
+    from src.core.config import settings
+
+    namespace = await _smithery_namespace()
+    headers = {"Authorization": f"Bearer {settings.smithery_api_key}"}
+    async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+        resp = await client.post(
+            f"{SMITHERY_API_BASE}/connect/{namespace}",
+            headers={**headers, "Content-Type": "application/json"},
+            json={"server": qualified_name, "transport": "http"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    connection_id = data.get("connectionId") or ""
+    status = data.get("status") or {}
+    mcp_url = f"{SMITHERY_API_BASE}/connect/{namespace}/{connection_id}/mcp" if connection_id else ""
+    return {
+        "connection_id": connection_id,
+        "state": status.get("state") or "connected",
+        "mcp_url": mcp_url,
+        "setup_url": status.get("setupUrl") or status.get("authorizationUrl"),
+    }
 
 
 async def search_marketplace(
