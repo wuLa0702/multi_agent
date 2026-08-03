@@ -36,6 +36,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
 from src.agent.subagents.loader import load_subagents
+from src.core.paths import get_skill_md_dir
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
 from src.mcp.tools.sandbox_tool import run_code_in_sandbox
@@ -112,8 +113,22 @@ def get_agent():
                     tools=internal_tools + mcp_tools,
                     middleware=[_configurable_model],
                     context_schema=ChatContext,
+                    # SKILL.md 渐进式加载：Skill Market 下载的 skill 放这里，
+                    # SkillsMiddleware 启动时扫描（目录不存在也安全）
+                    skills=[str(get_skill_md_dir())],
                 )
     return _agent
+
+
+def rebuild_agent() -> None:
+    """失效 Agent 单例，下次请求重建（Skill Market 安装/卸载后调用）。
+
+    纯内存标记操作（编译图无状态），并发安全：get_agent 的双重检查锁
+    保证同一时刻只有一个线程在重建，重建期间到达的请求会等待锁。
+    """
+    global _agent
+    with _agent_lock:
+        _agent = None
 
 
 def build_agent(model: BaseChatModel | None = None):

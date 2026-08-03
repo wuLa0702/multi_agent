@@ -11,6 +11,7 @@ tool_name_prefix=True：多 server 同名工具加 server 名前缀，避免冲�
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -54,10 +55,27 @@ class McpClientManager:
             return
 
         client = MultiServerMCPClient(connections, tool_name_prefix=True)
-        tools = await client.get_tools()
+        # 逐个 server 取工具（gather return_exceptions）：单个 server 连不上
+        # （缺 key / 服务下线）只跳过它，不影响其他 server 与整体启动
+        tasks = [
+            client.get_tools(server_name=name)
+            for name in connections
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        tools: list[BaseTool] = []
+        failed: list[str] = []
+        for name, result in zip(connections, results, strict=True):
+            if isinstance(result, BaseException):
+                failed.append(name)
+                logger.warning("MCP server %s 连接/取工具失败（跳过）：%s", name, result)
+            else:
+                tools.extend(result)
+        if failed:
+            logger.warning("MCP 客户端共 %d 个 server，%d 个失败跳过", len(connections), len(failed))
+
         self._client = client
         self._tools = tools
-        logger.info("MCP 客户端已连接 %d 个 server，收集 %d 个工具", len(connections), len(tools))
+        logger.info("MCP 客户端已连接 %d 个 server，收集 %d 个工具", len(connections) - len(failed), len(tools))
 
     async def reload(self, conn: aiosqlite.Connection) -> None:
         """配置变更后重建连接与工具缓存（管理 API 接入后调用）。"""

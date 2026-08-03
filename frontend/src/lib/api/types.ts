@@ -68,6 +68,65 @@ export interface ProvidersResponse {
   providers: ProviderInfo[];
 }
 
+// ── Skill Market（GET/POST /v1/skills/*，市场 + 已安装）───────────────────────
+
+/** 市场条目（Smithery 归一化；mcp_server 带连接配置，skill_md 带 git_url） */
+export interface SkillMarketItem {
+  name: string;
+  description: string;
+  source: "smithery" | string;
+  source_url: string;
+  version: string;
+  skill_type: "mcp_server" | "skill_md";
+  use_count: number;
+  verified: boolean;
+  transport: string;
+  url: string;
+  command: string;
+  args: string[];
+  git_url: string;
+}
+
+/** 已安装 Skill 记录 */
+export interface InstalledSkill {
+  id: number;
+  name: string;
+  skill_type: "mcp_server" | "skill_md";
+  source: string;
+  source_url: string;
+  version: string;
+  install_path: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MarketplaceListResponse {
+  source: string;
+  items: SkillMarketItem[];
+  total: number;
+  page: number;
+  has_more: boolean;
+}
+
+export interface InstalledSkillListResponse {
+  items: InstalledSkill[];
+  total: number;
+}
+
+/** POST /v1/skills/install 请求体 */
+export interface InstallRequest {
+  source: string;
+  source_url: string;
+  name: string;
+  skill_type: "mcp_server" | "skill_md";
+  transport: string;
+  url: string;
+  command: string;
+  args: string[];
+  git_url: string;
+}
+
 // ── 请求体 ───────────────────────────────────────────────────────────────────
 
 /** POST /v1/chat/stream 请求体（message 与 resume_run_id 互斥） */

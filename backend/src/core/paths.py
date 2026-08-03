@@ -70,3 +70,15 @@ def get_workspace_dir() -> Path:
     base = get_app_dir() / "workspace"
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+def get_skills_dir() -> Path:
+    """Skill 存放根目录：云端 /data/skills，本地 {项目根}/data/skills。"""
+    base = get_app_dir() / "skills"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+def get_skill_md_dir() -> Path:
+    """SKILL.md 类 skill 目录（deepagents SkillsMiddleware 扫描源）。"""
+    base = get_skills_dir() / "skill_md"
+    base.mkdir(parents=True, exist_ok=True)
+    return base

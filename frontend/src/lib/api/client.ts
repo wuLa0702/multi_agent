@@ -11,6 +11,10 @@ import type {
   DeleteResponse,
   ErrorResponse,
   HealthResponse,
+  InstallRequest,
+  InstalledSkill,
+  InstalledSkillListResponse,
+  MarketplaceListResponse,
   MessagePage,
   ProvidersResponse,
   Session,
@@ -104,5 +108,51 @@ export const api = {
       method: "POST",
       body: JSON.stringify(req),
     });
+  },
+
+  /** GET /v1/skills/marketplace/list — 市场浏览 */
+  listMarketSkills(params: {
+    source?: string;
+    query?: string;
+    page?: number;
+    page_size?: number;
+    skill_type?: "mcp_server" | "skill_md";
+  }): Promise<MarketplaceListResponse> {
+    const p = new URLSearchParams();
+    if (params.source) p.set("source", params.source);
+    if (params.query) p.set("query", params.query);
+    if (params.page) p.set("page", String(params.page));
+    if (params.page_size) p.set("page_size", String(params.page_size));
+    if (params.skill_type) p.set("skill_type", params.skill_type);
+    return request<MarketplaceListResponse>(`/v1/skills/marketplace/list?${p}`);
+  },
+
+  /** POST /v1/skills/install — 一键安装 */
+  installSkill(req: InstallRequest): Promise<InstalledSkill> {
+    return request<InstalledSkill>("/v1/skills/install", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  },
+
+  /** GET /v1/skills/installed — 已安装列表 */
+  listInstalledSkills(): Promise<InstalledSkillListResponse> {
+    return request<InstalledSkillListResponse>("/v1/skills/installed");
+  },
+
+  /** PATCH /v1/skills/{id} — 启用/停用 */
+  updateSkill(
+    id: number,
+    body: { is_active: boolean },
+  ): Promise<InstalledSkill> {
+    return request<InstalledSkill>(`/v1/skills/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** DELETE /v1/skills/{id} — 卸载 */
+  deleteSkill(id: number): Promise<DeleteResponse> {
+    return request<DeleteResponse>(`/v1/skills/${id}`, { method: "DELETE" });
   },
 };

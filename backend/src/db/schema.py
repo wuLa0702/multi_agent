@@ -70,6 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_models_provider
     ON models(provider_id);
 
 -- 外部 MCP server 连接配置（McpClientManager 消费；stdio 时 url 为空）
+-- source/source_url/version/installed_at：Skill Market 安装来源追踪
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL,
@@ -80,10 +81,40 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     headers     TEXT NOT NULL DEFAULT '{}',    -- HTTP headers（JSON 对象，含 auth token）
     is_active   INTEGER NOT NULL DEFAULT 1,
     sort_order  INTEGER NOT NULL DEFAULT 0,
+    source      TEXT NOT NULL DEFAULT 'manual',  -- manual / smithery（来源市场）
+    source_url  TEXT NOT NULL DEFAULT '',        -- 市场条目页 URL
+    version     TEXT NOT NULL DEFAULT '',        -- 版本号（市场条目 qualifiedName）
+    installed_at TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+
+-- 已安装 Skill 记录（Skill Market 安装管理；mcp_server 与 skill_md 两类共用）
+CREATE TABLE IF NOT EXISTS installed_skills (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    skill_type  TEXT NOT NULL DEFAULT 'mcp_server',  -- mcp_server / skill_md
+    source      TEXT NOT NULL DEFAULT 'manual',      -- manual / smithery
+    source_url  TEXT NOT NULL DEFAULT '',
+    version     TEXT NOT NULL DEFAULT '',
+    install_path TEXT NOT NULL DEFAULT '',           -- skill_md 本地目录 / mcp_server 的 mcp_servers.id
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_skills_source
+    ON installed_skills(source);
 """
+
+
+# 旧库迁移：mcp_servers 新增的 Skill Market 列（已存在则跳过）
+_MCP_SERVERS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("source", "TEXT NOT NULL DEFAULT 'manual'"),
+    ("source_url", "TEXT NOT NULL DEFAULT ''"),
+    ("version", "TEXT NOT NULL DEFAULT ''"),
+    ("installed_at", "TEXT NOT NULL DEFAULT ''"),
+]
 
 
 async def init_schema(conn: aiosqlite.Connection) -> None:
@@ -96,4 +127,18 @@ async def init_schema(conn: aiosqlite.Connection) -> None:
         aiosqlite.Error: 建表失败（连接已关闭/损坏）
     """
     await conn.executescript(_SCHEMA_SQL)
+    await _migrate_mcp_servers_columns(conn)
     await conn.commit()
+
+
+async def _migrate_mcp_servers_columns(conn: aiosqlite.Connection) -> None:
+    """对旧库安全加列（ALTER TABLE ADD COLUMN，已存在则捕获跳过）。
+
+    SQLite 无 ADD COLUMN IF NOT EXISTS；逐列 try/except OperationalError
+    （duplicate column name）实现幂等，不影响新库（CREATE 已含这些列）。
+    """
+    for col_name, col_def in _MCP_SERVERS_NEW_COLUMNS:
+        try:
+            await conn.execute(f"ALTER TABLE mcp_servers ADD COLUMN {col_name} {col_def}")
+        except aiosqlite.OperationalError:
+            pass  # 列已存在（新库或已迁移过的库）

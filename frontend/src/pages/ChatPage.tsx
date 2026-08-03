@@ -1,12 +1,14 @@
 /**
- * 主聊天页 — 三区布局（会话侧栏 / 对话流 / Agent 直播台）。
+ * 主聊天页 — 三区布局（会话/技能侧栏 + 对话流 + Agent 直播台）。
+ * 左侧栏双 Tab：Sessions（历史会话）/ Skills（Skill 市场，见 components/skills）。
  * 编排：挂载加载会话列表 + 审批断点恢复提示（设计 §7.4）。
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useSessionStore } from "@/lib/stores/sessionStore";
 import { useChatStore } from "@/lib/stores/chatStore";
 import SessionList from "@/components/history/SessionList";
+import SkillMarketPanel from "@/components/skills/SkillMarketPanel";
 import MessageList from "@/components/chat/MessageList";
 import InputBar from "@/components/chat/InputBar";
 import ToolCallPanel from "@/components/agent/ToolCallPanel";
@@ -18,6 +20,7 @@ export default function ChatPage() {
   const loadList = useSessionStore((s) => s.loadList);
   const resume = useChatStore((s) => s.resume);
   const loadProviders = useChatStore((s) => s.loadProviders);
+  const [leftTab, setLeftTab] = useState<"sessions" | "skills">("sessions");
 
   useEffect(() => {
     void loadList().catch(() => undefined);
@@ -39,9 +42,26 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* 左：会话侧栏 */}
-      <aside className="w-56 shrink-0 border-r border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950">
-        <SessionList />
+      {/* 左：会话 / 技能 侧栏（双 Tab） */}
+      <aside className="flex w-56 shrink-0 flex-col border-r border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950">
+        <div className="flex shrink-0 border-b border-neutral-200 dark:border-neutral-800">
+          {(["sessions", "skills"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setLeftTab(tab)}
+              className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                leftTab === tab
+                  ? "text-neutral-900 dark:text-neutral-100 border-b-2 border-primary"
+                  : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+              }`}
+            >
+              {tab === "sessions" ? "会话" : "Skills"}
+            </button>
+          ))}
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {leftTab === "sessions" ? <SessionList /> : <SkillMarketPanel />}
+        </div>
       </aside>
 
       {/* 中：对话流 */}
