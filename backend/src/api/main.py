@@ -5,7 +5,7 @@
 - lifespan 关闭：释放 Redis 连接池
 - SQLite 惰性按请求开连接（单文件库，无常驻连接）
 
-启动：uvicorn src.api.main:app --reload --port 8000
+启动：uvicorn src.api.main:app --reload --port 8010
 """
 
 from __future__ import annotations
@@ -16,9 +16,14 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.chat import router as chat_router
 from src.api.health import router as health_router
 from src.core.config import settings
+from src.core.logging import setup_logging
 from src.core.redis import close_redis, get_redis
+
+# 日志配置（UTF-8 + 双滚动 + 2 周保留，见 .claude/rules/04-logging.md）
+setup_logging()
 
 
 @asynccontextmanager
@@ -48,3 +53,4 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(chat_router)

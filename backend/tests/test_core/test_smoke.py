@@ -26,7 +26,7 @@ def test_provider_default_deepseek() -> None:
     """正常路径：默认 provider 为 deepseek，配置键齐全。"""
     cfg = settings.provider_config()
     assert cfg["base_url"] == "https://api.deepseek.com/v1"
-    assert cfg["model"] == "deepseek-chat"
+    assert cfg["model"] == "deepseek-v4-flash"
     assert "api_key" in cfg
 
 

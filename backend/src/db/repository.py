@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
-from src.models.message import Message
-from src.models.session import Session
+from src.schemas.message import Message
+from src.schemas.session import Session
 
 
 def _now_iso() -> str:

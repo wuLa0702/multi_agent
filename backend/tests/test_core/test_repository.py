@@ -14,7 +14,7 @@ import aiosqlite
 
 from src.core import db as core_db
 from src.db import repository as repo
-from src.models.message import Message
+from src.schemas.message import Message
 
 
 @pytest_asyncio.fixture
