@@ -16,21 +16,8 @@
 Python 3.11+ · FastAPI (ASGI/SSE) · LangGraph + langchain-deepagents · FastMCP · OpenSandbox SDK · Redis + SQLite · LangSmith
 
 ## 目录结构（后端）
-```
-backend/src/
-├── api/          # Web 层：FastAPI 入口、SSE 流式、鉴权、中间件
-├── agent/        # Agent 层 ★核心：deepagents 主 Agent + 子 Agent YAML + graph 演进预留
-│   ├── subagents/    # 声明式子 Agent（YAML）
-│   ├── memory/       # Redis 短期 + SQLite 长期 + 用户画像
-│   ├── middlewares/  # 中间件栈（日志/重试/PII）
-│   └── skills/       # Skill 体系（SKILL.md + 渐进式加载）
-├── mcp/          # MCP 网关层：FastMCP server + 工具注册表
-├── sandbox/      # 沙箱层：adapter + opensandbox 实现（连云端）
-├── core/         # 基建：config / paths / logging / errors / security
-├── llm/          # LLM 适配层：deepseek/豆包/智谱 多 provider
-├── db/           # 数据访问层（参数化 SQL）
-└── models/       # 全项目 Pydantic 实体（禁裸 dict）
-```
+> 完整项目结构（前后端唯一真相源）见 `docs/架构/多agent项目-架构目录-v1.md` §2 目录树。
+> 本文件不再内嵌结构树——结构变更只改架构文档一处。
 依赖单向：`api → agent → {mcp, sandbox, memory, db}`，禁止反向。
 
 ## 核心约束
@@ -49,7 +36,12 @@ pip install -r requirements.txt        # 或 pip install -e .
 docker compose --env-file .env.dev up -d redis opensandbox
 
 # 启动后端（dev）
-uvicorn src.api.main:app --reload --port 8000    # backend/ 下执行
+uvicorn src.api.main:app --reload --port 8010    # backend/ 下执行
+
+# 一键启动全部（Docker 资源 + 前端 5176 + 后端 8010）
+bash scripts/dev.sh                            # Git Bash
+scripts\dev.bat                                # Windows cmd 直跑（等价包装）
+scripts\dev-restart.bat                        # 后端快重启（改后端代码时）
 
 # 测试
 pytest backend/tests
@@ -66,3 +58,35 @@ pytest backend/tests
 - 格式规则唯一载体：`docs/文档规范.md`（改规则只改它，不在各文档里重复抄规则）
 - 每次更新维护固定动作：更新时间 → 版本变更记录追加（具体到二级标题）→ 文件名版本号（大改升级）
 - 详见 `docs/文档规范.md`
+
+
+<!-- CAT-CAFE-GOVERNANCE-START -->
+> Pack version: 1.4.1 | Provider: claude
+
+## Clowder AI Governance Rules (Auto-managed)
+
+### Hard Constraints (immutable)
+- **Clowder AI runtime ports**: frontend 3003 and API 3004 are reserved by Clowder AI. Avoid using these ports for this project's dev servers.
+- **Redis port 6399** is Clowder AI's production Redis. Never connect to it from external projects. Use 6398 for dev/test.
+- **No self-review**: The same individual cannot review their own code. Cross-family review preferred.
+- **Identity is constant**: Never impersonate another cat. Identity is a hard constraint.
+
+### Collaboration Standards
+- A2A handoff uses five-tuple: What / Why / Tradeoff / Open Questions / Next Action
+- Vision Guardian: Read original requirements before starting. AC completion ≠ feature complete.
+- Review flow: quality-gate → request-review → receive-review → merge-gate
+- Skills are available via symlinked cat-cafe-skills/ — load the relevant skill before each workflow step
+- Shared rules: See cat-cafe-skills/refs/shared-rules.md for full collaboration contract
+
+### Quality Discipline (overrides "try simplest approach first")
+- **Bug: find root cause before fixing**. No guess-and-patch. Steps: reproduce → logs → call chain → confirm root cause → fix
+- **Uncertain direction: stop → search → ask → confirm → then act**. Never "just try it first"
+- **"Done" requires evidence** (tests pass / screenshot / logs). Bug fix = red test first, then green
+
+### Knowledge Engineering
+- Documents use YAML frontmatter (feature_ids, topics, doc_kind, created)
+- Three-layer info architecture: CLAUDE.md (≤100 lines) → Skills (on-demand) → refs/
+- Backlog: BACKLOG.md (hot) → Feature files (warm) → raw docs (cold)
+- Feature lifecycle: kickoff → discussion → implementation → review → completion
+- SOP: See docs/SOP.md for the 6-step workflow
+<!-- CAT-CAFE-GOVERNANCE-END -->

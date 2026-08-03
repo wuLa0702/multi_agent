@@ -1,11 +1,12 @@
 # 多 Agent 项目 — 前后端架构目录 v2（拍板版）
 
 > 📋 **规范**：遵循 `docs/文档规范.md`
-> 📌 **更新时间**：2026-08-02
+> 📌 **更新时间**：2026-08-03
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.6 | 2026-08-03 | §2 目录树更新为权威版（与代码落地对照，✅/⏳/✏️ 状态标注）；§2 models/ 更名 schemas/（代码已随迁）；§2 增补 core/db.py、redis.py、api/health.py 等实际落地项；新增「落地状态对照表」；同步说明：demo 脚本归 scripts/、tabbit-code 删除、测试结构以 20-testing.md 为准 |
 > | v2.5 | 2026-08-02 | §6.1 决策 6/9 修正：本地开发连本地 Docker（redis 6398 + opensandbox 8080），生产连云端；§6.2 待决策 #3 关闭（本地开发模式拍板）；§3 基础设施 docker-compose redis 端口对齐 6398；新增 §4 scripts/dev.sh 一键启动 |
 > | v2.4 | 2026-08-02 | 目录迁移：移入 `docs/架构/`；版本记录按新规范并入文档头（v1 → v2.3 全保留），正文版本表移除 |
 > | v2.3 | 2026-08-02 | §3 基础设施：docker-compose 编排落地（redis + opensandbox 服务，backend 占位）；OpenSandbox server 官方镜像 opensandbox/server + 挂载 docker.sock + deploy/opensandbox/sandbox.toml 配置；资源限额适配 2核4g（redis 256m / sandbox 512m / backend 1g）；§4 .env 补 SANDBOX_PORT / REDIS_PASSWORD；LangSmith Key 已配置验证 |
@@ -94,96 +95,136 @@ flowchart TB
 
 ```
 multi-agent-project/
-├── frontend/                       # 前端 ✅ React 19 + shadcn/ui + Tailwind 4（复用 wiki-ui-v2）
+├── frontend/                       # 前端 React 19 + shadcn/ui（纯通用对话可视化，无业务）
 │   ├── src/
 │   │   ├── pages/
-│   │   │   └── ChatPage.tsx        # 主界面：对话流 + 工具/参数/结果 三栏
+│   │   │   └── ChatPage.tsx        # 通用对话主界面：流式输出、工具调用链、人工审批
 │   │   ├── api/
-│   │   │   ├── client.ts           # SSE 封装（ai SDK，复用本项目模式）
-│   │   │   └── types.ts            # 与后端共享的类型（事件协议）
+│   │   │   ├── client.ts           # SSE 流式请求封装
+│   │   │   └── types.ts            # 前后端通用事件协议
 │   │   ├── components/
-│   │   │   ├── ToolCallPanel.tsx   # 工具调用展示（工具/参数/结果）
-│   │   │   ├── AgentTree.tsx       # 多 Agent 调用链可视化（主→子，vis-network 复用）
-│   │   │   ├── ApproveDialog.tsx   # 人工审批弹窗
-│   │   │   └── HistorySidebar.tsx
-│   │   ├── lib/                    # shadcn 工具（复用）
+│   │   │   ├── ToolCallPanel.tsx   # 通用工具调用展示
+│   │   │   ├── AgentTree.tsx       # 多子Agent调用链可视化
+│   │   │   ├── ApproveDialog.tsx   # 通用人工中断审批弹窗
+│   │   │   └── HistorySidebar.tsx  # 会话历史侧边栏
+│   │   ├── lib/                    # shadcn/ui 通用组件工具
 │   │   └── main.tsx
-│   ├── vite.config.ts              # proxy /api → localhost:8000
+│   ├── vite.config.ts              # 前端反向代理配置
 │   └── package.json
 │
-├── backend/                        # 后端 FastAPI (ASGI)
+├── backend/                        # 通用多Agent后端 FastAPI
 │   ├── src/
-│   │   ├── api/                    # Web 层
-│   │   │   ├── main.py             # FastAPI 入口（CORS、路由注册）
-│   │   │   ├── chat.py             # /api/chat/stream (SSE)、resume 断点恢复
-│   │   │   ├── history.py          # 会话 CRUD
-│   │   │   ├── auth/               # 鉴权（当前项目 src/core/auth/ 迁移 📌；纯本地 demo 可后置）
-│   │   │   ├── middleware.py       # 日志/限流/PII 中间件
-│   │   │   └── agent_loader.py     # Agent 单例 + 生命周期管理
-│   │   ├── agent/                  # Agent 层 ★核心 ✅ deepagents 主线
-│   │   │   ├── main_agent.py       # deepagents 主 Agent（AGENTS.md 操作手册）
-│   │   │   ├── subagents/          # 声明式子 Agent（YAML 配置，起步 2 个）
-│   │   │   │   ├── analyst.yaml    # ✅ 示例：分析专家
-│   │   │   │   └── executor.yaml   # ✅ 示例：执行专家
-│   │   │   ├── planner.py          # 任务规划（write_todos 落地）
-│   │   │   ├── summarizer.py       # 对话压缩（超阈值摘要，绝不做 todo 摘要）
-│   │   │   ├── approve.py          # 人工审批（interrupt/resume）
-│   │   │   ├── graph/              # ✅ 演进预留：LangGraph 手写主图
-│   │   │   │   ├── state.py        #   State 定义（TypedDict/Pydantic）
-│   │   │   │   └── graph.py        #   节点/边/条件分支/并行 Send API
-│   │   │   ├── memory/             # 记忆模块
-│   │   │   │   ├── short_term.py   # Redis：对话/任务计划/审批断点
-│   │   │   │   ├── long_term.py    # SQLite/向量库：历史结论/用户偏好
-│   │   │   │   └── profile.py      # 用户画像提取+注入
-│   │   │   ├── middlewares/        # Agent 中间件栈
-│   │   │   │   ├── logging.py      # 每步 trace（输入/工具/输出/耗时）
-│   │   │   │   ├── retry.py        # 重试/熔断
-│   │   │   │   └── pii.py          # 敏感信息拦截
-│   │   │   └── skills/             # Skill 体系（SKILL.md + 渐进式加载）
-│   │   ├── mcp/                    # MCP 网关层
-│   │   │   ├── server.py           # FastMCP server 注册
-│   │   │   ├── registry.py         # 工具分类注册表
-│   │   │   ├── http_base.py        # httpx AsyncClient（连接池/超时）
-│   │   │   └── tools/              # 各业务工具集（按域分包）
-│   │   ├── sandbox/                # 沙箱层 ✅ OpenSandbox（本地替身待决策#3）
-│   │   │   ├── adapter.py          #   统一接口：create/exec/upload/download
-│   │   │   ├── opensandbox.py      #   OpenSandbox 实现（注入 SANDBOX_PATH）
-│   │   │   ├── local_docker.py     #   本地替身实现（Docker，待决策#3 选 B 时启用）
-│   │   │   ├── health.py           # 健康检查+自动恢复
-│   │   │   ├── breaker.py          # 熔断器
-│   │   │   └── download.py         # 结果文件下载到本地
-│   │   ├── core/                   # 基建
-│   │   │   ├── config.py           # Pydantic BaseSettings（.env 多 provider）
-│   │   │   ├── paths.py            # ✅ 路径自适应：get_app_dir/get_log_dir/环境探测（迁移当前项目 path_resolver 模式 📌）
-│   │   │   ├── logging.py          # 结构化日志 + 请求追踪 ID
-│   │   │   ├── langsmith.py        # 监控接入（trace + eval）
-│   │   │   ├── errors.py           # 异常分级 + 统一错误响应
-│   │   │   └── security.py         # 路径校验/权限工具
-│   │   ├── llm/                    # LLM 适配层（当前项目 src/llm/ 模式迁移 📌）
-│   │   │   ├── adapter.py          # 统一接口：chat / chat_structured
-│   │   │   ├── providers.py        # deepseek / 豆包 / 智谱 多 provider 切换
-│   │   │   └── retry.py            # 超时 + 重试（LLM 调用必须加）
-│   │   ├── db/                     # 数据访问层（参数化 SQL，无拼接）
-│   │   └── models/                 # 全项目 Pydantic 实体模型（禁裸 dict）
-│   ├── tests/                      # 分层测试
-│   │   ├── test_agent/  test_api/  test_mcp/  test_sandbox/
-│   │   └── conftest.py             # mock LLM、tmp_path、:memory:
-│   ├── scripts/                    # 启动/运维脚本
-│   │   ├── dev.sh                  # 一键启动（后端+前端+沙箱）
-│   │   ├── seed_skills.py          # skill 下载→测试→分配
-│   │   └── smoke_test.py           # 冒烟测试
-│   ├── .env.example                # 配置模板（密钥不入库）
-│   ├── langgraph.json              # LangGraph 图注册（build_agent 入口）
-│   ├── pyproject.toml              # 依赖管理
-│   └── docker-compose.yml          # 本地+云端统一编排
+│   │   ├── api/                    # HTTP接入层（通用接口，无业务）
+│   │   │   ├── main.py             # FastAPI入口、CORS、全局路由注册
+│   │   │   ├── chat.py             # 流式对话、断点恢复通用接口
+│   │   │   ├── history.py          # 会话历史通用CRUD
+│   │   │   ├── auth/               # 通用鉴权模块（可后置）
+│   │   │   └── agent_loader.py     # Agent全局单例生命周期管理
+│   │   ├── agent/                  # 多智能体核心（纯通用调度逻辑，无业务技能）
+│   │   │   ├── main_agent.py        # 主Agent调度入口
+│   │   │   ├── graph/              # LangGraph 通用状态流转图
+│   │   │   │   ├── state.py         # 全局通用State结构体
+│   │   │   │   └── graph.py         # 节点、分支、并行调度通用逻辑
+│   │   │   ├── subagents/          # 声明式子Agent通用加载器（yaml配置，无业务预置）
+│   │   │   │   └── template.yaml    # 空白子Agent配置模板
+│   │   │   ├── memory/             # 通用记忆模块
+│   │   │   │   ├── state_store/     # Redis短时记忆：会话、审批断点、运行任务
+│   │   │   │   ├── vector_store/    # 向量库长时记忆：通用知识库、历史对话摘要
+│   │   │   │   └── profile.py       # 通用用户画像提取
+│   │   │   ├── middlewares/         # Agent通用中间件栈
+│   │   │   │   ├── logging.py
+│   │   │   │   ├── retry.py
+│   │   │   │   └── pii.py
+│   │   │   ├── skills/              # 【框架层】通用技能加载运行时（代码逻辑，无业务配置）
+│   │   │   ├── planner.py           # 通用任务拆解规划器
+│   │   │   ├── summarizer.py        # 通用对话摘要压缩
+│   │   │   └── approve.py           # 通用人工审批中断/恢复逻辑
+│   │   ├── mcp/                    # 通用MCP工具网关（对接外部任意第三方服务，无预置业务）
+│   │   │   ├── server.py            # MCP服务注册通用逻辑
+│   │   │   ├── registry.py          # 通用工具注册表
+│   │   │   ├── http_base.py         # 通用异步HTTP连接池
+│   │   │   ├── adapters/            # 第三方服务兼容适配器（预留）
+│   │   │   └── tools/               # 使用者自行添加业务工具，框架不预置
+│   │   ├── sandbox/                # 通用代码沙箱层（通用文件/代码执行，无业务报表）
+│   │   │   ├── adapter.py           # 沙箱统一抽象接口
+│   │   │   ├── opensandbox.py
+│   │   │   ├── local_docker.py
+│   │   │   ├── health.py           # 通用沙箱健康检测
+│   │   │   ├── breaker.py           # 通用熔断保护
+│   │   │   └── download.py          # 通用文件导出能力
+│   │   ├── llm/                    # 通用大模型适配层，多厂商无感切换
+│   │   │   ├── adapter.py
+│   │   │   ├── providers.py
+│   │   │   └── retry.py
+│   │   ├── core/                   # 全局通用基建（全项目复用，无业务）
+│   │   │   ├── config.py            # 全局配置读取
+│   │   │   ├── paths.py             # 统一路径管理：日志、下载、技能资源目录
+│   │   │   ├── logging.py           # 结构化日志、请求追踪ID
+│   │   │   ├── langsmith.py         # 通用链路监控
+│   │   │   ├── errors.py            # 统一异常处理
+│   │   │   ├── security.py          # 通用安全校验
+│   │   │   └── middlewares/         # 全局通用中间件：限流、PII、鉴权
+│   │   ├── db/                     # 通用数据持久层
+│   │   │   ├── models/             # ORM数据库通用表结构（会话、用户、审批记录）
+│   │   │   └── repositories/       # 通用仓储CRUD封装
+│   │   └── schemas/                # 全局通用Pydantic数据模型（2026-08-03 由 models/ 更名）
+│   ├── tests/                      # 分层通用测试，无业务用例
+│   │   ├── unit/                   # 单模块单元测试（llm/mcp/sandbox/agent基础逻辑）
+│   │   ├── integration/             # 模块联动集成测试
+│   │   ├── e2e/                    # 全链路流式对话E2E测试
+│   │   └── conftest.py             # 通用测试fixture：mock LLM、临时存储
+│   ├── scripts/                    # 通用开发/运维脚本，无业务初始化逻辑
+│   │   ├── dev.sh                  # 一键启动开发环境
+│   │   └── smoke_test.py           # 通用冒烟测试
+│   ├── .env.example                # 通用环境变量模板（LLM、沙箱、数据库配置）
+│   ├── langgraph.json
+│   ├── pyproject.toml
+│   └── docker-compose.yml          # 通用容器编排
 │
-├── deploy/                         # 部署
-│   ├── nginx.conf                  # 前端静态托管 + /api 反代
-│   └── .env.prod                   # 生产配置
-└── docs/                           # 文档
-    ├── AGENTS.md                   # Agent 全局操作手册
-    └── learnings/                  # 踩坑笔记（延续当前项目 .learnings 习惯）
+├── deploy/                         # 通用部署配置，无业务定制
+│   ├── nginx.conf
+│   └── .env.prod
+│
+├── skill-resources/                # 【空业务资源目录】使用者后续自定义业务技能配置存放处
+│                                   # 框架初始仅保留空文件夹，不预置业务文件
+│
+├── download/                       # 沙箱文件统一输出目录，core/paths统一管控
+│
+└── docs/                           # 通用框架文档，无业务操作手册
+    ├── architecture/               # 整体分层架构、数据流说明
+    ├── agent-manual/              # 通用Agent、子Agent配置使用手册
+    └── learnings/                 # 框架开发踩坑记录
 ```
+
+> **落地状态对照**（2026-08-03 实测，✅ 已落地 / ⏳ 演进预留 / ✏️ 实际偏差）：
+>
+> | 蓝图条目 | 状态 | 说明 |
+> |---|---|---|
+> | api/main.py · chat.py | ✅ | 已落地（另 health.py 已落地，蓝图未列）|
+> | api/history.py · agent_loader.py · auth/ | ⏳ | 演进预留（会话 CRUD / Agent 单例 / 鉴权）|
+> | agent/main_agent.py | ✅ | deepagents 编排：搜索子代理 + 沙箱工具 |
+> | agent/subagents/ | ✏️ | loader.py + search_agent.yaml（蓝图 template.yaml 空白模板，实际已落业务子代理）|
+> | agent/planner · summarizer · approve | ⏳ | 演进预留 |
+> | agent/graph · memory · middlewares · skills | ⏳ | 空目录占位 |
+> | mcp/registry.py · tools/ | ✏️ | tools 已放业务工具（search.py + sandbox_tool.py）——「工具落 mcp」拍板；蓝图"空目录"不再适用 |
+> | mcp/server.py · http_base.py · adapters/ | ⏳ | FastMCP 协议化演进预留（registry 清单已具备）|
+> | sandbox/adapter.py | ✏️ | OpenSandbox 实现内聚单文件（本地 docker / 云端仅换 URL），暂不拆 opensandbox/local_docker |
+> | sandbox/health · breaker · download | ⏳ | 演进预留（adapter 内已含超时语义）|
+> | llm/adapter.py | ✏️ | 单 provider 内聚（timeout/retry 含），providers/retry 多厂商时再拆 |
+> | core/config · paths · logging · errors | ✅ | 已落地 |
+> | core/db.py · redis.py | ✏️ | 蓝图未列但已落地（SQLite 连接 / Redis 连接池，chat 依赖）|
+> | core/langsmith · security · middlewares | ⏳ | 演进预留（LangSmith 经 .env 注入，无需独立模块）|
+> | db/schema.py · repository.py | ✏️ | 项目既定规范「SQL 集中 schema.py + DAO」；蓝图 ORM 理想化 |
+> | db/models · repositories | ⏳ | ORM 化演进预留 |
+> | schemas/ | ✅ | 2026-08-03 由 models/ 更名（events/message/session），.claude/rules/10-api.md 已同步 |
+> | tests/ 分层 | ✏️ | 实际 test_agent/test_api/test_core/test_mcp/test_sandbox（以 .claude/rules/20-testing.md 为准）|
+> | scripts/ | ✏️ | dev.sh/dev.bat/dev-restart.* 已落地；agent_demo.py 2026-08-03 由 agent/ 移入；smoke_test.py ⏳ |
+> | pyproject.toml · docker-compose.yml | ✏️ | 在项目根（非 backend/）——移动会破坏文档命令与 dev.sh |
+> | .env.example · langgraph.json | ⏳ | 待建（当前 .env.dev 已配置）|
+> | deploy/ | ✅ | 已有目录 |
+> | skill-resources/ · download/ | ⏳ | 蓝图规划空资源目录，尚未创建 |
+> | docs/architecture · agent-manual | ⏳ | 蓝图规划目录，当前文档在 docs/ 根下 |
+>
 
 ---
 
