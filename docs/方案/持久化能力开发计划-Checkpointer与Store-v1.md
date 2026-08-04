@@ -6,6 +6,7 @@
 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v1.1 | 2026-08-04 | §1.3 范围澄清（删 Redis 误导、标注单用户不扩多租户/云）；§2 新增「核心代码速览」（Checkpointer 三段 + Store 两段） |
 > | v1 | 2026-08-04 | 初版：总分总结构持久化能力计划（Checkpointer 断点恢复 + Store 长期记忆） |
 
 > **目录**：
@@ -45,14 +46,58 @@
 
 | 在本计划内 | 不在本计划内 |
 |-----------|-------------|
-| Checkpointer 断点持久化（SQLite） | 向量库选型与 embedding 服务 |
-| resume_run_id 真实现 + 审批真恢复 | Redis 记忆重构（维持现状） |
-| Store 长期记忆（文件记忆 + 语义记忆两层次） | 用户体系 / 多租户隔离 |
-| thread_id ↔ session_id 映射约定 | 云上部署与水平扩展 |
+| Checkpointer 断点持久化（SQLite） | 向量库选型与 embedding 服务（P2 语义记忆的可选增强，可后置） |
+| resume_run_id 真实现 + 审批真恢复 | 用户体系 / 多租户——**个人学习项目明确不做**：加 user_id 字段简单，但传播面广（所有表 / API 鉴权 / Agent 上下文 / checkpointer thread_id / store 分区 / 前端登录），单用户无此需求 |
+| Store 长期记忆（文件记忆 + 语义记忆两层次） | 云上部署与水平扩展——单机部署（个人项目），无此需求 |
+| thread_id ↔ session_id 映射约定 | Redis 记忆——**说明**：对话持久化始终在 SQLite（长期正确做法），Redis 仅作缓存（当前只用于 health），**不迁移** |
 
 ---
 
 ## 2. 分：开发计划
+
+### 2.0 核心代码速览（先看代码，再看细节）
+
+> 完整落地见 A/B 改造点；本速览为直观理解（API 与 langgraph-checkpoint-sqlite 3.1.0 / deepagents 一致）。
+
+#### Checkpointer 核心三段
+
+```python
+# ① 编译时挂载（main_agent.py）——图从无状态变有状态
+from langgraph.checkpoint.sqlite.aio import SqliteSaver
+async with SqliteSaver.from_conn_string(str(get_checkpointer_path())) as saver:
+    _agent = create_deep_agent(
+        model=get_chat_model(),
+        checkpointer=saver,          # ← 状态快照链落 SQLite（表由 Saver 自管）
+        middleware=[...],
+    )
+
+# ② 每次执行必带 thread_id（stream_agent_tokens）——⚠️ 不传直接报错
+config = {"configurable": {"thread_id": session_id}}   # thread_id == session_id
+async for evt in agent.astream_events(
+    {"messages": messages}, version="v2", context=context, config=config
+):
+
+# ③ 审批恢复（chat.py resume 分支）——checkpoint_id 精确恢复挂起点
+config = {"configurable": {"thread_id": session_id, "checkpoint_id": resume_run_id}}
+```
+
+#### Store 核心两段
+
+```python
+# ① 挂载 memory + store（main_agent.py）
+from langgraph.store.memory import InMemoryStore    # 或 SqliteStore（持久化）
+_agent = create_deep_agent(
+    model=...,
+    memory=[str(get_memory_dir())],  # 文件记忆：AGENTS.md 渐进记忆
+    store=store,                     # 语义记忆：键值 + 语义检索
+)
+
+# ② 记忆写入 / 检索
+await store.aput(("memory", session_id), "facts", {"事实": "..."})
+results = await store.asearch(("memory", session_id))
+```
+
+---
 
 ### A. Checkpointer 断点持久化（P0，优先）
 
