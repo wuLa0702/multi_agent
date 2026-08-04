@@ -106,6 +106,13 @@ CREATE TABLE IF NOT EXISTS installed_skills (
 
 CREATE INDEX IF NOT EXISTS idx_skills_source
     ON installed_skills(source);
+
+-- 系统配置（key/value，2026-08-04 后端开发计划 P1：设置页开关持久化）
+CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
 """
 
 

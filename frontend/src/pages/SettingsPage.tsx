@@ -22,13 +22,14 @@ import {
   Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api/client";
 import { useChatStore } from "@/lib/stores/chatStore";
 import { useSkillStore } from "@/lib/stores/skillStore";
 import { useTheme } from "@/hooks/useTheme";
 import InstalledSkillRow from "@/components/skills/InstalledSkillRow";
 import { showToast } from "@/components/shared/Toast";
 import { showConfirm } from "@/components/ui/confirm-dialog";
-import type { ProviderInfo } from "@/lib/api/types";
+import type { McpServerInfo, ProviderInfo } from "@/lib/api/types";
 
 type SettingKey = "account" | "mcp" | "skills" | "system" | "appearance";
 
@@ -40,33 +41,17 @@ const SETTING_MENU: { key: SettingKey; label: string; icon: typeof KeyRound; des
   { key: "appearance", label: "外观主题", icon: Palette, desc: "亮色 / 暗色 / 跟随系统" },
 ];
 
-// ── mock 数据（后端未实现的接口，标注 ⚠️ MOCK）──
+// ── 系统配置开关定义（真实持久化，2026-08-04 P1 去 mock）──
 
-interface MockMcpRow {
-  id: string;
-  name: string;
-  type: string;
-  endpoint: string;
-  active: boolean;
-}
-
-/** ⚠️ MOCK：MCP 管理行（后端无管理 API，演示用） */
-const MOCK_MCP_ROWS: MockMcpRow[] = [
-  { id: "gw", name: "Smithery 网关", type: "streamable_http", endpoint: "api.smithery.ai/connect/…/mcp", active: true },
-  { id: "bocha", name: "博查搜索", type: "http", endpoint: "api.bocha.cn/v1", active: true },
-  { id: "sandbox", name: "OpenSandbox", type: "http", endpoint: "localhost:8080", active: true },
-];
-
-interface MockSwitch {
+interface SwitchDef {
   key: string;
   label: string;
   desc: string;
-  value: boolean;
+  value: boolean; // 默认值（后端无配置时）
 }
 
-/** ⚠️ MOCK：系统配置开关（后端无接口，演示用） */
-const MOCK_SYSTEM_SWITCHES: MockSwitch[] = [
-  { key: "log_report", label: "前端日志上报", desc: "将前端错误批量上报到后端（当前 console-only）", value: false },
+const SYSTEM_SWITCHES: SwitchDef[] = [
+  { key: "log_report", label: "前端日志上报", desc: "将前端错误批量上报到后端 logs/frontend.log", value: false },
   { key: "auto_update", label: "Skill 自动更新", desc: "市场技能有新版本时自动升级", value: false },
   { key: "stream_accel", label: "流式渲染加速", desc: "逐字渲染 vs 分块渲染（大模型长文更流畅）", value: true },
 ];
@@ -81,17 +66,46 @@ export default function SettingsPage() {
   const toggleSkill = useSkillStore((s) => s.toggleSkill);
   const uninstallSkill = useSkillStore((s) => s.uninstallSkill);
 
-  // mock 开关状态（本地 state）
-  const [switches, setSwitches] = useState<Record<string, boolean>>(
-    Object.fromEntries(MOCK_SYSTEM_SWITCHES.map((s) => [s.key, s.value])),
-  );
-  const [mockMcp, setMockMcp] = useState<MockMcpRow[]>(MOCK_MCP_ROWS);
+  // 真实数据（2026-08-04 P1 去 mock）：MCP 连接 + 系统配置
+  const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
+  const [mcpLoading, setMcpLoading] = useState(true);
+  const [switches, setSwitches] = useState<Record<string, boolean>>({});
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     void loadProviders();
     void loadInstalled().catch(() => undefined);
+    // MCP 连接列表（真实）
+    void api
+      .listMcpServers()
+      .then((res) => setMcpServers(res.items))
+      .catch(() => setMcpServers([]))
+      .finally(() => setMcpLoading(false));
+    // 系统配置（真实，缺省用默认值）
+    void api
+      .getSettings()
+      .then((res) => {
+        const parsed: Record<string, boolean> = {};
+        for (const s of SYSTEM_SWITCHES) {
+          const raw = res.settings[s.key];
+          parsed[s.key] = raw === undefined ? s.value : raw === "true";
+        }
+        setSwitches(parsed);
+        setSettingsLoaded(true);
+      })
+      .catch(() => {
+        setSwitches(Object.fromEntries(SYSTEM_SWITCHES.map((s) => [s.key, s.value])));
+        setSettingsLoaded(true);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** 开关变更 → 后端持久化 */
+  const handleSwitchChange = (key: string, value: boolean) => {
+    setSwitches((prev) => ({ ...prev, [key]: value }));
+    void api.putSettings({ [key]: String(value) }).catch(() => showToast("配置保存失败", "error"));
+    showToast(value ? "已开启" : "已关闭", "success");
+  };
 
   const current = SETTING_MENU.find((m) => m.key === menu)!;
 
@@ -173,7 +187,26 @@ export default function SettingsPage() {
             </div>
           )}
           {menu === "mcp" && (
-            <McpSection rows={mockMcp} onToggle={(id) => setMockMcp((r) => r.map((x) => (x.id === id ? { ...x, active: !x.active } : x)))} />
+            <McpSection
+              rows={mcpServers}
+              loading={mcpLoading}
+              onToggle={async (id, active) => {
+                await api.updateMcpServer(id, { is_active: active }).catch(() => showToast("操作失败", "error"));
+                setMcpServers((prev) => prev.map((x) => (x.id === id ? { ...x, is_active: active } : x)));
+                showToast(active ? "已启用" : "已停用", "success");
+              }}
+              onDelete={async (id) => {
+                const ok = await showConfirm("删除该 MCP 连接？（关联 Skill 记录一并删除）", {
+                  title: "删除连接",
+                  confirmLabel: "删除",
+                  variant: "destructive",
+                });
+                if (!ok) return;
+                await api.deleteMcpServer(id).catch(() => showToast("删除失败", "error"));
+                setMcpServers((prev) => prev.filter((x) => x.id !== id));
+                showToast("已删除", "success");
+              }}
+            />
           )}
           {menu === "skills" && (
             <div className="space-y-2">
@@ -198,19 +231,19 @@ export default function SettingsPage() {
           )}
           {menu === "system" && (
             <div className="space-y-2">
-              {MOCK_SYSTEM_SWITCHES.map((s) => (
-                <SwitchCard
-                  key={s.key}
-                  label={s.label}
-                  desc={s.desc}
-                  checked={switches[s.key]}
-                  onChange={(v) => {
-                    setSwitches((prev) => ({ ...prev, [s.key]: v }));
-                    showToast(`${s.label}：${v ? "已开启" : "已关闭"}`, "success");
-                  }}
-                  mock
-                />
-              ))}
+              {!settingsLoaded && (
+                <p className="py-8 text-center text-xs text-muted-foreground">加载配置中…</p>
+              )}
+              {settingsLoaded &&
+                SYSTEM_SWITCHES.map((s) => (
+                  <SwitchCard
+                    key={s.key}
+                    label={s.label}
+                    desc={s.desc}
+                    checked={switches[s.key] ?? s.value}
+                    onChange={(v) => handleSwitchChange(s.key, v)}
+                  />
+                ))}
             </div>
           )}
         </div>
@@ -325,50 +358,62 @@ function AccountSection({ providers }: { providers: ProviderInfo[] }) {
   );
 }
 
-// ── MCP 管理（⚠️ MOCK 数据）──
+// ── MCP 管理（真实数据 GET /v1/mcp-servers，2026-08-04 P1 去 mock）──
 
 function McpSection({
   rows,
+  loading,
   onToggle,
+  onDelete,
 }: {
-  rows: MockMcpRow[];
-  onToggle: (id: string) => void;
+  rows: McpServerInfo[];
+  loading: boolean;
+  onToggle: (id: number, active: boolean) => void;
+  onDelete: (id: number) => void;
 }) {
   return (
     <div className="space-y-2">
-      <p className="text-[10px] text-warning">⚠️ MOCK：后端无 MCP 管理接口，以下为演示数据</p>
+      {loading && <p className="py-8 text-center text-xs text-muted-foreground">加载中…</p>}
+      {!loading && rows.length === 0 && (
+        <p className="py-8 text-center text-xs text-muted-foreground">
+          暂无 MCP 连接，去能力市场安装 Skill 或手动配置
+        </p>
+      )}
       {rows.map((r) => (
         <div key={r.id} className="card-hover flex items-center gap-3 rounded-xl border border-border bg-card p-3.5 shadow-xs">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
-            {r.type === "http" ? <Globe className="size-4" /> : <Server className="size-4" />}
+            {r.transport === "http" ? <Globe className="size-4" /> : <Server className="size-4" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 text-sm font-medium">
               {r.name}
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{r.type}</span>
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{r.transport}</span>
+              {r.source !== "manual" && (
+                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">{r.source}</span>
+              )}
             </div>
-            <div className="truncate text-xs text-muted-foreground">{r.endpoint}</div>
+            <div className="truncate text-xs text-muted-foreground">{r.url || "—"}</div>
           </div>
           <button
             type="button"
-            onClick={() => onToggle(r.id)}
+            onClick={() => onToggle(r.id, !r.is_active)}
             className={cn(
               "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200",
-              r.active ? "bg-primary" : "bg-muted-foreground/40",
+              r.is_active ? "bg-primary" : "bg-muted-foreground/40",
             )}
-            title={r.active ? "点击停用" : "点击启用"}
-            aria-label={`${r.active ? "停用" : "启用"} ${r.name}`}
+            title={r.is_active ? "点击停用" : "点击启用"}
+            aria-label={`${r.is_active ? "停用" : "启用"} ${r.name}`}
           >
             <span
               className={cn(
                 "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200",
-                r.active ? "translate-x-[18px]" : "translate-x-[3px]",
+                r.is_active ? "translate-x-[18px]" : "translate-x-[3px]",
               )}
             />
           </button>
           <button
             type="button"
-            onClick={() => void showConfirm(`删除 MCP 连接「${r.name}」？（mock）`).then((ok) => ok && showToast("已删除（mock）", "success"))}
+            onClick={() => onDelete(r.id)}
             className="press rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-destructive"
             aria-label="删除"
           >

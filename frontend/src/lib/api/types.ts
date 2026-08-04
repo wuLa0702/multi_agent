@@ -116,6 +116,40 @@ export interface InstalledSkillListResponse {
   total: number;
 }
 
+// ── MCP 管理 + 系统配置（2026-08-04 P1，设置页去 mock）────────────────────────
+
+/** MCP 连接配置（GET /v1/mcp-servers，不含鉴权 headers） */
+export interface McpServerInfo {
+  id: number;
+  name: string;
+  transport: string;
+  url: string;
+  is_active: boolean;
+  source: string;
+  version: string;
+}
+
+export interface McpServerListResponse {
+  status: string;
+  items: McpServerInfo[];
+  total: number;
+}
+
+export interface SettingsResponse {
+  status: string;
+  settings: Record<string, string>;
+}
+
+/** 前端日志条目（POST /v1/frontend/logs） */
+export interface FrontendLogEntry {
+  level: string;
+  source: string;
+  message: string;
+  stack?: string | null;
+  url?: string | null;
+  ts?: number | null;
+}
+
 /** POST /v1/skills/install 请求体（force=true 已安装也重新拉取覆盖 = 升级） */
 export interface InstallRequest {
   source: string;

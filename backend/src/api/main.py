@@ -22,8 +22,10 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.api.chat import router as chat_router
 from src.api.health import router as health_router
+from src.api.mcp_servers import router as mcp_servers_router
 from src.api.providers import router as providers_router
 from src.api.sessions import router as sessions_router
+from src.api.settings import router as settings_router
 from src.api.skills import router as skills_router
 from src.core import db as core_db
 from src.core.config import settings
@@ -85,6 +87,8 @@ app.include_router(chat_router)
 app.include_router(providers_router)
 app.include_router(sessions_router)
 app.include_router(skills_router)
+app.include_router(mcp_servers_router)
+app.include_router(settings_router)
 
 
 class McpMountMiddleware:

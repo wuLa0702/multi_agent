@@ -10,15 +10,18 @@ import type {
   ApproveRequest,
   DeleteResponse,
   ErrorResponse,
+  FrontendLogEntry,
   HealthResponse,
   InstallRequest,
   InstalledSkill,
   InstalledSkillListResponse,
   MarketplaceListResponse,
+  McpServerListResponse,
   MessagePage,
   ProvidersResponse,
   Session,
   SessionListResponse,
+  SettingsResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -152,5 +155,44 @@ export const api = {
   /** DELETE /v1/skills/{id} — 卸载 */
   deleteSkill(id: number): Promise<DeleteResponse> {
     return request<DeleteResponse>(`/v1/skills/${id}`, { method: "DELETE" });
+  },
+
+  /** GET /v1/mcp-servers — MCP 连接列表（设置页，2026-08-04 P1） */
+  listMcpServers(): Promise<McpServerListResponse> {
+    return request<McpServerListResponse>("/v1/mcp-servers");
+  },
+
+  /** PATCH /v1/mcp-servers/{id} — 启停 */
+  updateMcpServer(id: number, body: { is_active: boolean }): Promise<{ status: string }> {
+    return request(`/v1/mcp-servers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** DELETE /v1/mcp-servers/{id} — 删除连接 */
+  deleteMcpServer(id: number): Promise<DeleteResponse> {
+    return request<DeleteResponse>(`/v1/mcp-servers/${id}`, { method: "DELETE" });
+  },
+
+  /** GET /v1/settings — 系统配置 */
+  getSettings(): Promise<SettingsResponse> {
+    return request<SettingsResponse>("/v1/settings");
+  },
+
+  /** PUT /v1/settings — 批量保存配置 */
+  putSettings(settings: Record<string, string>): Promise<{ status: string }> {
+    return request("/v1/settings", {
+      method: "PUT",
+      body: JSON.stringify({ settings }),
+    });
+  },
+
+  /** POST /v1/frontend/logs — 前端日志批量上报 */
+  postFrontendLogs(entries: FrontendLogEntry[]): Promise<{ status: string; written: number }> {
+    return request("/v1/frontend/logs", {
+      method: "POST",
+      body: JSON.stringify({ entries }),
+    });
   },
 };

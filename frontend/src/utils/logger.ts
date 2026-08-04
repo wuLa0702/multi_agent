@@ -62,14 +62,29 @@ function enqueue(level: LogLevel, source: string, message: string, stack?: strin
 }
 
 /**
- * 批量输出到控制台（本项目无后端日志上报接口，console-only）。
- * 保留队列结构，未来接入上报接口时替换 flush 实现即可。
+ * 批量上报（2026-08-04 P1 去 mock）：console 输出 + POST /v1/frontend/logs
+ * 落盘 logs/frontend.log（后端 UTF-8）。上报失败静默吞掉，不影响主流程。
  */
 async function flush(): Promise<void> {
   if (QUEUE.length === 0) return;
   const entries = QUEUE.splice(0, QUEUE.length);
   for (const e of entries) {
     console.info(`[log:${e.level}:${e.source}]`, e.message, e.stack ?? '');
+  }
+  try {
+    const { api } = await import("@/lib/api/client");
+    await api.postFrontendLogs(
+      entries.map((e) => ({
+        level: e.level,
+        source: e.source,
+        message: e.message,
+        stack: e.stack,
+        url: e.url,
+        ts: Math.round(e.ts),
+      })),
+    );
+  } catch {
+    // 上报失败静默（日志是旁路能力）
   }
 }
 
