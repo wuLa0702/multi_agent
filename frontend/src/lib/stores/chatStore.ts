@@ -202,7 +202,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     async resume(runId: string) {
       set({ pendingApproval: null, pendingRunId: null });
       localStorage.removeItem(PENDING_RUN_KEY);
-      startStream({ resume_run_id: runId });
+      // 断点恢复（P0）：必须带 session_id（== thread_id，checkpoint 按执行线隔离）
+      startStream({ session_id: get().sessionId, resume_run_id: runId });
     },
 
     async approve() {

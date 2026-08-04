@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -37,7 +38,7 @@ from langchain_core.messages import BaseMessage
 
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.subagents.loader import load_subagents
-from src.core.paths import get_skill_md_dir
+from src.core.paths import get_checkpointer_path, get_skill_md_dir
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
 from src.mcp.tools.sandbox_tool import run_code_in_sandbox
@@ -113,9 +114,58 @@ async def _configurable_model(request, handler):
     return await handler(request.override(model=model))
 
 
-# 模块级单例：编译图无状态（无 checkpointer），进程内只构建一次
+# 模块级单例：编译图进程内只构建一次
 _agent = None
-_agent_lock = threading.Lock()
+_agent_lock = threading.Lock()  # 双重检查锁：防止多线程首次构建重复建图
+
+# Checkpointer（P0 断点持久化，2026-08-04）：
+# ⚠️ 实测修正（评审方式 A 需适配 async）：sync SqliteSaver 在 async astream 下
+# 静默失败（langgraph 3.x async 执行路径要求 AsyncSqliteSaver/aiosqlite）。
+# 正确架构：AsyncSqliteSaver 由 **lifespan 管理生命周期**（与 Redis 连接池同模式）——
+# main.py 启动时 await init_checkpointer()，关闭时 close_checkpointer()。
+# 未初始化（测试/脚本未跑 lifespan）→ 构建不带 checkpointer，降级无断点模式。
+_checkpointer: AsyncSqliteSaver | None = None
+
+# 对话流并发限流（计划文档 C.1-2）：单机多浏览器并发对话同时断点落库
+# 会触发 SQLite 写锁，Semaphore 限制同时执行的流数量，超出排队。
+_stream_semaphore = asyncio.Semaphore(4)
+
+
+async def init_checkpointer(db_path=None) -> None:
+    """初始化断点持久化（lifespan 启动调用，幂等）。
+
+    AsyncSqliteSaver + aiosqlite 连接（async 执行路径必需）：
+    - WAL + busy_timeout=5000：缓解并发写锁（计划文档 C.1-1）
+    - 连接生命周期跟随进程（与 core/redis.py 同模式）
+
+    Args:
+        db_path: 覆盖数据库路径（测试隔离用 tmp；缺省 data/checkpoints.db）
+    """
+    global _checkpointer
+    if _checkpointer is not None:
+        return
+    import aiosqlite
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    target = db_path if db_path is not None else get_checkpointer_path()
+    if hasattr(target, "__truediv__"):  # 传目录（tmp_path）→ 拼 checkpoints.db
+        target = target / "checkpoints.db"
+    conn = await aiosqlite.connect(str(target))
+    await conn.execute("PRAGMA journal_mode=WAL")
+    await conn.execute("PRAGMA busy_timeout=5000")
+    _checkpointer = AsyncSqliteSaver(conn)
+    await _checkpointer.setup()
+
+
+async def close_checkpointer() -> None:
+    """关闭断点连接（lifespan 关闭调用，幂等）。"""
+    global _checkpointer
+    if _checkpointer is None:
+        return
+    try:
+        await _checkpointer.conn.close()
+    finally:
+        _checkpointer = None
 
 
 def get_agent():
@@ -147,6 +197,11 @@ def get_agent():
                     # SKILL.md 渐进式加载：Skill Market 下载的 skill 放这里，
                     # SkillsMiddleware 启动时扫描（目录不存在也安全）
                     skills=[str(get_skill_md_dir())],
+                    # Checkpointer（P0 断点持久化）：AsyncSqliteSaver 由 lifespan
+                    # 初始化（init_checkpointer）；未初始化（测试/脚本）→ 不传，
+                    # 降级无断点模式。astream 必须带 thread_id（stream_agent_tokens
+                    # 内部封装），否则直接报错
+                    checkpointer=_checkpointer,
                 )
     return _agent
 
@@ -178,6 +233,7 @@ async def stream_agent_tokens(
     agent,
     messages: list[BaseMessage],
     context: ChatContext | None = None,
+    checkpoint_id: str | None = None,
 ) -> AsyncIterator[str]:
     """流式执行 Agent，产出对话文本增量。
 
@@ -189,22 +245,41 @@ async def stream_agent_tokens(
     （2026-08-04 评审改版——替代原 CallbackHandler 手动读取方案），
     此处无需任何配置传递。
 
+    断点持久化（P0）：thread_id config **内部封装**（计划文档 C.2）——
+    ChatContext.session_id == thread_id（每会话一条执行线）；调用方零感知，
+    杜绝漏传 thread_id 导致的 500。并发限流用 _stream_semaphore（C.1-2）。
+    checkpoint_id：审批断点恢复（resume 模式）时传入——从精确快照继续执行，
+    已完成步骤不重跑（计划文档 A）。
+
     Args:
         agent: build_agent 的产物
-        messages: LangChain 消息列表（含历史，按时间正序）
+        messages: LangChain 消息列表（含历史，按时间正序）；resume 模式传空列表
+            （checkpoint 状态接管，输入被忽略）
         context: 请求级上下文（provider 选择）；None → 默认 provider
+        checkpoint_id: 恢复的快照 ID（resume 模式）；None → 新消息模式
 
     Yields:
         模型生成文本增量（每片非空）
+
+    Raises:
+        Exception: checkpoint_id 无效/不属于该 thread（由 API 层捕获转
+            RESUME_NOT_FOUND 友好错误）
     """
-    async for evt in agent.astream_events(
-        {"messages": messages}, version="v2", context=context
-    ):
-        if evt.get("event") != "on_chat_model_stream":
-            continue
-        chunk = evt.get("data", {}).get("chunk")
-        if chunk is None:
-            continue
-        text = getattr(chunk, "text", None)
-        if text:
-            yield text
+    config = None
+    if context is not None and context.session_id:
+        config = {"configurable": {"thread_id": context.session_id}}
+        if checkpoint_id:
+            config["configurable"]["checkpoint_id"] = checkpoint_id
+
+    async with _stream_semaphore:  # 并发限流：SQLite 写锁缓解
+        async for evt in agent.astream_events(
+            {"messages": messages}, version="v2", context=context, config=config
+        ):
+            if evt.get("event") != "on_chat_model_stream":
+                continue
+            chunk = evt.get("data", {}).get("chunk")
+            if chunk is None:
+                continue
+            text = getattr(chunk, "text", None)
+            if text:
+                yield text

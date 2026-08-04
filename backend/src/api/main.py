@@ -31,6 +31,7 @@ from src.api.skills import router as skills_router
 from src.api.uploads import router as uploads_router
 from src.core import db as core_db
 from src.core.config import settings
+from src.agent.main_agent import close_checkpointer, init_checkpointer
 from src.core.logging import setup_logging
 from src.core.model_registry import get_registry
 from src.core.redis import close_redis, get_redis
@@ -47,11 +48,14 @@ _mcp_http_app = mcp_server.http_app()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """启动预热 Redis + 加载注册表/MCP；关闭释放连接池。"""
+    """启动预热 Redis + Checkpointer + 加载注册表/MCP；关闭释放连接池。"""
     try:
         await get_redis().ping()
     except Exception:
         pass  # 本地没 Redis 也能起，/v1/health 会标记 disconnected
+
+    # Checkpointer 断点持久化（P0）：AsyncSqliteSaver 生命周期随进程
+    await init_checkpointer()
 
     # FastMCP 要求：父 ASGI 应用执行其 lifespan（初始化 session manager task group）
     async with _mcp_http_app.lifespan(_):
@@ -66,6 +70,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await conn.close()
 
         yield
+    await close_checkpointer()
     await close_redis()
 
 

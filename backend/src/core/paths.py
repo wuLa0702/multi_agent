@@ -83,6 +83,12 @@ def get_skill_md_dir() -> Path:
     base.mkdir(parents=True, exist_ok=True)
     return base
 
+def get_checkpointer_path() -> Path:
+    """Checkpointer 数据库路径（P0 断点持久化）：data/checkpoints.db，父目录自动创建。"""
+    p = get_app_dir() / "checkpoints.db"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
 def get_uploads_dir() -> Path:
     """用户上传文件目录（2026-08-04 P2 附件上传）：data/uploads/。"""
     base = get_app_dir() / "uploads"
