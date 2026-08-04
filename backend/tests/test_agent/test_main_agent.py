@@ -34,8 +34,13 @@ def test_get_agent_singleton(mocker) -> None:
     assert a1 is a2, "编译图应进程内复用（单例）"
     assert mock_create.call_count == 1
     # 构建参数含运行时切换三件套：middleware + context_schema
+    # （2026-08-04 评审改版：middleware 含 TokenUsageMiddleware——图执行完自动统计用量存库）
     _, kwargs = mock_create.call_args
-    assert kwargs["middleware"] == [main_agent._configurable_model]
+    middleware_types = [type(m) for m in kwargs["middleware"]]
+    assert middleware_types == [
+        type(main_agent._configurable_model),
+        main_agent.TokenUsageMiddleware,
+    ], "中间件栈应含模型切换 + 用量统计"
     assert kwargs["context_schema"] is main_agent.ChatContext
 
 

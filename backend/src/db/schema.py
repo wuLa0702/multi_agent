@@ -15,13 +15,14 @@ from __future__ import annotations
 import aiosqlite
 
 _SCHEMA_SQL = """
--- 会话表（短期记忆地基；is_pinned：置顶，2026-08-04 后端开发计划 P0）
+-- 会话表（短期记忆地基；is_pinned：置顶 P0；context_used：上下文用量 2026-08-04）
 CREATE TABLE IF NOT EXISTS sessions (
-    id          TEXT PRIMARY KEY,
-    title       TEXT NOT NULL DEFAULT '新会话',
-    is_pinned   INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    id           TEXT PRIMARY KEY,
+    title        TEXT NOT NULL DEFAULT '新会话',
+    is_pinned    INTEGER NOT NULL DEFAULT 0,
+    context_used INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
 );
 
 -- 消息表（长期记忆地基）
@@ -124,9 +125,10 @@ _MCP_SERVERS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("installed_at", "TEXT NOT NULL DEFAULT ''"),
 ]
 
-# 旧库迁移：sessions 新增列（2026-08-04 后端开发计划 P0）
+# 旧库迁移：sessions 新增列（P0 置顶 + 中间件上下文用量，2026-08-04）
 _SESSIONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("is_pinned", "INTEGER NOT NULL DEFAULT 0"),
+    ("context_used", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

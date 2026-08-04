@@ -36,6 +36,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
 from src.agent.subagents.loader import load_subagents
+from src.agent.token_middleware import TokenUsageMiddleware
 from src.core.paths import get_skill_md_dir
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
@@ -57,17 +58,20 @@ DEFAULT_SYSTEM_PROMPT = """你是一名资深研究员，负责开展深入调�
 
 @dataclass
 class ChatContext:
-    """请求级运行时上下文（context_schema）：携带模型选择 + 代理模式。
+    """请求级运行时上下文（context_schema）：模型选择 + 代理模式 + 会话定位。
 
     Attributes:
         model_id: 数据库模型 ID（providers/models 表，GET /v1/providers
             返回）；None → 默认模型（settings.llm_provider 厂商的默认模型）
         mode: 代理模式（default/plan/agent/auto，2026-08-04 P1）
             —— 先浅后深：仅注入 system_prompt 指令，不改编排
+        session_id: 当前会话 ID——TokenUsageMiddleware 落库定位用
+            （中间件是编译时单例，会话信息必须经请求级 context 传入）
     """
 
     model_id: int | None = None
     mode: str = "default"
+    session_id: str | None = None
 
 
 # 代理模式提示词注入（2026-08-04 P1：先浅后深——只改指令不改编排）
@@ -111,7 +115,7 @@ async def _configurable_model(request, handler):
 
 # 模块级单例：编译图无状态（无 checkpointer），进程内只构建一次
 _agent = None
-_agent_lock = threading.Lock()
+_agent_lock = threading.Lock() # todo 2026-08-04: 啥意思？
 
 
 def get_agent():
@@ -133,7 +137,12 @@ def get_agent():
                     system_prompt=DEFAULT_SYSTEM_PROMPT,
                     subagents=load_subagents(),
                     tools=internal_tools + mcp_tools,
-                    middleware=[_configurable_model],
+                    middleware=[
+                        _configurable_model,
+                        # 上下文用量：图执行完自动算全量 messages token 并存库
+                        # （2026-08-04 评审改版：中间件替代 CallbackHandler，前端查表）
+                        TokenUsageMiddleware(),
+                    ],
                     context_schema=ChatContext,
                     # SKILL.md 渐进式加载：Skill Market 下载的 skill 放这里，
                     # SkillsMiddleware 启动时扫描（目录不存在也安全）
@@ -169,7 +178,6 @@ async def stream_agent_tokens(
     agent,
     messages: list[BaseMessage],
     context: ChatContext | None = None,
-    token_handler=None,
 ) -> AsyncIterator[str]:
     """流式执行 Agent，产出对话文本增量。
 
@@ -177,19 +185,20 @@ async def stream_agent_tokens(
     （工具调用 chunk 的 text 为空，天然过滤；deepagents 内部 todo 工具
     参数走 tool_call_chunks，不会误发成 token 事件）。
 
+    上下文用量：由中间件栈内的 TokenUsageMiddleware 自动统计落库
+    （2026-08-04 评审改版——替代原 CallbackHandler 手动读取方案），
+    此处无需任何配置传递。
+
     Args:
         agent: build_agent 的产物
         messages: LangChain 消息列表（含历史，按时间正序）
         context: 请求级上下文（provider 选择）；None → 默认 provider
-        token_handler: TokenUsageHandler 实例（2026-08-04 P2）——经 config
-            callbacks 挂载，LangGraph 传播给内部模型链，on_llm_end 累计用量
 
     Yields:
         模型生成文本增量（每片非空）
     """
-    config = {"callbacks": [token_handler]} if token_handler else None
     async for evt in agent.astream_events(
-        {"messages": messages}, version="v2", context=context, config=config
+        {"messages": messages}, version="v2", context=context
     ):
         if evt.get("event") != "on_chat_model_stream":
             continue

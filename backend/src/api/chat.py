@@ -21,7 +21,6 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from src.agent.main_agent import ChatContext, build_agent, stream_agent_tokens
-from src.agent.token_handler import TokenUsageHandler
 from src.core import db as core_db
 from src.core.errors import RetryableError
 from src.core.model_registry import get_registry
@@ -184,14 +183,13 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
             yield {"data": StartEvent(run_id=run_id, session_id=session_id).model_dump_json()}
 
             # 4. Agent 流式执行（LLM 异常 → error 事件后关闭）
-            token_handler = TokenUsageHandler()  # P2：自定义 CallbackHandler 统计用量
+            #    上下文用量：TokenUsageMiddleware（中间件栈内）图执行完自动存库，
+            #    前端查表（GET /v1/context-usage），无需此处手动统计（2026-08-04 评审改版）
             try:
                 agent = build_agent()  # 进程单例（模型经 middleware 按请求选择）
-                chat_context = ChatContext(model_id=req.model_id, mode=req.mode)
+                chat_context = ChatContext(model_id=req.model_id, mode=req.mode, session_id=session_id)
                 full_text_parts: list[str] = []
-                async for text in stream_agent_tokens(
-                    agent, lc_messages, context=chat_context, token_handler=token_handler
-                ):
+                async for text in stream_agent_tokens(agent, lc_messages, context=chat_context):
                     full_text_parts.append(text)
                     yield {"data": TokenEvent(text=text).model_dump_json()}
             except Exception as exc:  # noqa: BLE001 - 流内错误统一转 error 事件
@@ -212,17 +210,13 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
                 Message(session_id=session_id, role="assistant", content=assistant_text),
             )
 
-            # 6. done 事件（流内异常时不发；P2：携带上下文用量）
-            #    用量 = 历史消息估算（chars/4 近似）+ 本轮实际 token（CallbackHandler 累计）
+            # 6. done 事件（流内异常时不发）
             duration_ms = int((time.monotonic() - started_at) * 1000)
-            history_chars = sum(len(m.content) for m in history)
-            context_used = history_chars // 4 + token_handler.total_tokens
             yield {
                 "data": DoneEvent(
                     run_id=run_id,
                     session_id=session_id,
                     duration_ms=duration_ms,
-                    context_used=context_used,
                 ).model_dump_json()
             }
         finally:

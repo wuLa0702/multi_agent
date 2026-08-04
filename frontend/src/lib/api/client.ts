@@ -203,4 +203,9 @@ export const api = {
     form.append("file", file);
     return request<UploadResponse>("/v1/uploads", { method: "POST", body: form });
   },
+
+  /** GET /v1/context-usage — 上下文用量查表（中间件存库方案，2026-08-04 评审改版） */
+  getContextUsage(sessionId: string): Promise<{ session_id: string; used: number; total: number; percent: number }> {
+    return request(`/v1/context-usage?session_id=${encodeURIComponent(sessionId)}`);
+  },
 };
