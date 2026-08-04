@@ -62,6 +62,8 @@ interface ChatState {
   providers: ProviderInfo[]; // 模型下拉数据源（GET /v1/providers）
   selectedModelId: number | null; // 用户选择；null = 默认模型
   agentMode: string; // 代理模式（2026-08-04 P1，随请求透传后端）
+  contextUsed: number; // 上下文已用 token（2026-08-04 P2）
+  contextTotal: number; // 上下文上限
 
   send(text: string): Promise<void>;
   resume(runId: string): Promise<void>;
@@ -129,6 +131,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     providers: [],
     selectedModelId: null,
     agentMode: "default", // 代理模式（2026-08-04 P1，随请求透传后端）
+    contextUsed: 0, // 上下文用量（2026-08-04 P2，done 事件更新；0 = 未知显示 mock 占位）
+    contextTotal: 128_000,
 
     async send(text: string) {
       const trimmed = text.trim();
@@ -385,7 +389,15 @@ function handleEvent(
     }
 
     case "done": {
-      set({ streamStatus: "idle", pendingApproval: null, pendingRunId: null });
+      set({
+        streamStatus: "idle",
+        pendingApproval: null,
+        pendingRunId: null,
+        // 2026-08-04 P2：done 事件携带上下文用量 → 输入栏进度条真实化
+        ...(event.context_used != null
+          ? { contextUsed: event.context_used, contextTotal: event.context_total ?? 128_000 }
+          : {}),
+      });
       localStorage.removeItem(PENDING_RUN_KEY);
       // 设计 §8.1 发现 4（P0）：流结束以库为准静默重拉，替换本地 id=null 流，
       // 避免刷新重进会话时重复渲染；失败静默降级保留本地流。

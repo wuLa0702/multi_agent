@@ -166,7 +166,10 @@ def build_agent(model: BaseChatModel | None = None):
 
 
 async def stream_agent_tokens(
-    agent, messages: list[BaseMessage], context: ChatContext | None = None
+    agent,
+    messages: list[BaseMessage],
+    context: ChatContext | None = None,
+    token_handler=None,
 ) -> AsyncIterator[str]:
     """流式执行 Agent，产出对话文本增量。
 
@@ -178,12 +181,15 @@ async def stream_agent_tokens(
         agent: build_agent 的产物
         messages: LangChain 消息列表（含历史，按时间正序）
         context: 请求级上下文（provider 选择）；None → 默认 provider
+        token_handler: TokenUsageHandler 实例（2026-08-04 P2）——经 config
+            callbacks 挂载，LangGraph 传播给内部模型链，on_llm_end 累计用量
 
     Yields:
         模型生成文本增量（每片非空）
     """
+    config = {"callbacks": [token_handler]} if token_handler else None
     async for evt in agent.astream_events(
-        {"messages": messages}, version="v2", context=context
+        {"messages": messages}, version="v2", context=context, config=config
     ):
         if evt.get("event") != "on_chat_model_stream":
             continue

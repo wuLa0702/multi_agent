@@ -44,6 +44,14 @@ class DoneEvent(SSEEvent):
     run_id: str = Field(description="本次 run 的 ID")
     session_id: str = Field(description="会话 ID")
     duration_ms: int = Field(description="本次 run 耗时（毫秒）")
+    context_used: int | None = Field(
+        default=None,
+        description="上下文累计用量（历史估算 + 本轮实际 token，2026-08-04 P2）",
+    )
+    context_total: int = Field(
+        default=128_000,
+        description="上下文上限（模型窗口，2026-08-04 P2）",
+    )
 
 
 class ErrorEvent(SSEEvent):

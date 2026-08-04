@@ -255,6 +255,8 @@ export interface DoneEvent {
   run_id: string;
   session_id: string;
   duration_ms: number;
+  context_used?: number | null; // 上下文累计用量（2026-08-04 P2）
+  context_total?: number; // 上下文上限
 }
 
 export interface ErrorEvent {
