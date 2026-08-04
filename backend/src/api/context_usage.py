@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.agent.token_middleware import DEFAULT_CONTEXT_WINDOW
+from src.agent.middlewares.token_usage import DEFAULT_CONTEXT_WINDOW
 from src.core import db as core_db
 
 router = APIRouter(prefix="/v1/context-usage", tags=["context-usage"])

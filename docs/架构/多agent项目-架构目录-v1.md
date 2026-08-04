@@ -6,6 +6,7 @@
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.8 | 2026-08-04 | §2 落地状态对照表补：agent/middlewares/token_usage.py ✅（TokenUsageMiddleware，图执行完自动统计用量存库）、src/skills/ ✏️（Skill Market 业务层，蓝图未列） |
 > | v2.7 | 2026-08-03 | §2 新增「能力落地位置对照」（三类能力：代码工具 / SKILL.md 技能 / 远程 MCP 工具——位置、本质、Agent 使用方式） |
 > | v2.6 | 2026-08-03 | §2 目录树更新为权威版（与代码落地对照，✅/⏳/✏️ 状态标注）；§2 models/ 更名 schemas/（代码已随迁）；§2 增补 core/db.py、redis.py、api/health.py 等实际落地项；新增「落地状态对照表」；同步说明：demo 脚本归 scripts/、tabbit-code 删除、测试结构以 20-testing.md 为准 |
 > | v2.5 | 2026-08-02 | §6.1 决策 6/9 修正：本地开发连本地 Docker（redis 6398 + opensandbox 8080），生产连云端；§6.2 待决策 #3 关闭（本地开发模式拍板）；§3 基础设施 docker-compose redis 端口对齐 6398；新增 §4 scripts/dev.sh 一键启动 |
@@ -206,7 +207,8 @@ multi-agent-project/
 > | agent/main_agent.py | ✅ | deepagents 编排：搜索子代理 + 沙箱工具 |
 > | agent/subagents/ | ✏️ | loader.py + search_agent.yaml（蓝图 template.yaml 空白模板，实际已落业务子代理）|
 > | agent/planner · summarizer · approve | ⏳ | 演进预留 |
-> | agent/graph · memory · middlewares · skills | ⏳ | 空目录占位 |
+> | agent/graph · memory · middlewares · skills | ✏️ | 大部分空占位；middlewares/token_usage.py ✅ 已落地（TokenUsageMiddleware 上下文用量，2026-08-04） |
+> | src/skills/（marketplace.py · installer.py） | ✏️ | 蓝图未列但已落地：Skill Market 业务层（市场适配 + 安装管理），依赖 api → skills → {db, mcp} |
 > | mcp/registry.py · tools/ | ✏️ | tools 已放业务工具（search.py + sandbox_tool.py）——「工具落 mcp」拍板；蓝图"空目录"不再适用 |
 > | mcp/server.py · http_base.py · adapters/ | ⏳ | FastMCP 协议化演进预留（registry 清单已具备）|
 > | sandbox/adapter.py | ✏️ | OpenSandbox 实现内聚单文件（本地 docker / 云端仅换 URL），暂不拆 opensandbox/local_docker |

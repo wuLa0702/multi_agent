@@ -35,8 +35,8 @@ from langchain.agents.middleware import wrap_model_call
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
+from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.subagents.loader import load_subagents
-from src.agent.token_middleware import TokenUsageMiddleware
 from src.core.paths import get_skill_md_dir
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
@@ -115,7 +115,7 @@ async def _configurable_model(request, handler):
 
 # 模块级单例：编译图无状态（无 checkpointer），进程内只构建一次
 _agent = None
-_agent_lock = threading.Lock() # todo 2026-08-04: 啥意思？
+_agent_lock = threading.Lock()
 
 
 def get_agent():

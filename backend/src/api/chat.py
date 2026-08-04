@@ -16,7 +16,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
