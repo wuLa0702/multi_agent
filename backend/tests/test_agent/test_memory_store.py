@@ -74,12 +74,15 @@ async def test_memory_store_none_graceful() -> None:
 # ── LLM 抽取（2026-08-04 修正：记忆只存抽取事实，非对话全文）──
 
 class _FakeLLM:
-    """fake LLM：返回预设抽取结果。"""
+    """fake LLM：返回预设抽取结果（raise_error=True 模拟调用异常）。"""
 
-    def __init__(self, result: str) -> None:
+    def __init__(self, result: str, raise_error: bool = False) -> None:
         self._result = result
+        self._raise = raise_error
 
     async def ainvoke(self, messages):
+        if self._raise:
+            raise RuntimeError("llm down")
         return type("R", (), {"content": self._result})()
 
 
@@ -88,9 +91,11 @@ async def test_extract_memory_fact_valuable() -> None:
     """抽取：有价值对话（用户事实）→ 返回抽取的事实。"""
     from src.agent.memory_store import extract_memory_fact
 
-    llm = _FakeLLM("用户叫小明，喜欢 Python 编程")
+    from src.llm.adapter import LLMAdapter
+
+    adapter = LLMAdapter(model=_FakeLLM("用户叫小明，喜欢 Python 编程"))
     fact = await extract_memory_fact(
-        llm, "我叫小明，平时喜欢用 Python 写爬虫", "好的，记住了。你可以用 Python 的 requests 库…"
+        adapter, "我叫小明，平时喜欢用 Python 写爬虫", "好的，记住了。你可以用 Python 的 requests 库…"
     )
     assert fact == "用户叫小明，喜欢 Python 编程"
 
@@ -100,8 +105,10 @@ async def test_extract_memory_fact_no_value() -> None:
     """抽取：无价值对话（普通问答）→ 返回 None（不写入）。"""
     from src.agent.memory_store import extract_memory_fact
 
-    llm = _FakeLLM("无")
-    fact = await extract_memory_fact(llm, "帮我搜索一下天气", "今天北京晴，25 度…")
+    from src.llm.adapter import LLMAdapter
+
+    adapter = LLMAdapter(model=_FakeLLM("无"))
+    fact = await extract_memory_fact(adapter, "帮我搜索一下天气", "今天北京晴，25 度…")
     assert fact is None
 
 
@@ -110,11 +117,10 @@ async def test_extract_memory_fact_llm_error() -> None:
     """抽取：LLM 异常 → 降级 None（记忆是旁路能力，不阻断对话）。"""
     from src.agent.memory_store import extract_memory_fact
 
-    class _BrokenLLM:
-        async def ainvoke(self, messages):
-            raise RuntimeError("llm down")
+    from src.llm.adapter import LLMAdapter
 
-    fact = await extract_memory_fact(_BrokenLLM(), "hi", "hello")
+    adapter = LLMAdapter(model=_FakeLLM("", raise_error=True))
+    fact = await extract_memory_fact(adapter, "hi", "hello")
     assert fact is None
 
 

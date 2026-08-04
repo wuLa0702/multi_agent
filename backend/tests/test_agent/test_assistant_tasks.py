@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+from src.llm.adapter import LLMAdapter
+
 
 class _FakeLLM:
     """fake LLM：返回预设内容。"""
@@ -24,13 +26,17 @@ class _FakeLLM:
         return type("R", (), {"content": self._content})()
 
 
+def _adapter(content: str = "", raise_error: bool = False) -> LLMAdapter:
+    """LLMAdapter(model=fake) 注入（统一走 adapter.chat 的真实路径）。"""
+    return LLMAdapter(model=_FakeLLM(content, raise_error))
+
+
 @pytest.mark.asyncio
 async def test_generate_title_valuable() -> None:
     """正常：fake LLM 返回标题 → 返回清洗后的标题。"""
     from src.agent.assistant_tasks import generate_title
 
-    llm = _FakeLLM('"如何学习 LangGraph"')
-    title = await generate_title(llm, "如何学习 LangGraph，有什么路线吗？")
+    title = await generate_title(_adapter('"如何学习 LangGraph"'), "如何学习 LangGraph，有什么路线吗？")
     assert title == "如何学习 LangGraph"
 
 
@@ -39,7 +45,7 @@ async def test_generate_title_empty() -> None:
     """边界：LLM 空输出 → None（调用方回退规则截断）。"""
     from src.agent.assistant_tasks import generate_title
 
-    title = await generate_title(_FakeLLM(""), "测试消息")
+    title = await generate_title(_adapter(""), "测试消息")
     assert title is None
 
 
@@ -49,7 +55,7 @@ async def test_generate_title_truncated() -> None:
     from src.agent.assistant_tasks import TITLE_MAX_LEN, generate_title
 
     long_title = "这是一个非常非常非常非常非常长的会话标题用来测试截断逻辑"
-    title = await generate_title(_FakeLLM(long_title), "测试")
+    title = await generate_title(_adapter(long_title), "测试")
     assert len(title) <= TITLE_MAX_LEN
 
 
@@ -59,4 +65,4 @@ async def test_generate_title_llm_error_propagates() -> None:
     from src.agent.assistant_tasks import generate_title
 
     with pytest.raises(RuntimeError):
-        await generate_title(_FakeLLM("", raise_error=True), "测试")
+        await generate_title(_adapter(raise_error=True), "测试")

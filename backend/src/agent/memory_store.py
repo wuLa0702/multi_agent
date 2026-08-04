@@ -18,6 +18,7 @@ import time
 from langgraph.store.base import BaseStore
 
 from src.agent.prompts import MEMORY_EXTRACT_PROMPT
+from src.llm.adapter import LLMAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,16 @@ MEMORY_INJECT_LIMIT = 5
 
 
 
-async def extract_memory_fact(llm, user_message: str, assistant_reply: str) -> str | None:
-    """LLM 判断并抽取长期记忆事实；无记忆价值返回 None。
+async def extract_memory_fact(
+    adapter: LLMAdapter | None,
+    user_message: str,
+    assistant_reply: str,
+) -> str | None:
+    """LLM 判断并抽取长期记忆事实；无记忆价值返回 None（统一走 LLMAdapter.chat）。
 
     Args:
-        llm: 聊天模型（get_chat_model()，mock 可测）
+        adapter: LLMAdapter 实例（注入式，测试用 LLMAdapter(model=fake)）；
+            None → 默认 LLMAdapter()（get_chat_model 工厂）
         user_message: 本条用户消息
         assistant_reply: 本条助手回复全文
 
@@ -48,9 +54,9 @@ async def extract_memory_fact(llm, user_message: str, assistant_reply: str) -> s
         无——LLM 调用异常统一降级返回 None（记忆是旁路能力，不阻断对话）
     """
     try:
+        adapter = adapter or LLMAdapter()
         prompt = MEMORY_EXTRACT_PROMPT.format(user=user_message[:500], assistant=assistant_reply[:1500])
-        response = await llm.ainvoke([("human", prompt)])
-        text = str(getattr(response, "content", response) or "").strip()
+        text = (await adapter.chat(prompt)).strip()
     except Exception:  # noqa: BLE001 —— 抽取失败降级：不阻断对话
         logger.exception("记忆抽取失败（跳过本次记忆）")
         return None

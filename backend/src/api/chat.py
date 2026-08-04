@@ -209,15 +209,14 @@ def _build_error_event(is_resume: bool, exc: Exception) -> dict[str, str]:
 async def _generate_title_in_background(session_id: str, first_message: str) -> None:
     """后台生成会话标题（LLM → 回退截断；fire-and-forget，异常内部捕获）。
 
-    2026-08-04 升级：标题从规则截断改为 LLM 生成（prompts.TITLE_GENERATE_PROMPT），
-    后台执行不拖慢 SSE start；LLM 失败/空 → 回退消息前 20 字。
+    2026-08-04 升级：标题从规则截断改为 LLM 生成（统一走 LLMAdapter，
+    见 agent/assistant_tasks.py），后台执行不拖慢 SSE start；失败 → 回退消息前 20 字。
     """
     from src.agent.assistant_tasks import generate_title
-    from src.llm.adapter import get_chat_model
 
     title = None
     try:
-        title = await generate_title(get_chat_model(), first_message)
+        title = await generate_title(None, first_message)  # None → 默认 LLMAdapter()
     except Exception:  # noqa: BLE001 —— 标题生成失败回退截断
         logger.warning("标题 LLM 生成失败，回退规则截断")
     if not title:
@@ -242,14 +241,8 @@ async def _save_memory_in_background(user_message: str, assistant_text: str) -> 
     """
     from src.agent.main_agent import get_store
     from src.agent.memory_store import extract_memory_fact, save_conversation_memory
-    from src.llm.adapter import get_chat_model
 
-    try:
-        llm = get_chat_model()
-    except Exception:  # noqa: BLE001 —— LLM 获取失败跳过（记忆是旁路能力）
-        logger.warning("记忆抽取跳过：LLM 获取失败")
-        return
-    fact = await extract_memory_fact(llm, user_message, assistant_text)
+    fact = await extract_memory_fact(None, user_message, assistant_text)  # None → 默认 LLMAdapter()
     if fact:
         await save_conversation_memory(get_store(), fact)
 
