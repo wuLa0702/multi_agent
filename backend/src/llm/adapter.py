@@ -85,7 +85,11 @@ def _build_chat_model(
 
 
 class LLMAdapter:
-    """LLM 直连适配器（兜底通道；Agent 主链路走 deepagents）。
+    """LLM 直连适配器（统一辅助调用封装，2026-08-04 激活）。
+
+    Agent 主链路走 deepagents；本适配器服务**轻量辅助任务**（标题生成、
+    记忆抽取等单次 prompt 调用——见 agent/assistant_tasks.py）。chat() 内部
+    容错由调用方负责（失败降级，旁路能力不阻断主链路）。
 
     Attributes:
         _model: 底层 chat 模型（可注入 mock，测试用）

@@ -17,6 +17,8 @@ import time
 
 from langgraph.store.base import BaseStore
 
+from src.agent.prompts import MEMORY_EXTRACT_PROMPT
+
 logger = logging.getLogger(__name__)
 
 # 记忆 namespace（全局共享——跨会话回忆）
@@ -29,16 +31,6 @@ MEMORY_MAX_LEN = 500
 # 对话开始注入的记忆条数
 MEMORY_INJECT_LIMIT = 5
 
-# LLM 抽取提示词：判断是否有长期记忆价值，有则抽取一句话事实
-MEMORY_EXTRACT_PROMPT = """你是记忆抽取器。判断这段对话是否有【值得长期记忆】的内容：
-用户的事实/身份信息、明确偏好、关键决策、项目约束。若有，用一句话抽取为精简事实
-（中文，≤50 字，第三人称描述）；若没有（普通问答、一次性任务、闲聊），只输出：无
-
-对话：
-用户：{user}
-助手：{assistant}
-
-抽取结果："""
 
 
 async def extract_memory_fact(llm, user_message: str, assistant_reply: str) -> str | None:

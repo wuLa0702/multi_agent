@@ -156,12 +156,11 @@ async def _prepare_new_messages(
         conn, Message(session_id=session_id, role="user", content=req.message or "")
     )
 
-    # 1.5 自动标题（P0）：首条消息且标题仍为默认值 → 取消息前 20 字
+    # 1.5 自动标题（2026-08-04 升级：LLM 后台生成，不拖慢 SSE start——
+    #     首条消息时触发后台任务，LLM 失败回退规则截断）
     session_row = await repo.get_session(conn, session_id)
     if session_row is not None and session_row.title == "新会话":
-        title = (req.message or "").strip().replace("\n", " ")[:20]
-        if title:
-            await repo.update_session_title(conn, session_id, title)
+        asyncio.create_task(_generate_title_in_background(session_id, req.message or ""))
 
     # 2. 组历史（含本条 user 消息）→ LangChain 格式
     history = await repo.list_messages(conn, session_id, limit=200)
@@ -205,6 +204,34 @@ def _build_error_event(is_resume: bool, exc: Exception) -> dict[str, str]:
             retryable=retryable,
         ).model_dump_json()
     }
+
+
+async def _generate_title_in_background(session_id: str, first_message: str) -> None:
+    """后台生成会话标题（LLM → 回退截断；fire-and-forget，异常内部捕获）。
+
+    2026-08-04 升级：标题从规则截断改为 LLM 生成（prompts.TITLE_GENERATE_PROMPT），
+    后台执行不拖慢 SSE start；LLM 失败/空 → 回退消息前 20 字。
+    """
+    from src.agent.assistant_tasks import generate_title
+    from src.llm.adapter import get_chat_model
+
+    title = None
+    try:
+        title = await generate_title(get_chat_model(), first_message)
+    except Exception:  # noqa: BLE001 —— 标题生成失败回退截断
+        logger.warning("标题 LLM 生成失败，回退规则截断")
+    if not title:
+        title = first_message.strip().replace("\n", " ")[:20]
+    if not title:
+        return
+
+    conn = await core_db.get_connection()
+    try:
+        from src.db import repository as repo
+
+        await repo.update_session_title(conn, session_id, title)
+    finally:
+        await conn.close()
 
 
 async def _save_memory_in_background(user_message: str, assistant_text: str) -> None:
