@@ -1,11 +1,13 @@
 """跨会话记忆读写（P1 Store，SqliteStore 持久化，2026-08-04）。
 
-写入：对话结束后把 assistant 回复写入全局记忆（namespace=("memory","global")，
-跨会话共享——"新会话能回忆此前会话关键事实"）。
+写入：对话结束后**先经 LLM 抽取**（extract_memory_fact）——判断这段对话是否有
+长期记忆价值（用户事实/偏好/决策），有则把**抽取的一句话事实**写入全局记忆
+（namespace=("memory","global")，跨会话共享），无则跳过。
 检索：对话开始时取最近 N 条注入 SystemMessage（chat.py 调用）。
 
-噪音控制（计划文档 C.4-3）：assistant 回复过短（< MEMORY_MIN_LEN）不写入，
-避免闲聊/简短应答污染记忆库。简化版整段摘要存储，后续可接 LLM 关键事实抽取。
+⚠️ 2026-08-04 修正（用户评审发现）：原实现把整段回复写入（仅长度过滤），
+导致所有对话全文进记忆库、注入时污染上下文。改为 LLM 抽取式——
+**存的是"值得记住的事实"，不是对话全文**。
 """
 
 from __future__ import annotations
@@ -20,25 +22,70 @@ logger = logging.getLogger(__name__)
 # 记忆 namespace（全局共享——跨会话回忆）
 MEMORY_NAMESPACE = ("memory", "global")
 
-# 噪音阈值：回复短于此长度不记忆（闲聊过滤）
-MEMORY_MIN_LEN = 50
+# 噪音阈值：抽取出的记忆过短不写入（无意义碎片过滤）
+MEMORY_MIN_LEN = 5
 # 单条记忆最大长度（截断，防库膨胀）
-MEMORY_MAX_LEN = 2000
+MEMORY_MAX_LEN = 500
 # 对话开始注入的记忆条数
 MEMORY_INJECT_LIMIT = 5
 
+# LLM 抽取提示词：判断是否有长期记忆价值，有则抽取一句话事实
+MEMORY_EXTRACT_PROMPT = """你是记忆抽取器。判断这段对话是否有【值得长期记忆】的内容：
+用户的事实/身份信息、明确偏好、关键决策、项目约束。若有，用一句话抽取为精简事实
+（中文，≤50 字，第三人称描述）；若没有（普通问答、一次性任务、闲聊），只输出：无
+
+对话：
+用户：{user}
+助手：{assistant}
+
+抽取结果："""
+
+
+async def extract_memory_fact(llm, user_message: str, assistant_reply: str) -> str | None:
+    """LLM 判断并抽取长期记忆事实；无记忆价值返回 None。
+
+    Args:
+        llm: 聊天模型（get_chat_model()，mock 可测）
+        user_message: 本条用户消息
+        assistant_reply: 本条助手回复全文
+
+    Returns:
+        抽取的一句话事实（中文 ≤50 字）；无价值/异常 → None（宁可不记不错记）
+
+    Raises:
+        无——LLM 调用异常统一降级返回 None（记忆是旁路能力，不阻断对话）
+    """
+    try:
+        prompt = MEMORY_EXTRACT_PROMPT.format(user=user_message[:500], assistant=assistant_reply[:1500])
+        response = await llm.ainvoke([("human", prompt)])
+        text = str(getattr(response, "content", response) or "").strip()
+    except Exception:  # noqa: BLE001 —— 抽取失败降级：不阻断对话
+        logger.exception("记忆抽取失败（跳过本次记忆）")
+        return None
+
+    # 输出解析：含"无" → 无记忆价值；否则取首行作为事实
+    if not text or "无" in text[:10]:
+        return None
+    fact = text.split("\n")[0].strip().strip('"\'')
+    if not fact or len(fact) < MEMORY_MIN_LEN:
+        return None
+    return fact[:MEMORY_MAX_LEN]
+
 
 async def save_conversation_memory(store: BaseStore, text: str) -> None:
-    """把一次对话产出写入全局记忆（噪音阈值 + 截断 + 时间戳 key）。
+    """把**已抽取的记忆事实**写入全局记忆（截断 + 时间戳 key）。
+
+    注意：调用方应先用 extract_memory_fact 抽取——本函数只存"值得记住的事实"，
+    不接收对话全文（2026-08-04 修正：防全量对话进记忆库）。
 
     Args:
         store: langgraph store（lifespan 初始化的 SqliteStore）
-        text: assistant 回复全文
+        text: 已抽取的记忆事实（一句话）
     """
     if store is None:
         return
     if len(text) < MEMORY_MIN_LEN:
-        logger.debug("记忆跳过：回复过短（%d 字 < 阈值 %d）", len(text), MEMORY_MIN_LEN)
+        logger.debug("记忆跳过：事实过短（%d 字 < 阈值 %d）", len(text), MEMORY_MIN_LEN)
         return
     key = f"mem-{int(time.time() * 1000)}"
     await store.aput(

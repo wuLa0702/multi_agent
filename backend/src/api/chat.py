@@ -249,13 +249,24 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
                 Message(session_id=session_id, role="assistant", content=assistant_text),
             )
 
-            # 5.5 长期记忆写入（P1 Store）：对话产出进记忆库（噪音阈值过滤，
-            #     由 memory_store 控制）；resume 模式跳过（checkpoint 状态接管）
+            # 5.5 长期记忆写入（P1 Store，2026-08-04 修正：LLM 抽取式）：
+            #     先让 LLM 判断本段对话是否有长期记忆价值（用户事实/偏好/决策），
+            #     有则抽取一句话事实存入，无则跳过——**不存对话全文**（防记忆库被
+            #     普通问答填满、注入时污染上下文）；resume 模式跳过
             if not is_resume and assistant_text:
                 from src.agent.main_agent import get_store
-                from src.agent.memory_store import save_conversation_memory
+                from src.agent.memory_store import extract_memory_fact, save_conversation_memory
+                from src.llm.adapter import get_chat_model
 
-                await save_conversation_memory(get_store(), assistant_text)
+                # LLM 获取失败（环境未配置/测试未 mock）→ 跳过抽取（记忆是旁路能力）
+                try:
+                    llm = get_chat_model()
+                except Exception:  # noqa: BLE001 —— 降级：本次不记记忆，不阻断对话
+                    llm = None
+                if llm is not None:
+                    fact = await extract_memory_fact(llm, req.message or "", assistant_text)
+                    if fact:
+                        await save_conversation_memory(get_store(), fact)
 
             # 6. done 事件（流内异常时不发）
             duration_ms = int((time.monotonic() - started_at) * 1000)
