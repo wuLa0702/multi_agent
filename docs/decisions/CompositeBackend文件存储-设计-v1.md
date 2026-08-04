@@ -6,6 +6,7 @@
 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v1.2 | 2026-08-04 | §2.1 补「与现有目录映射核对表」（5 路由逐一核对无冲突）+「tools（代码）vs skills（文件）边界」澄清 +「skill_md 共写语义」标注（SkillMarket 写入 / Agent 只读约定） |
 > | v1.1 | 2026-08-04 | §2.1 多路由组合（4 类：记忆/内置技能/市场技能/导出）+ 沙盒澄清表 + 参考配置对照表；§2.2 完整核心代码；§2.3 多路由测试 |
 > | v1 | 2026-08-04 | 初版：CompositeBackend 组合存储设计（B.0 前置落地）——Agent 文件落盘 + 记忆文件路由 |
 
@@ -85,6 +86,33 @@ Agent（FilesystemMiddleware / 未来 MemoryMiddleware）
 
 **多 backend 隔离的理由**：每个路由 root_dir 物理分离（虚拟根各自独立）——
 Agent 的 workspace 操作碰不到记忆/技能/导出目录；各用途目录互不污染。
+
+#### 与现有目录映射核对（v1.2 新增，确认无冲突）
+
+| 设计路由 | 物理目录 | 现有功能 | 一致性 |
+|---------|---------|---------|--------|
+| `/`（default） | `data/workspace/` | Agent 文件操作（路径函数已建） | ✅ 无冲突 |
+| `/memories/` | `data/memory/` | 规划（B.1 记忆） | ✅ 无冲突 |
+| `/skills/static/` | `skill-resources/` | 蓝图占位（**当前不存在，实施时创建**） | ⚠️ 需创建 |
+| `/skills/market/` | `data/skills/skill_md/` | SkillMarket 安装写入（installer.py:75） | ✅ 一致 |
+| `/exports/` | `data/exports/` | 规划（导出落盘可选） | ✅ 无冲突 |
+
+#### tools（代码）vs skills（文件）边界（v1.2 澄清）
+
+用户疑问"我的 skill 和 tools 好像跟这里不一致？"——**是设计使然，非冲突**：
+
+- **内置代码工具**：`backend/src/mcp/tools/`（Python 函数）+ `mcp/registry.py` 注册表——
+  **代码不是文件**，不进 backend 文件路由体系（工具挂载进 Agent 是函数调用）
+- **backend 文件路由只管文件类能力**：SKILL.md 技能（/skills/*）、记忆（/memories/）、
+  Agent 工作文件（/）、导出（/exports/）
+- 与架构文档 §2.1「能力落地位置对照」一致：**tool=代码（注册表）、skill=文件（路由）**
+
+#### skill_md 共写语义（v1.2 标注）
+
+`data/skills/skill_md/` 有两个潜在写入者：
+- **SkillMarket**（安装时写，installer.py:75）——统一管理写入
+- **Agent**（FilesystemMiddleware）——**只读约定**：技能是加载的，Agent 不应写 /skills/
+  （SkillMarket 代码约束 + 文档约定；virtual_mode 限制路径范围）
 
 #### 沙盒澄清（v1.1 新增，回答"我们项目有沙盒呀？"）
 
