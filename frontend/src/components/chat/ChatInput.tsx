@@ -9,7 +9,6 @@
 import { useRef, useState } from "react";
 import { Paperclip, Send, Square, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { useChatStore } from "@/lib/stores/chatStore";
 import AgentModeSelector, { type AgentMode } from "./AgentModeSelector";
 import ModelSelector from "./ModelSelector";
@@ -39,6 +38,13 @@ export default function ChatInput({
   const [mode, setMode] = useState<AgentMode>("default");
   const [attachments, setAttachments] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  /** 高度自伸缩（v3 §3.3）：scrollHeight 实时测量，44~320px，150ms 过渡 */
+  const autosize = (el: HTMLTextAreaElement) => {
+    el.style.height = "auto"; // 先重置再测，否则只增不减
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 320)}px`;
+  };
 
   const streamStatus = useChatStore((s) => s.streamStatus);
   const providers = useChatStore((s) => s.providers);
@@ -54,6 +60,8 @@ export default function ChatInput({
     onSend(text);
     setText("");
     if (attachments.length > 0) setAttachments([]);
+    // 发送后高度复位到最小（onChange 不触发，手动重置）
+    if (textareaRef.current) textareaRef.current.style.height = "44px";
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -135,20 +143,21 @@ export default function ChatInput({
         </div>
       )}
 
-      {/* 第二行：输入区 + 发送（v3 §3.3：1-8 行自伸缩，行高 1.6，150ms 过渡） */}
+      {/* 第二行：输入区 + 发送（v3 §3.3：scrollHeight 实时自伸缩 44~320px，150ms 过渡）
+          原生 textarea：shadcn Textarea 带 field-sizing-content，手动 height 被忽略（已踩坑） */}
       <div className="flex items-end gap-2">
-        <Textarea
+        <textarea
+          ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            autosize(e.target);
+          }}
           onKeyDown={handleKeyDown}
           placeholder={isAwaiting ? "审批中，暂不可输入" : "输入消息...（Enter 发送，Shift+Enter 换行）"}
           disabled={isAwaiting}
           rows={1}
-          className="min-h-[44px] max-h-[320px] flex-1 resize-none leading-[1.6] transition-[height] duration-150 ease-out"
-          style={{
-            height: Math.min(44 + Math.floor(text.length / 50) * 22, 320),
-            padding: "12px 16px",
-          }}
+          className="max-h-[320px] min-h-[44px] w-full flex-1 resize-none rounded-xl border border-border bg-transparent px-4 py-3 text-sm leading-[1.6] outline-none transition-[height] duration-150 ease-out placeholder:text-muted-foreground focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
         />
         {isStreaming ? (
           <Button variant="outline" size="icon" onClick={onCancel} title="停止生成" aria-label="停止生成">
