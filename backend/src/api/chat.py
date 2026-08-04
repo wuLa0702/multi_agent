@@ -2,21 +2,26 @@
 
 契约：方案-后端接口定义-v1 §5。
 - 事件流：start → token×N → done / error（首事件 start，尾事件二选一）
-- 请求校验：message 与 resume_run_id 互斥（当前阶段 resume 未实现，仅校验）
+- 请求校验：message 与 resume_run_id 互斥（resume 为 P0 断点真恢复）
 - 持久化：user 消息先落库，assistant 全文聚合后落库（token 流不落库）
 
-演进预留：resume_run_id（审批断点恢复）、tool_call/subagent/approve 事件
-后续阶段按契约接入。
+2026-08-04 拆分（过程中优化记录）：
+- chat_stream 171 行 → 拆出 _resolve_session（会话创建/校验）
+- event_stream 132 行 → 拆出 _prepare_new_messages（新消息准备）/
+  _build_error_event（错误事件）/ _save_memory_in_background（记忆后台写入）
+- 记忆写入移出 SSE 流（asyncio.create_task）：done 事件不被额外 LLM 调用拖慢
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -26,6 +31,8 @@ from src.core.errors import RetryableError
 from src.core.model_registry import get_registry
 from src.schemas.events import DoneEvent, ErrorEvent, StartEvent, TokenEvent
 from src.schemas.message import Message
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/chat", tags=["chat"])
 
@@ -53,6 +60,8 @@ class ErrorResponse(BaseModel):
     detail: str
     code: str
 
+
+# ── 辅助函数（2026-08-04 拆分：每个 <80 行，职责单一）──
 
 def _history_to_langchain(history: list[Message]) -> list[BaseMessage]:
     """DB 历史消息 → LangChain 消息列表（tool 消息后续阶段支持）。"""
@@ -108,176 +117,208 @@ def _validate_request(req: ChatStreamRequest) -> None:
         )
 
 
+async def _resolve_session(conn, req: ChatStreamRequest) -> str:
+    """建/取会话（session_id=None 自动新建；指定则校验存在）。
+
+    Returns:
+        会话 ID
+
+    Raises:
+        HTTPException(404): 指定会话不存在（SESSION_NOT_FOUND）
+    """
+    from src.db import repository as repo
+
+    session_id = req.session_id or str(uuid.uuid4())
+    if req.session_id is None:
+        await repo.create_session(conn, session_id)
+    elif await repo.get_session(conn, session_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail=ErrorResponse(
+                error="会话不存在",
+                detail=f"session_id={session_id} 未找到",
+                code="SESSION_NOT_FOUND",
+            ).model_dump(),
+        )
+    return session_id
+
+
+async def _prepare_new_messages(
+    conn, repo, req: ChatStreamRequest, session_id: str
+) -> list[BaseMessage]:
+    """新消息模式准备：user 落库 + 自动标题 + 组历史 + 模式/记忆注入。
+
+    Returns:
+        LangChain 消息列表（含注入的 SystemMessage）
+    """
+    # 1. user 消息落库
+    await repo.append_message(
+        conn, Message(session_id=session_id, role="user", content=req.message or "")
+    )
+
+    # 1.5 自动标题（P0）：首条消息且标题仍为默认值 → 取消息前 20 字
+    session_row = await repo.get_session(conn, session_id)
+    if session_row is not None and session_row.title == "新会话":
+        title = (req.message or "").strip().replace("\n", " ")[:20]
+        if title:
+            await repo.update_session_title(conn, session_id, title)
+
+    # 2. 组历史（含本条 user 消息）→ LangChain 格式
+    history = await repo.list_messages(conn, session_id, limit=200)
+    lc_messages = _history_to_langchain(history)
+
+    # 2.5 代理模式注入（P1 先浅后深：仅请求级 SystemMessage）
+    if req.mode != "default":
+        from src.agent.main_agent import _MODE_INSTRUCTIONS
+
+        instruction = _MODE_INSTRUCTIONS.get(req.mode)
+        if instruction:
+            lc_messages = [SystemMessage(content=instruction), *lc_messages]
+
+    # 2.6 长期记忆注入（P1 Store）：取最近记忆拼 SystemMessage（失败静默降级）
+    from src.agent.main_agent import get_store
+    from src.agent.memory_store import load_recent_memories
+
+    memories = await load_recent_memories(get_store())
+    if memories:
+        memory_text = "以下是你的长期记忆（供参考，可能与本对话无关）：\n" + "\n".join(memories)
+        lc_messages = [SystemMessage(content=memory_text), *lc_messages]
+    return lc_messages
+
+
+def _build_error_event(is_resume: bool, exc: Exception) -> dict[str, str]:
+    """流内错误 → SSE error 事件（resume 校验兜底 RESUME_NOT_FOUND）。"""
+    if is_resume:
+        # 计划文档 A.5：checkpoint 无效/不属于该 thread → 友好错误（前端提示可重开）
+        return {
+            "data": ErrorEvent(
+                code="RESUME_NOT_FOUND",
+                detail=f"断点已失效（{type(exc).__name__}），请重新开始对话",
+                retryable=False,
+            ).model_dump_json()
+        }
+    retryable = isinstance(exc, RetryableError)
+    return {
+        "data": ErrorEvent(
+            code="LLM_UNAVAILABLE" if retryable else "INTERNAL",
+            detail=str(exc)[:500],
+            retryable=retryable,
+        ).model_dump_json()
+    }
+
+
+async def _save_memory_in_background(user_message: str, assistant_text: str) -> None:
+    """后台写记忆：LLM 抽取事实 → 存 store（fire-and-forget，异常内部降级）。
+
+    2026-08-04 优化（过程中优化记录）：记忆写入移出 SSE 流——done 事件
+    不被额外 LLM 抽取调用拖慢；本函数内部全部容错，不冒泡。
+    """
+    from src.agent.main_agent import get_store
+    from src.agent.memory_store import extract_memory_fact, save_conversation_memory
+    from src.llm.adapter import get_chat_model
+
+    try:
+        llm = get_chat_model()
+    except Exception:  # noqa: BLE001 —— LLM 获取失败跳过（记忆是旁路能力）
+        logger.warning("记忆抽取跳过：LLM 获取失败")
+        return
+    fact = await extract_memory_fact(llm, user_message, assistant_text)
+    if fact:
+        await save_conversation_memory(get_store(), fact)
+
+
+async def _event_stream(
+    req: ChatStreamRequest,
+    session_id: str,
+    run_id: str,
+    started_at: float,
+) -> AsyncIterator[dict[str, str]]:
+    """SSE 事件生成器（模块级，独立可测）：start → token×N → done/error。
+
+    resume 模式（P0 断点恢复）：checkpoint 状态接管——不落库 user 消息、
+    不注入模式指令、输入传空列表；从 checkpoint_id 快照继续执行。
+    """
+    conn = await core_db.get_connection()
+    try:
+        from src.db import repository as repo
+
+        is_resume = bool(req.resume_run_id)
+
+        # 准备输入消息（新消息模式 vs resume 模式）
+        lc_messages = (
+            []
+            if is_resume
+            else await _prepare_new_messages(conn, repo, req, session_id)
+        )
+
+        # start 事件（resume 带 resumed=true，前端保留挂起前节点）
+        yield {
+            "data": StartEvent(
+                run_id=run_id, session_id=session_id, resumed=is_resume
+            ).model_dump_json()
+        }
+
+        # Agent 流式执行（异常统一转 error 事件）
+        try:
+            agent = build_agent()  # 进程单例（模型经 middleware 按请求选择）
+            chat_context = ChatContext(model_id=req.model_id, mode=req.mode, session_id=session_id)
+            full_text_parts: list[str] = []
+            async for text in stream_agent_tokens(
+                agent,
+                lc_messages,
+                context=chat_context,
+                checkpoint_id=req.resume_run_id,  # resume 模式：从精确快照继续
+            ):
+                full_text_parts.append(text)
+                yield {"data": TokenEvent(text=text).model_dump_json()}
+        except Exception as exc:  # noqa: BLE001 - 流内错误统一转 error 事件
+            yield _build_error_event(is_resume, exc)
+            return
+
+        # assistant 全文落库
+        assistant_text = "".join(full_text_parts)
+        await repo.append_message(
+            conn,
+            Message(session_id=session_id, role="assistant", content=assistant_text),
+        )
+
+        # 长期记忆后台写入（LLM 抽取式；done 前触发不等待——2026-08-04 优化）
+        if not is_resume and assistant_text:
+            asyncio.create_task(
+                _save_memory_in_background(req.message or "", assistant_text)
+            )
+
+        # done 事件（流内异常时不发）
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        yield {
+            "data": DoneEvent(
+                run_id=run_id,
+                session_id=session_id,
+                duration_ms=duration_ms,
+            ).model_dump_json()
+        }
+    finally:
+        await conn.close()
+
+
+# ── 主接口 ──
+
 @router.post("/stream", summary="流式对话（SSE 核心接口）")
 async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
-    """新消息驱动 Agent 执行，SSE 事件流推送过程与结果。
-
-    Args:
-        req: 会话 ID + 用户消息（resume 模式当前阶段未实现，校验拦截）
+    """新消息/断点恢复驱动 Agent 执行，SSE 事件流推送过程与结果。
 
     Returns:
         text/event-stream：start → token×N → done（或 error）
     """
     _validate_request(req)
 
-    # 建/取会话（session_id=None 自动新建；指定则校验存在）
     conn = await core_db.get_connection()
     try:
-        session_id = req.session_id or str(uuid.uuid4())
-        if req.session_id is None:
-            from src.db import repository as repo
-
-            await repo.create_session(conn, session_id)
-        else:
-            from src.db import repository as repo
-
-            if await repo.get_session(conn, session_id) is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=ErrorResponse(
-                        error="会话不存在",
-                        detail=f"session_id={session_id} 未找到",
-                        code="SESSION_NOT_FOUND",
-                    ).model_dump(),
-                )
+        session_id = await _resolve_session(conn, req)
     finally:
         await conn.close()
 
     run_id = str(uuid.uuid4())
-    started_at = time.monotonic()
-
-    async def event_stream() -> AsyncIterator[dict[str, str]]:
-        """SSE 事件生成器：start → token×N → done/error。
-
-        resume 模式（P0 断点恢复）：checkpoint 状态接管——不落库 user 消息、
-        不注入模式指令、输入传空列表；从 checkpoint_id 快照继续执行。
-        """
-        nonlocal conn
-        conn = await core_db.get_connection()
-        try:
-            from src.db import repository as repo
-
-            is_resume = bool(req.resume_run_id)
-
-            if not is_resume:
-                # ── 新消息模式 ──
-                # 1. user 消息落库
-                await repo.append_message(
-                    conn, Message(session_id=session_id, role="user", content=req.message or "")
-                )
-
-                # 1.5 自动标题（2026-08-04 P0）：首条消息且标题仍为默认值 → 取消息前 20 字
-                session_row = await repo.get_session(conn, session_id)
-                if session_row is not None and session_row.title == "新会话":
-                    title = (req.message or "").strip().replace("\n", " ")[:20]
-                    if title:
-                        await repo.update_session_title(conn, session_id, title)
-
-                # 2. 组历史（含本条 user 消息）→ LangChain 格式
-                history = await repo.list_messages(conn, session_id, limit=200)
-                lc_messages = _history_to_langchain(history)
-
-                # 2.5 代理模式注入（2026-08-04 P1 先浅后深：仅请求级 SystemMessage）
-                if req.mode != "default":
-                    from src.agent.main_agent import _MODE_INSTRUCTIONS
-
-                    instruction = _MODE_INSTRUCTIONS.get(req.mode)
-                    if instruction:
-                        lc_messages = [SystemMessage(content=instruction), *lc_messages]
-
-                # 2.6 长期记忆注入（P1 Store，2026-08-04）：取最近记忆拼 SystemMessage，
-                #     新会话能回忆此前会话关键事实（检索失败静默降级）
-                from src.agent.main_agent import get_store
-                from src.agent.memory_store import load_recent_memories
-
-                memories = await load_recent_memories(get_store())
-                if memories:
-                    memory_text = "以下是你的长期记忆（供参考，可能与本对话无关）：\n" + "\n".join(memories)
-                    lc_messages = [SystemMessage(content=memory_text), *lc_messages]
-            else:
-                # ── resume 模式：checkpoint 状态接管，已完成步骤不重跑（计划文档 A）──
-                lc_messages: list[BaseMessage] = []
-
-            # 3. start 事件（resume 带 resumed=true，前端保留挂起前节点）
-            yield {
-                "data": StartEvent(
-                    run_id=run_id, session_id=session_id, resumed=is_resume
-                ).model_dump_json()
-            }
-
-            # 4. Agent 流式执行（LLM 异常 → error 事件后关闭）
-            #    上下文用量：TokenUsageMiddleware（中间件栈内）图执行完自动存库，
-            #    前端查表（GET /v1/context-usage），无需此处手动统计（2026-08-04 评审改版）
-            try:
-                agent = build_agent()  # 进程单例（模型经 middleware 按请求选择）
-                chat_context = ChatContext(model_id=req.model_id, mode=req.mode, session_id=session_id)
-                full_text_parts: list[str] = []
-                async for text in stream_agent_tokens(
-                    agent,
-                    lc_messages,
-                    context=chat_context,
-                    checkpoint_id=req.resume_run_id,  # resume 模式：从精确快照继续
-                ):
-                    full_text_parts.append(text)
-                    yield {"data": TokenEvent(text=text).model_dump_json()}
-            except Exception as exc:  # noqa: BLE001 - 流内错误统一转 error 事件
-                # resume 校验兜底（计划文档 A.5）：checkpoint 无效/不属于该 thread →
-                # RESUME_NOT_FOUND 友好错误（前端提示「断点已失效，可重新开始」），不抛内部异常
-                if is_resume:
-                    yield {
-                        "data": ErrorEvent(
-                            code="RESUME_NOT_FOUND",
-                            detail=f"断点已失效（{type(exc).__name__}），请重新开始对话",
-                            retryable=False,
-                        ).model_dump_json()
-                    }
-                    return
-                retryable = isinstance(exc, RetryableError)
-                yield {
-                    "data": ErrorEvent(
-                        code="LLM_UNAVAILABLE" if retryable else "INTERNAL",
-                        detail=str(exc)[:500],
-                        retryable=retryable,
-                    ).model_dump_json()
-                }
-                return
-
-            # 5. assistant 全文落库
-            assistant_text = "".join(full_text_parts)
-            await repo.append_message(
-                conn,
-                Message(session_id=session_id, role="assistant", content=assistant_text),
-            )
-
-            # 5.5 长期记忆写入（P1 Store，2026-08-04 修正：LLM 抽取式）：
-            #     先让 LLM 判断本段对话是否有长期记忆价值（用户事实/偏好/决策），
-            #     有则抽取一句话事实存入，无则跳过——**不存对话全文**（防记忆库被
-            #     普通问答填满、注入时污染上下文）；resume 模式跳过
-            if not is_resume and assistant_text:
-                from src.agent.main_agent import get_store
-                from src.agent.memory_store import extract_memory_fact, save_conversation_memory
-                from src.llm.adapter import get_chat_model
-
-                # LLM 获取失败（环境未配置/测试未 mock）→ 跳过抽取（记忆是旁路能力）
-                try:
-                    llm = get_chat_model()
-                except Exception:  # noqa: BLE001 —— 降级：本次不记记忆，不阻断对话
-                    llm = None
-                if llm is not None:
-                    fact = await extract_memory_fact(llm, req.message or "", assistant_text)
-                    if fact:
-                        await save_conversation_memory(get_store(), fact)
-
-            # 6. done 事件（流内异常时不发）
-            duration_ms = int((time.monotonic() - started_at) * 1000)
-            yield {
-                "data": DoneEvent(
-                    run_id=run_id,
-                    session_id=session_id,
-                    duration_ms=duration_ms,
-                ).model_dump_json()
-            }
-        finally:
-            await conn.close()
-
-    return EventSourceResponse(event_stream())
+    return EventSourceResponse(
+        _event_stream(req, session_id, run_id, time.monotonic())
+    )
