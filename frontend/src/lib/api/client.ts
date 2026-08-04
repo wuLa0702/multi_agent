@@ -19,7 +19,6 @@ import type {
   ProvidersResponse,
   Session,
   SessionListResponse,
-  SessionUpdateRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -74,9 +73,8 @@ export const api = {
     return request<SessionListResponse>("/v1/sessions");
   },
 
-  /** PATCH /v1/sessions/{id} — 修改标题 */
-  updateSessionTitle(id: string, title: string): Promise<Session> {
-    const body: SessionUpdateRequest = { title };
+  /** PATCH /v1/sessions/{id} — 修改标题 / 置顶（2026-08-04 P0） */
+  updateSession(id: string, body: { title?: string; is_pinned?: boolean }): Promise<Session> {
     return request<Session>(`/v1/sessions/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),

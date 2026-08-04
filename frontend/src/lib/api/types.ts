@@ -10,6 +10,8 @@
 export interface Session {
   id: string;
   title: string;
+  last_message: string | null; // 最后消息摘要（≤50 字，2026-08-04 P0）
+  is_pinned: boolean; // 置顶（2026-08-04 P0）
   created_at: string; // ISO 8601 UTC
   updated_at: string;
 }

@@ -57,6 +57,7 @@ export default function SessionList() {
   const loadList = useSessionStore((s) => s.loadList);
   const createSession = useSessionStore((s) => s.createSession);
   const rename = useSessionStore((s) => s.rename);
+  const togglePin = useSessionStore((s) => s.togglePin);
   const remove = useSessionStore((s) => s.remove);
 
   const sessionId = useChatStore((s) => s.sessionId);
@@ -127,8 +128,12 @@ export default function SessionList() {
     [sessions, query],
   );
 
-  // 置顶持久化（v3 §4.1）
-  const { isPinned, togglePinned } = usePinnedSessions();
+  // 置顶（2026-08-04 P0）：后端 is_pinned 为准；本地 hook 降级兜底
+  const { isPinned: localPinned, togglePinned: toggleLocal } = usePinnedSessions();
+  const isPinned = (id: string) => sessions.find((s) => s.id === id)?.is_pinned ?? localPinned(id);
+  const handleTogglePin = (id: string, pinned: boolean) => {
+    void togglePin(id, pinned).catch(() => toggleLocal(id)); // 后端失败 → localStorage 兜底
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -191,7 +196,7 @@ export default function SessionList() {
                       draftTitle={draftTitle}
                       onDraftChange={setDraftTitle}
                       onSelect={() => handleSelect(s.id)}
-                      onTogglePin={() => togglePinned(s.id)}
+                      onTogglePin={() => handleTogglePin(s.id, !isPinned(s.id))}
                       onStartEdit={() => {
                         setEditingId(s.id);
                         setDraftTitle(s.title);
@@ -223,7 +228,7 @@ export default function SessionList() {
                         draftTitle={draftTitle}
                         onDraftChange={setDraftTitle}
                         onSelect={() => handleSelect(s.id)}
-                        onTogglePin={() => togglePinned(s.id)}
+                        onTogglePin={() => handleTogglePin(s.id, !isPinned(s.id))}
                         onStartEdit={() => {
                           setEditingId(s.id);
                           setDraftTitle(s.title);
@@ -314,9 +319,12 @@ function SessionRow({
             {pinned && <Pin className="size-3 shrink-0 text-primary" />}
             <span className="truncate">{s.title}</span>
           </div>
-          {/* 第二行：时间（右）+ hover 操作 */}
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-muted-foreground/70">{formatSessionTime(s.updated_at)}</span>
+          {/* 第二行：摘要（2026-08-04 P0）+ 时间（右）+ hover 操作 */}
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate text-[10px] text-muted-foreground/70">
+              {s.last_message || "暂无消息"}
+            </span>
+            <span className="shrink-0 text-[10px] text-muted-foreground/50">{formatSessionTime(s.updated_at)}</span>
             <span className="hidden items-center gap-0.5 group-hover:flex">
               <button
                 type="button"

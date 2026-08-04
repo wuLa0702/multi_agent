@@ -15,10 +15,11 @@ from __future__ import annotations
 import aiosqlite
 
 _SCHEMA_SQL = """
--- 会话表（短期记忆地基）
+-- 会话表（短期记忆地基；is_pinned：置顶，2026-08-04 后端开发计划 P0）
 CREATE TABLE IF NOT EXISTS sessions (
     id          TEXT PRIMARY KEY,
     title       TEXT NOT NULL DEFAULT '新会话',
+    is_pinned   INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -116,6 +117,11 @@ _MCP_SERVERS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("installed_at", "TEXT NOT NULL DEFAULT ''"),
 ]
 
+# 旧库迁移：sessions 新增列（2026-08-04 后端开发计划 P0）
+_SESSIONS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("is_pinned", "INTEGER NOT NULL DEFAULT 0"),
+]
+
 
 async def init_schema(conn: aiosqlite.Connection) -> None:
     """幂等执行建表 SQL（CREATE IF NOT EXISTS，可反复调用）。
@@ -127,18 +133,23 @@ async def init_schema(conn: aiosqlite.Connection) -> None:
         aiosqlite.Error: 建表失败（连接已关闭/损坏）
     """
     await conn.executescript(_SCHEMA_SQL)
-    await _migrate_mcp_servers_columns(conn)
+    await _migrate_columns(conn, "mcp_servers", _MCP_SERVERS_NEW_COLUMNS)
+    await _migrate_columns(conn, "sessions", _SESSIONS_NEW_COLUMNS)
     await conn.commit()
 
 
-async def _migrate_mcp_servers_columns(conn: aiosqlite.Connection) -> None:
+async def _migrate_columns(
+    conn: aiosqlite.Connection,
+    table: str,
+    columns: list[tuple[str, str]],
+) -> None:
     """对旧库安全加列（ALTER TABLE ADD COLUMN，已存在则捕获跳过）。
 
     SQLite 无 ADD COLUMN IF NOT EXISTS；逐列 try/except OperationalError
     （duplicate column name）实现幂等，不影响新库（CREATE 已含这些列）。
     """
-    for col_name, col_def in _MCP_SERVERS_NEW_COLUMNS:
+    for col_name, col_def in columns:
         try:
-            await conn.execute(f"ALTER TABLE mcp_servers ADD COLUMN {col_name} {col_def}")
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
         except aiosqlite.OperationalError:
             pass  # 列已存在（新库或已迁移过的库）

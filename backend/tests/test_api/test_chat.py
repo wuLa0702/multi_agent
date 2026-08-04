@@ -107,7 +107,8 @@ async def test_chat_stream_auto_create_session(mock_chat_llm, tmp_db_path) -> No
     finally:
         await conn.close()
     assert session is not None
-    assert session.title == "新会话"
+    # 2026-08-04 P0 自动标题：首条消息后标题 = 消息前 20 字（不再是「新会话」）
+    assert session.title == "第一条"
 
 
 @pytest.mark.asyncio

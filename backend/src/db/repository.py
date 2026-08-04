@@ -28,6 +28,8 @@ def _row_to_session(row: aiosqlite.Row) -> Session:
     return Session(
         id=row["id"],
         title=row["title"],
+        last_message=row["last_message"] if "last_message" in row.keys() else None,
+        is_pinned=bool(row["is_pinned"]) if "is_pinned" in row.keys() else False,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -76,13 +78,36 @@ async def get_session(conn: aiosqlite.Connection, session_id: str) -> Session | 
 async def list_sessions(
     conn: aiosqlite.Connection, limit: int = 50, offset: int = 0
 ) -> list[Session]:
-    """会话列表（更新时间倒序，最新在前）。"""
+    """会话列表（置顶优先 + 更新时间倒序，2026-08-04 P0 调整）。
+
+    每条附带 last_message：最后一条 user/assistant 消息内容截断 ≤50 字
+    （LEFT JOIN 子查询取最新一条，单用户列表量小，性能足够）。
+    """
     cursor = await conn.execute(
-        "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+        """SELECT s.id, s.title, s.is_pinned, s.created_at, s.updated_at,
+                  substr(COALESCE(
+                    (SELECT m.content FROM messages m
+                     WHERE m.session_id = s.id AND m.role IN ('user','assistant')
+                     ORDER BY m.id DESC LIMIT 1), ''), 1, 50) AS last_message
+           FROM sessions s
+           ORDER BY s.is_pinned DESC, s.updated_at DESC
+           LIMIT ? OFFSET ?""",
         (limit, offset),
     )
     rows = await cursor.fetchall()
     return [_row_to_session(r) for r in rows]
+
+
+async def update_session_pinned(
+    conn: aiosqlite.Connection, session_id: str, is_pinned: bool
+) -> bool:
+    """更新会话置顶状态；返回是否命中。"""
+    cursor = await conn.execute(
+        "UPDATE sessions SET is_pinned = ?, updated_at = ? WHERE id = ?",
+        (int(is_pinned), _now_iso(), session_id),
+    )
+    await conn.commit()
+    return cursor.rowcount > 0
 
 
 async def update_session_title(

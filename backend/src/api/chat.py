@@ -153,6 +153,15 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
                 conn, Message(session_id=session_id, role="user", content=req.message or "")
             )
 
+            # 1.5 自动标题（2026-08-04 P0）：首条消息且标题仍为默认值 → 取消息前 20 字
+            # 判断依据：本会话此前无消息（user_msg.id == 1 不可靠——多会话共享自增，
+            # 用「历史只有本条 user 消息」判断更稳）
+            session_row = await repo.get_session(conn, session_id)
+            if session_row is not None and session_row.title == "新会话":
+                title = (req.message or "").strip().replace("\n", " ")[:20]
+                if title:
+                    await repo.update_session_title(conn, session_id, title)
+
             # 2. 组历史（含本条 user 消息）→ LangChain 格式
             history = await repo.list_messages(conn, session_id, limit=200)
             lc_messages = _history_to_langchain(history)

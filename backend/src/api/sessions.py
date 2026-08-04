@@ -27,9 +27,13 @@ router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 # ── 响应/请求模型（契约 §4 逐字段对齐）──
 
 class SessionUpdateRequest(BaseModel):
-    """修改会话标题（契约 §4.4；长度校验在 handler 手动做，统一 400 错误码）。"""
+    """修改会话标题 / 置顶（契约 §4.4 + 2026-08-04 P0）。
 
-    title: str = Field(description="新标题，1-100 字符")
+    title 与 is_pinned 至少提供一个（由 handler 校验）；标题长度 1-100 校验在 handler。
+    """
+
+    title: str | None = Field(default=None, description="新标题，1-100 字符")
+    is_pinned: bool | None = Field(default=None, description="置顶状态（2026-08-04 P0）")
 
 
 class SessionListResponse(BaseModel):
@@ -114,23 +118,32 @@ async def list_sessions(
         await conn.close()
 
 
-@router.patch("/{session_id}", summary="修改会话标题（契约 §4.4）")
+@router.patch("/{session_id}", summary="修改会话标题/置顶（契约 §4.4 + P0）")
 async def update_session_title(
     session_id: str, req: SessionUpdateRequest
 ) -> Session:
-    """修改会话标题（校验 1-100 字符）。
+    """修改会话标题 / 置顶状态（title 与 is_pinned 至少提供一个）。
 
     Args:
         session_id: 会话 ID
-        req: 新标题
+        req: 新标题（1-100 字符）和/或置顶状态
 
     Returns:
         更新后的 Session 实体
 
     Raises:
-        HTTPException: 404 会话不存在；400 标题为空/超长（Pydantic 校验）
+        HTTPException: 404 会话不存在；400 参数为空/标题超长
     """
-    if not (1 <= len(req.title) <= 100):
+    if req.title is None and req.is_pinned is None:
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorResponse(
+                error="参数缺失",
+                detail="title 或 is_pinned 至少提供一个",
+                code="BAD_REQUEST",
+            ).model_dump(),
+        )
+    if req.title is not None and not (1 <= len(req.title) <= 100):
         # 契约 §4.4：标题 1-100 字符；手动校验统一 400（Pydantic 自动校验是 422）
         raise HTTPException(
             status_code=400,
@@ -142,8 +155,12 @@ async def update_session_title(
         )
     conn = await core_db.get_connection()
     try:
-        if not await repo.update_session_title(conn, session_id, req.title):
-            _raise_404(session_id)
+        if req.title is not None:
+            if not await repo.update_session_title(conn, session_id, req.title):
+                _raise_404(session_id)
+        if req.is_pinned is not None:
+            if not await repo.update_session_pinned(conn, session_id, req.is_pinned):
+                _raise_404(session_id)
         updated = await repo.get_session(conn, session_id)
         assert updated is not None  # 刚更新成功必然存在
         return updated

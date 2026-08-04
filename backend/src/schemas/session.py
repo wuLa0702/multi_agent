@@ -21,11 +21,15 @@ class Session(BaseModel):
     Attributes:
         id: 会话 ID（UUID 字符串）
         title: 会话标题（首条消息后自动生成）
+        last_message: 最后一条消息摘要（≤50 字，前端列表第二行；2026-08-04 P0）
+        is_pinned: 是否置顶（2026-08-04 P0）
         created_at: 创建时间（UTC）
         updated_at: 最后更新时间（UTC）
     """
 
     id: str = Field(description="会话 ID（UUID）")
     title: str = Field(default="新会话", description="会话标题")
+    last_message: str | None = Field(default=None, description="最后消息摘要（≤50 字）")
+    is_pinned: bool = Field(default=False, description="是否置顶")
     created_at: datetime = Field(default_factory=_now_utc, description="创建时间")
     updated_at: datetime = Field(default_factory=_now_utc, description="最后更新时间")
