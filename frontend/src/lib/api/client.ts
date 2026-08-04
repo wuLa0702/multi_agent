@@ -22,6 +22,7 @@ import type {
   Session,
   SessionListResponse,
   SettingsResponse,
+  UploadResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -117,7 +118,7 @@ export const api = {
     query?: string;
     page?: number;
     page_size?: number;
-    skill_type?: "mcp_server" | "skill_md";
+    skill_type?: "mcp_server" | "skill_md" | "all"; // all = 后端合并两类（2026-08-04 P2）
   }): Promise<MarketplaceListResponse> {
     const p = new URLSearchParams();
     if (params.source) p.set("source", params.source);
@@ -194,5 +195,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ entries }),
     });
+  },
+
+  /** POST /v1/uploads — 附件上传（multipart，2026-08-04 P2） */
+  uploadFile(file: File): Promise<UploadResponse> {
+    const form = new FormData();
+    form.append("file", file);
+    return request<UploadResponse>("/v1/uploads", { method: "POST", body: form });
   },
 };

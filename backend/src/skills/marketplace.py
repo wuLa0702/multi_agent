@@ -233,7 +233,7 @@ async def search_marketplace(
         query: 搜索关键词
         page: 页码（1 起）
         page_size: 每页条数（上限 100）
-        skill_type: mcp_server / skill_md
+        skill_type: mcp_server / skill_md / all（2026-08-04 P2：后端合并两类）
 
     Returns:
         归一化响应；未知 source 返回空列表（不抛错，前端友好降级）
@@ -244,6 +244,26 @@ async def search_marketplace(
 
     page = max(1, page)
     page_size = min(100, max(1, page_size))
+
+    # P2：skill_type=all 后端合并两类（各取半页，交错拼接）
+    if skill_type == "all":
+        half = max(1, page_size // 2)
+        resp_a = await search_marketplace(source, query, page, half, SKILL_TYPE_MCP)
+        resp_b = await search_marketplace(source, query, page, half, SKILL_TYPE_MD)
+        items: list[SkillMarketItem] = []
+        for a, b in zip(resp_a.items, resp_b.items, strict=False):
+            items.extend([a, b])
+        # 补齐单侧多出的
+        items.extend(resp_a.items[len(resp_b.items) :])
+        items.extend(resp_b.items[len(resp_a.items) :])
+        return MarketplaceListResponse(
+            source=source,
+            items=items[:page_size],
+            total=resp_a.total + resp_b.total,
+            page=page,
+            has_more=resp_a.has_more or resp_b.has_more,
+        )
+
     cache_key = f"{source}|{skill_type}|{query}|{page}|{page_size}"
     cached = _cache_get(cache_key)
     if cached is not None:

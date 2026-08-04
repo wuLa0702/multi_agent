@@ -27,6 +27,7 @@ from src.api.providers import router as providers_router
 from src.api.sessions import router as sessions_router
 from src.api.settings import router as settings_router
 from src.api.skills import router as skills_router
+from src.api.uploads import router as uploads_router
 from src.core import db as core_db
 from src.core.config import settings
 from src.core.logging import setup_logging
@@ -89,6 +90,7 @@ app.include_router(sessions_router)
 app.include_router(skills_router)
 app.include_router(mcp_servers_router)
 app.include_router(settings_router)
+app.include_router(uploads_router)
 
 
 class McpMountMiddleware:

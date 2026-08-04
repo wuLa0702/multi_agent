@@ -9,6 +9,7 @@
 import { useRef, useState } from "react";
 import { Paperclip, Send, Square, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api/client";
 import { useChatStore } from "@/lib/stores/chatStore";
 import AgentModeSelector, { type AgentMode } from "./AgentModeSelector";
 import ModelSelector from "./ModelSelector";
@@ -94,12 +95,19 @@ export default function ChatInput({
                 multiple
                 className="hidden"
                 onChange={(e) => {
-                  const names = Array.from(e.target.files ?? []).map((f) => f.name);
-                  if (names.length > 0) {
-                    setAttachments((prev) => [...prev, ...names].slice(-5));
-                    showToast(`已附加 ${names.length} 个文件（mock）`, "info");
-                  }
+                  const files = Array.from(e.target.files ?? []);
                   e.target.value = "";
+                  if (files.length === 0) return;
+                  // 2026-08-04 P2：真实上传 POST /v1/uploads
+                  for (const f of files) {
+                    void api
+                      .uploadFile(f)
+                      .then((res) => {
+                        setAttachments((prev) => [...prev, res.name].slice(-5));
+                        showToast(`已上传 ${res.name}`, "success");
+                      })
+                      .catch(() => showToast(`上传失败：${f.name}`, "error"));
+                  }
                 }}
               />
               <button

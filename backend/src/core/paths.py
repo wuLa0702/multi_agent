@@ -82,3 +82,9 @@ def get_skill_md_dir() -> Path:
     base = get_skills_dir() / "skill_md"
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+def get_uploads_dir() -> Path:
+    """用户上传文件目录（2026-08-04 P2 附件上传）：data/uploads/。"""
+    base = get_app_dir() / "uploads"
+    base.mkdir(parents=True, exist_ok=True)
+    return base

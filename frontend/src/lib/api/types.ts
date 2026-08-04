@@ -150,6 +150,13 @@ export interface FrontendLogEntry {
   ts?: number | null;
 }
 
+/** POST /v1/uploads 响应（附件上传，2026-08-04 P2） */
+export interface UploadResponse {
+  file_id: string;
+  name: string;
+  size: number;
+}
+
 /** POST /v1/skills/install 请求体（force=true 已安装也重新拉取覆盖 = 升级） */
 export interface InstallRequest {
   source: string;

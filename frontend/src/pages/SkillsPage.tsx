@@ -51,15 +51,13 @@ export default function SkillsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 分类切换 → 拉数据
+  // 分类切换 → 拉数据（2026-08-04 P2：「全部」走后端 skill_type=all 合并）
   useEffect(() => {
     if (category === "all") {
       setAllLoading(true);
-      void Promise.all([
-        api.listMarketSkills({ source: "smithery", query, page: 1, page_size: 20, skill_type: "mcp_server" }),
-        api.listMarketSkills({ source: "smithery", query, page: 1, page_size: 20, skill_type: "skill_md" }),
-      ])
-        .then(([a, b]) => setAllItems([...a.items, ...b.items]))
+      void api
+        .listMarketSkills({ source: "smithery", query, page: 1, page_size: 20, skill_type: "all" })
+        .then((res) => setAllItems(res.items))
         .catch(() => setAllItems([]))
         .finally(() => setAllLoading(false));
     } else if (category !== "installed") {
@@ -72,11 +70,9 @@ export default function SkillsPage() {
   const doSearch = () => {
     if (category === "all") {
       setAllLoading(true);
-      void Promise.all([
-        api.listMarketSkills({ source: "smithery", query, page: 1, page_size: 20, skill_type: "mcp_server" }),
-        api.listMarketSkills({ source: "smithery", query, page: 1, page_size: 20, skill_type: "skill_md" }),
-      ])
-        .then(([a, b]) => setAllItems([...a.items, ...b.items]))
+      void api
+        .listMarketSkills({ source: "smithery", query, page: 1, page_size: 20, skill_type: "all" })
+        .then((res) => setAllItems(res.items))
         .catch(() => setAllItems([]))
         .finally(() => setAllLoading(false));
     } else if (category !== "installed") {
