@@ -6,6 +6,7 @@
 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v1.1 | 2026-08-04 | §2.1 多路由组合（4 类：记忆/内置技能/市场技能/导出）+ 沙盒澄清表 + 参考配置对照表；§2.2 完整核心代码；§2.3 多路由测试 |
 > | v1 | 2026-08-04 | 初版：CompositeBackend 组合存储设计（B.0 前置落地）——Agent 文件落盘 + 记忆文件路由 |
 
 > **目录**：
@@ -54,19 +55,22 @@ ls/read_file/write_file/edit_file/glob/grep）也挂在 StateBackend（内存）
 
 ## 2. 分：设计
 
-### 2.1 架构：CompositeBackend 路径路由
+### 2.1 架构：CompositeBackend 多路由组合（v1.1）
 
 ```
 Agent（FilesystemMiddleware / 未来 MemoryMiddleware）
         │ backend=CompositeBackend
         ▼
-┌────────────────────────────────────────────┐
-│ CompositeBackend                           │
-│  default : FilesystemBackend(data/workspace)│  ← 未匹配前缀的路径（Agent 常规文件）
-│  routes  : {                               │
-│    "/memories/": FilesystemBackend(data/memory)│  ← 记忆文件（前缀路由）
-│  }                                          │
-└────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ CompositeBackend                                     │
+│  default : FilesystemBackend(data/workspace)         │  ← Agent 文件工作区
+│  routes  : {                                         │
+│    "/memories/":       FilesystemBackend(data/memory)│  ← 记忆文件
+│    "/skills/static/":  FilesystemBackend(skill-resources/)│  ← 内置静态技能（只读）
+│    "/skills/market/":  FilesystemBackend(data/skills/skill_md)│  ← 市场下载技能
+│    "/exports/":        FilesystemBackend(data/exports)│  ← 导出报告
+│  }                                                   │
+└──────────────────────────────────────────────────────┘
 ```
 
 **路径映射表**：
@@ -75,14 +79,40 @@ Agent（FilesystemMiddleware / 未来 MemoryMiddleware）
 |---------|---------|------|
 | `/`（默认） | `data/workspace/` | Agent 常规文件操作（ls/read/write/edit） |
 | `/memories/` | `data/memory/` | 记忆文件（MemoryMiddleware 启用后读写 AGENTS.md 类记忆） |
+| `/skills/static/` | `skill-resources/`（项目根，蓝图占位） | 内置静态技能（Agent 只读参考） |
+| `/skills/market/` | `data/skills/skill_md/` | 市场下载技能（SkillMarket 已写此目录） |
+| `/exports/` | `data/exports/` | 导出报告/文档（Agent 写报告落盘） |
 
-**双 FilesystemBackend 隔离的理由**：root_dir 物理分离——Agent 的 workspace 操作
-永远碰不到记忆目录（虚拟根各自独立），记忆文件不被 Agent 误改/误删。
-若用单一 backend + 路由无隔离，Agent 写 `/memories/` 会绕过隔离意图。
+**多 backend 隔离的理由**：每个路由 root_dir 物理分离（虚拟根各自独立）——
+Agent 的 workspace 操作碰不到记忆/技能/导出目录；各用途目录互不污染。
 
-### 2.2 核心代码
+#### 沙盒澄清（v1.1 新增，回答"我们项目有沙盒呀？"）
 
-**`core/paths.py`**（补路径）：
+**OpenSandbox（执行沙箱）与 Backend（文件存储）是两个独立层**：
+
+| 维度 | OpenSandbox（执行沙箱） | Backend（文件存储） |
+|------|------------------------|--------------------|
+| 职责 | **隔离代码执行**（不可信代码跑在隔离容器） | **Agent 文件操作**（read/write/ls）落哪里 |
+| 归属 | `sandbox/adapter.py`（独立层） | `core/backend.py`（Agent 挂载） |
+| 生命周期 | 容器创建/销毁（远程实例） | 无连接（本地目录） |
+| 调用方 | `run_code_in_sandbox` 工具 | FilesystemMiddleware / MemoryMiddleware |
+
+参考配置的 `/sandbox_temp/` 实为**文件工作区**（对应我们 default=workspace），
+不是执行沙箱——我们的执行隔离已由 OpenSandbox 承担，本设计不改动它。
+
+#### 参考配置对照（v1.1 新增）
+
+| 参考项目配置 | 我们 | 差异说明 |
+|------------|------|---------|
+| `default=StateBackend()`（内存临时） | `default=FilesystemBackend(workspace)` | 我们更持久：Agent 文件直接落盘，重启不丢 |
+| `/sandbox_temp/{thread_id}`（会话隔离工作区） | `/`（workspace 全局） | 会话隔离后置：CompositeBackend 静态路由不支持动态 thread_id，需每会话 backend 或路径约定 |
+| `/skills/static/`（内置技能只读） | `/skills/static/` → `skill-resources/` | 新增（蓝图占位目录，实施时创建） |
+| `/skills/market/{user_id}` | `/skills/market/` → `data/skills/skill_md/` | 单用户项目无 user_id |
+| `/user_export/{user_id}` | `/exports/` → `data/exports/` | 新增（对应前端导出改后端落盘，可选） |
+
+### 2.2 核心代码（完整可运行，v1.1）
+
+**`core/paths.py`**（补 3 个路径函数）：
 
 ```python
 def get_memory_dir() -> Path:
@@ -90,16 +120,29 @@ def get_memory_dir() -> Path:
     base = get_app_dir() / "memory"
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+def get_exports_dir() -> Path:
+    """导出报告目录（/exports/ 路由）：data/exports/，父目录自动创建。"""
+    base = get_app_dir() / "exports"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+def get_static_skills_dir() -> Path:
+    """内置静态技能目录（/skills/static/ 路由，蓝图占位）：项目根 skill-resources/。"""
+    base = Path(__file__).resolve().parents[3] / "skill-resources"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 ```
 
-**`core/backend.py`**（新建，模块级惰性单例）：
+**`core/backend.py`**（新建，模块级惰性单例——完整版）：
 
 ```python
-"""Agent Backend 工厂：CompositeBackend 组合存储（2026-08-04 设计）。
+"""Agent Backend 工厂：CompositeBackend 多路由组合存储（2026-08-04 设计 v1.1）。
 
-- Agent 常规文件操作 → data/workspace（真实磁盘，非 StateBackend 内存）
-- /memories/ 前缀 → data/memory（记忆文件独立目录，物理隔离）
-- FilesystemBackend 无连接资源 → 模块级惰性单例即可（无需 lifespan，
+- default=workspace：Agent 常规文件操作落盘（非 StateBackend 内存，重启不丢）
+- 路由：/memories/ 记忆、/skills/static/ 内置技能（只读）、/skills/market/ 市场技能、
+  /exports/ 导出——多用途组合存储（参考项目 4 类路由映射，见设计文档 §2.1）
+- FilesystemBackend 无连接资源 → 模块级惰性单例（无需 lifespan，
   区别于 checkpointer/store 的 async 连接）
 """
 
@@ -107,7 +150,13 @@ from __future__ import annotations
 
 from deepagents.backends import CompositeBackend, FilesystemBackend
 
-from src.core.paths import get_memory_dir, get_workspace_dir
+from src.core.paths import (
+    get_exports_dir,
+    get_memory_dir,
+    get_skill_md_dir,
+    get_static_skills_dir,
+    get_workspace_dir,
+)
 
 _backend: CompositeBackend | None = None
 
@@ -120,6 +169,9 @@ def get_backend() -> CompositeBackend:
             default=FilesystemBackend(root_dir=get_workspace_dir(), virtual_mode=True),
             routes={
                 "/memories/": FilesystemBackend(root_dir=get_memory_dir(), virtual_mode=True),
+                "/skills/static/": FilesystemBackend(root_dir=get_static_skills_dir(), virtual_mode=True),
+                "/skills/market/": FilesystemBackend(root_dir=get_skill_md_dir(), virtual_mode=True),
+                "/exports/": FilesystemBackend(root_dir=get_exports_dir(), virtual_mode=True),
             },
         )
     return _backend
@@ -132,7 +184,7 @@ from src.core.backend import get_backend
 
 _agent = create_deep_agent(
     ...,
-    backend=get_backend(),   # ← Agent 文件操作落盘 + 记忆路由
+    backend=get_backend(),   # ← Agent 文件操作落盘 + 多路由存储
 )
 ```
 
@@ -153,16 +205,20 @@ _agent = create_deep_agent(
 ⚠️ 风险：demo 脚本（scripts/agent_demo.py）若依赖内存文件操作需兼容验证（落盘后路径
 仍为虚拟 `/`，对 Agent 透明——只需确认工具调用不受影响）。
 
-### 2.5 测试设计
+### 2.5 测试设计（v1.1 多路由）
 
 | 用例 | 断言 |
 |------|------|
-| 落盘持久化 | `backend.write("/note.txt")` → `data/workspace/note.txt` 存在 → read 返回内容 |
-| 前缀路由 | `backend.write("/memories/facts.md")` → 落 `data/memory/facts.md`（非 workspace） |
+| 默认路由落盘 | `backend.write("/note.txt")` → `data/workspace/note.txt` 存在 → read 返回内容 |
+| 记忆路由 | `backend.write("/memories/facts.md")` → 落 `data/memory/facts.md`（非 workspace） |
+| 市场技能路由 | `backend.write("/skills/market/pdf.md")` → 落 `data/skills/skill_md/pdf.md` |
+| 导出路由 | `backend.write("/exports/report.md")` → 落 `data/exports/report.md` |
+| 内置技能只读语义 | `/skills/static/` 目录由 SkillMarket 代码约束写入；Agent 约定不写（virtual_mode 限制路径） |
 | virtual_mode 越权拒绝 | `../` 路径 → 拒绝/规范化（不逃出 root_dir） |
 | 单例 | `get_backend() is get_backend()` |
 
-测试隔离：tmp_path 构造 FilesystemBackend（不依赖真实 data/）。
+测试隔离：tmp_path 构造 FilesystemBackend（不依赖真实 data/）；各路由断言
+用独立 tmp 子目录。
 
 ---
 
