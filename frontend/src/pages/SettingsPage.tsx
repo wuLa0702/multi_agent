@@ -16,22 +16,28 @@ import {
   Trash2,
   Server,
   Globe,
+  Palette,
+  Plus,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/lib/stores/chatStore";
 import { useSkillStore } from "@/lib/stores/skillStore";
+import { useTheme } from "@/hooks/useTheme";
 import InstalledSkillRow from "@/components/skills/InstalledSkillRow";
 import { showToast } from "@/components/shared/Toast";
 import { showConfirm } from "@/components/ui/confirm-dialog";
 import type { ProviderInfo } from "@/lib/api/types";
 
-type SettingKey = "account" | "mcp" | "skills" | "system";
+type SettingKey = "account" | "mcp" | "skills" | "system" | "appearance";
 
 const SETTING_MENU: { key: SettingKey; label: string; icon: typeof KeyRound; desc: string }[] = [
   { key: "account", label: "账户与密钥", icon: KeyRound, desc: "模型厂商 API Key 配置" },
   { key: "mcp", label: "MCP 管理", icon: Plug, desc: "外部 MCP Server 连接" },
   { key: "skills", label: "Skill 管理", icon: PackageCheck, desc: "已安装技能包" },
   { key: "system", label: "系统配置", icon: Settings2, desc: "运行行为与偏好" },
+  { key: "appearance", label: "外观主题", icon: Palette, desc: "亮色 / 暗色 / 跟随系统" },
 ];
 
 // ── mock 数据（后端未实现的接口，标注 ⚠️ MOCK）──
@@ -69,6 +75,7 @@ export default function SettingsPage() {
   const [menu, setMenu] = useState<SettingKey>("account");
   const providers = useChatStore((s) => s.providers);
   const loadProviders = useChatStore((s) => s.loadProviders);
+  const { theme, setTheme } = useTheme();
   const { installed, installedLoaded } = useSkillStore();
   const loadInstalled = useSkillStore((s) => s.loadInstalled);
   const toggleSkill = useSkillStore((s) => s.toggleSkill);
@@ -129,6 +136,39 @@ export default function SettingsPage() {
           </header>
 
           {menu === "account" && <AccountSection providers={providers} />}
+          {menu === "appearance" && (
+            <div className="space-y-2">
+              {(
+                [
+                  { key: "light", label: "亮色", desc: "明亮主题，适合白天", icon: Sun },
+                  { key: "dark", label: "暗色", desc: "深色主题，护眼省电", icon: Moon },
+                  { key: "system", label: "跟随系统", desc: "随操作系统自动切换", icon: Settings2 },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => {
+                    setTheme(t.key);
+                    showToast(`已切换为${t.label}主题`, "success");
+                  }}
+                  className={cn(
+                    "card-hover press flex w-full items-center gap-3 rounded-xl border p-4 text-left shadow-xs",
+                    theme === t.key ? "border-primary/50 bg-accent/40" : "border-border bg-card",
+                  )}
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent text-primary">
+                    <t.icon className="size-5" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-medium">{t.label}</div>
+                    <div className="text-xs text-muted-foreground">{t.desc}</div>
+                  </div>
+                  {theme === t.key && <Check className="size-4 text-success" />}
+                </button>
+              ))}
+            </div>
+          )}
           {menu === "mcp" && (
             <McpSection rows={mockMcp} onToggle={(id) => setMockMcp((r) => r.map((x) => (x.id === id ? { ...x, active: !x.active } : x)))} />
           )}
@@ -214,6 +254,15 @@ function AccountSection({ providers }: { providers: ProviderInfo[] }) {
           </button>
         </div>
       ))}
+
+      {/* 添加新账户（v2 §5.2-3，mock） */}
+      <button
+        type="button"
+        onClick={() => showToast("添加新账户（后端未实现，mock）", "info")}
+        className="card-hover press flex h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-xs text-muted-foreground hover:border-primary/40 hover:text-primary"
+      >
+        <Plus className="size-4" /> 添加新账户
+      </button>
     </div>
   );
 }

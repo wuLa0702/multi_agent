@@ -1,27 +1,24 @@
 /**
- * 消息流 — 对话气泡 + 工具调用折叠 + 系统提示（notices）。
- * 数据源：chatStore.messages（流式 token 累积）+ chatStore.notices + chatStore.toolCalls。
+ * 消息流 — MessageBubble 气泡 + 工具调用折叠 + 系统提示（notices）+ 流式工具直播块。
+ * 数据源：chatStore.messages / notices / toolCalls。
  */
 
 import { useMemo } from "react";
-import { Bot, User, AlertCircle, Info, Wrench } from "lucide-react";
+import { Wrench, AlertCircle, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/lib/stores/chatStore";
 import type { Message } from "@/lib/api/types";
-import StreamingMarkdown from "./StreamingMarkdown";
-import EmptyState from "@/components/shared/EmptyState";
+import MessageBubble from "./MessageBubble";
 
 /** 历史里的 tool 角色消息 → 折叠块 */
 function ToolMessageBlock({ message }: { message: Message }) {
   return (
-    <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 px-3 py-2 text-xs">
-      <div className="flex items-center gap-1.5 text-neutral-500 font-medium">
+    <div className="rounded-xl border border-border bg-muted/50 px-3 py-2 text-xs">
+      <div className="flex items-center gap-1.5 font-medium text-muted-foreground">
         <Wrench className="size-3.5" />
         tool 调用结果
       </div>
-      <pre className="mt-1 whitespace-pre-wrap break-all text-neutral-600 dark:text-neutral-400">
-        {message.content}
-      </pre>
+      <pre className="mt-1 whitespace-pre-wrap break-all text-muted-foreground">{message.content}</pre>
     </div>
   );
 }
@@ -34,27 +31,22 @@ export default function MessageList() {
   // 流式进行中的 tool_call（当前 run）→ 渲染为消息流里的折叠块
   const liveToolIds = useMemo(() => Object.keys(toolCalls), [toolCalls]);
 
-  if (messages.length === 0 && notices.length === 0) {
-    return (
-      <EmptyState
-        icon={Bot}
-        title="多 Agent 工作台"
-        desc="发送消息开始对话。Agent 的工具调用、子 Agent 委派与审批请求会实时展示。"
-      />
-    );
-  }
+  // 最后一条 assistant 消息是否流式中（显示光标）
+  const lastIndex = messages.length - 1;
+  const lastIsStreaming =
+    messages.length > 0 && messages[lastIndex].role === "assistant" && messages[lastIndex].id === null;
 
   return (
-    <div className="flex h-full flex-col gap-3 overflow-y-auto p-4">
+    <div className="flex flex-col gap-3 py-4">
       {/* 系统提示（错误/压缩/审批失效） */}
       {notices.map((n, i) => (
         <div
           key={`notice-${i}`}
           className={cn(
-            "mx-auto w-full max-w-md rounded-lg border px-3 py-2 text-xs",
+            "mx-auto w-full max-w-md rounded-xl border px-3 py-2 text-xs",
             n.kind === "error"
-              ? "border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300"
-              : "border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400",
+              ? "border-red-300/60 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+              : "border-border bg-muted/60 text-muted-foreground",
           )}
         >
           <span className="flex items-center gap-1.5">
@@ -65,43 +57,27 @@ export default function MessageList() {
       ))}
 
       {messages.map((m, i) => {
-        if (m.role === "user") {
-          return (
-            <div key={`m-${m.id ?? i}`} className="flex justify-end">
-              <div className="flex max-w-[75%] items-start gap-2">
-                <div className="rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground whitespace-pre-wrap break-words">
-                  {m.content}
-                </div>
-                <User className="mt-2 size-4 shrink-0 text-neutral-400" />
-              </div>
-            </div>
-          );
-        }
         if (m.role === "tool") {
           return (
-            <div key={`m-${m.id ?? i}`} className="flex justify-center w-full max-w-[85%] mx-auto">
+            <div key={`m-${m.id ?? i}`} className="mx-auto w-full max-w-[85%]">
               <ToolMessageBlock message={m} />
             </div>
           );
         }
-        // assistant（含流式）
         return (
-          <div key={`m-${m.id ?? i}`} className="flex justify-start">
-            <div className="flex max-w-[85%] items-start gap-2">
-              <Bot className="mt-2 size-4 shrink-0 text-neutral-400" />
-              <div className="rounded-2xl rounded-tl-sm border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2">
-                <StreamingMarkdown content={m.content} />
-              </div>
-            </div>
-          </div>
+          <MessageBubble
+            key={`m-${m.id ?? i}`}
+            message={m}
+            streaming={i === lastIndex && lastIsStreaming}
+          />
         );
       })}
 
       {/* 流式工具调用直播块 */}
       {liveToolIds.length > 0 && (
-        <div className="flex justify-center">
-          <div className="w-full max-w-[85%] rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 px-3 py-2">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-neutral-500">
+        <div className="mx-auto w-full max-w-[85%]">
+          <div className="expand-down rounded-xl border border-dashed border-border bg-card px-3 py-2">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Wrench className="size-3.5" /> 工具调用
             </div>
             {liveToolIds.map((id) => {

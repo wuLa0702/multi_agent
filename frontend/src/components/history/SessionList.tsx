@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api/client";
 import type { Session } from "@/lib/api/types";
 
-/** 会话分组：今天 / 昨天 / 更早（按 updated_at 本地时区） */
+/** 会话分组：今天 / 昨天 / 7 天内 / 更早（v2 §3.5-3，按 updated_at 本地时区） */
 function groupLabel(updatedAt: string): string {
   const d = new Date(updatedAt);
   const now = new Date();
@@ -24,18 +24,31 @@ function groupLabel(updatedAt: string): string {
   const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   if (t === startOfToday) return "今天";
   if (t === startOfToday - dayMs) return "昨天";
+  if (t >= startOfToday - 6 * dayMs) return "7 天内";
   return "更早";
 }
 
-const GROUP_ORDER = ["今天", "昨天", "更早"] as const;
+const GROUP_ORDER = ["今天", "昨天", "7 天内", "更早"] as const;
 
 function groupSessions(sessions: Session[]): Record<string, Session[]> {
-  const groups: Record<string, Session[]> = { 今天: [], 昨天: [], 更早: [] };
+  const groups: Record<string, Session[]> = { 今天: [], 昨天: [], "7 天内": [], 更早: [] };
   for (const s of sessions) {
     const label = groupLabel(s.updated_at);
     groups[label]?.push(s) ?? (groups[label] = [s]);
   }
   return groups;
+}
+
+/** 会话时间显示（v2 §3.5-4）：今天 HH:mm / 昨天 / 7 天内 MM-DD / 更早 YYYY-MM-DD */
+function formatSessionTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const label = groupLabel(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (label === "今天") return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (label === "昨天") return "昨天";
+  if (label === "7 天内") return `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 export default function SessionList() {
@@ -181,7 +194,7 @@ export default function SessionList() {
   );
 }
 
-/** 单个会话行（hover 上浮 + 选中态竖条，方案 §4.1.3） */
+/** 单个会话行（两行式：标题 + 时间/hover 操作，v2 §3.5-4） */
 function SessionRow({
   session: s,
   active,
@@ -208,13 +221,13 @@ function SessionRow({
   return (
     <div
       className={cn(
-        "nav-item group relative flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm",
+        "nav-item group relative flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5",
         active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
       )}
       onClick={onSelect}
     >
-      {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-primary" />}
-      <MessageSquare className={cn("size-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")} />
+      {active && <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />}
+      <MessageSquare className={cn("mt-0.5 size-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")} />
       {editing ? (
         <>
           <Input
@@ -241,33 +254,38 @@ function SessionRow({
           </button>
         </>
       ) : (
-        <>
-          <span className="flex-1 truncate">{s.title}</span>
-          <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onStartEdit();
-              }}
-              className="rounded p-0.5 text-muted-foreground hover:text-foreground"
-              aria-label="改名"
-            >
-              <Pencil className="size-3" />
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              className="rounded p-0.5 text-muted-foreground hover:text-destructive"
-              aria-label="删除"
-            >
-              <Trash2 className="size-3" />
-            </button>
-          </span>
-        </>
+        <div className="min-w-0 flex-1">
+          {/* 第一行：标题（截断） */}
+          <div className="truncate text-sm">{s.title}</div>
+          {/* 第二行：时间（右）+ hover 操作 */}
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-muted-foreground/70">{formatSessionTime(s.updated_at)}</span>
+            <span className="hidden items-center gap-0.5 group-hover:flex">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStartEdit();
+                }}
+                className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                aria-label="改名"
+              >
+                <Pencil className="size-3" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                aria-label="删除"
+              >
+                <Trash2 className="size-3" />
+              </button>
+            </span>
+          </div>
+        </div>
       )}
     </div>
   );

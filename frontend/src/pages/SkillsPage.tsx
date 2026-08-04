@@ -6,13 +6,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Store, Search, LayoutGrid, Plug, FileText, PackageCheck } from "lucide-react";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useSkillStore } from "@/lib/stores/skillStore";
 import SkillCard from "@/components/skills/SkillCard";
 import InstalledSkillRow from "@/components/skills/InstalledSkillRow";
 import EmptyState from "@/components/shared/EmptyState";
+import PageHeader from "@/components/common/PageHeader";
+import SearchInput from "@/components/common/SearchInput";
 import { showToast } from "@/components/shared/Toast";
 import { api } from "@/lib/api/client";
 import type { SkillMarketItem } from "@/lib/api/types";
@@ -99,13 +100,24 @@ export default function SkillsPage() {
 
   return (
     <div className="flex min-w-0 flex-1">
-      {/* 二级栏：分类导航（方案 §5.2.2-1） */}
-      <aside className="w-[280px] shrink-0 border-r border-border bg-card">
-        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <Store className="size-4 text-primary" />
-          <span className="text-sm font-semibold">能力市场</span>
-        </div>
-        <div className="space-y-0.5 p-2">
+      {/* 二级栏：分类导航（v2 §4.1：标题栏 56px + 已安装开关） */}
+      <aside className="flex w-[280px] shrink-0 flex-col border-r border-border bg-card">
+        <PageHeader
+          title="能力市场"
+          icon={<Store className="size-4" />}
+          right={
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={onlyInstalled}
+                onChange={(e) => setOnlyInstalled(e.target.checked)}
+                className="size-3.5 accent-primary"
+              />
+              已安装
+            </label>
+          }
+        />
+        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
           {CATEGORIES.map((c) => (
             <button
               key={c.key}
@@ -136,24 +148,11 @@ export default function SkillsPage() {
 
       {/* 主内容区 */}
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* 顶部：标题 + 搜索 + 筛选（方案 §5.2.2-4） */}
-        <header className="shrink-0 border-b border-border bg-card/60 px-4 py-3 backdrop-blur-sm">
-          <div className="flex items-center gap-3">
-            <h1 className="text-sm font-semibold">{currentCat.label}</h1>
-            <div className="relative ml-auto w-64">
-              <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && doSearch()}
-                placeholder="搜索市场 Skill…"
-                className="h-8 pl-7 text-xs"
-              />
-            </div>
-            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={doSearch}>
-              搜索
-            </Button>
-            {category !== "installed" && (
+        {/* 顶部：标题栏 56px + 搜索筛选栏（v2 §4.2-1 独立一行） */}
+        <PageHeader
+          title={currentCat.label}
+          right={
+            category !== "installed" && (
               <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
@@ -163,9 +162,23 @@ export default function SkillsPage() {
                 />
                 仅看已安装
               </label>
-            )}
+            )
+          }
+        >
+          <div className="flex items-center gap-2 px-4 pb-2.5">
+            <div className="w-1/2">
+              <SearchInput
+                value={query}
+                onChange={setQuery}
+                placeholder="搜索市场 Skill…"
+                onEnter={doSearch}
+              />
+            </div>
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={doSearch}>
+              搜索
+            </Button>
           </div>
-        </header>
+        </PageHeader>
 
         {/* 内容区：卡片网格 3 列（方案 §5.2.2-2）或已安装列表 */}
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
