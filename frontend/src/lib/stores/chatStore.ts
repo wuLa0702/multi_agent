@@ -61,6 +61,7 @@ interface ChatState {
   pendingRunId: string | null; // localStorage 镜像（刷新恢复用）
   providers: ProviderInfo[]; // 模型下拉数据源（GET /v1/providers）
   selectedModelId: number | null; // 用户选择；null = 默认模型
+  agentMode: string; // 代理模式（2026-08-04 P1，随请求透传后端）
 
   send(text: string): Promise<void>;
   resume(runId: string): Promise<void>;
@@ -71,6 +72,7 @@ interface ChatState {
   clearChat(): void;
   loadProviders(): Promise<void>;
   setSelectedModelId(modelId: number | null): void;
+  setAgentMode(mode: string): void;
 }
 
 let abortRef: AbortController | null = null;
@@ -87,6 +89,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     message?: string | null;
     resume_run_id?: string | null;
     model_id?: number | null;
+    mode?: string;
   }) => {
     abortRef?.abort();
     const controller = new AbortController();
@@ -125,6 +128,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     pendingRunId: localStorage.getItem(PENDING_RUN_KEY),
     providers: [],
     selectedModelId: null,
+    agentMode: "default", // 代理模式（2026-08-04 P1，随请求透传后端）
 
     async send(text: string) {
       const trimmed = text.trim();
@@ -161,6 +165,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         session_id: sessionId,
         message: trimmed,
         model_id: get().selectedModelId, // null → 后端用默认模型
+        mode: get().agentMode, // 代理模式（2026-08-04 P1）
       });
     },
 
@@ -180,6 +185,10 @@ export const useChatStore = create<ChatState>((set, get) => {
         // 拉取失败静默降级：下拉不渲染，请求不带 model_id（后端用默认）
         set({ providers: [], selectedModelId: null });
       }
+    },
+
+    setAgentMode(mode: string) {
+      set({ agentMode: mode });
     },
 
     setSelectedModelId(modelId: number | null) {

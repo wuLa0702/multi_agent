@@ -31,7 +31,7 @@ router = APIRouter(prefix="/v1/chat", tags=["chat"])
 
 
 class ChatStreamRequest(BaseModel):
-    """流式对话请求体（契约 §5.1）。"""
+    """流式对话请求体（契约 §5.1 + 2026-08-04 P1 代理模式）。"""
 
     session_id: str | None = Field(default=None, description="会话 ID；None → 自动新建")
     message: str | None = Field(default=None, description="新消息模式：用户输入")
@@ -39,6 +39,10 @@ class ChatStreamRequest(BaseModel):
     model_id: int | None = Field(
         default=None,
         description="数据库模型 ID（GET /v1/providers 查询）；None=默认模型",
+    )
+    mode: str = Field(
+        default="default",
+        description="代理模式：default/plan/agent/auto（2026-08-04 P1，先浅后深——仅提示词注入）",
     )
 
 
@@ -166,13 +170,22 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
             history = await repo.list_messages(conn, session_id, limit=200)
             lc_messages = _history_to_langchain(history)
 
+            # 2.5 代理模式注入（2026-08-04 P1 先浅后深：仅请求级 SystemMessage，
+            # 不重建 agent 单例——agent 本体无状态，模式指令随对话上下文生效）
+            if req.mode != "default":
+                from src.agent.main_agent import _MODE_INSTRUCTIONS
+
+                instruction = _MODE_INSTRUCTIONS.get(req.mode)
+                if instruction:
+                    lc_messages = [SystemMessage(content=instruction), *lc_messages]
+
             # 3. start 事件
             yield {"data": StartEvent(run_id=run_id, session_id=session_id).model_dump_json()}
 
             # 4. Agent 流式执行（LLM 异常 → error 事件后关闭）
             try:
                 agent = build_agent()  # 进程单例（模型经 middleware 按请求选择）
-                chat_context = ChatContext(model_id=req.model_id)
+                chat_context = ChatContext(model_id=req.model_id, mode=req.mode)
                 full_text_parts: list[str] = []
                 async for text in stream_agent_tokens(agent, lc_messages, context=chat_context):
                     full_text_parts.append(text)

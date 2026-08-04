@@ -57,14 +57,36 @@ DEFAULT_SYSTEM_PROMPT = """你是一名资深研究员，负责开展深入调�
 
 @dataclass
 class ChatContext:
-    """请求级运行时上下文（context_schema）：携带模型选择。
+    """请求级运行时上下文（context_schema）：携带模型选择 + 代理模式。
 
     Attributes:
         model_id: 数据库模型 ID（providers/models 表，GET /v1/providers
             返回）；None → 默认模型（settings.llm_provider 厂商的默认模型）
+        mode: 代理模式（default/plan/agent/auto，2026-08-04 P1）
+            —— 先浅后深：仅注入 system_prompt 指令，不改编排
     """
 
     model_id: int | None = None
+    mode: str = "default"
+
+
+# 代理模式提示词注入（2026-08-04 P1：先浅后深——只改指令不改编排）
+_MODE_INSTRUCTIONS: dict[str, str] = {
+    "plan": (
+        "\n\n## 规划模式\n"
+        "开始执行前，先拆解任务为清晰的步骤清单（可用 write_todos），"
+        "然后按步骤逐一执行并汇报进度。"
+    ),
+    "agent": (
+        "\n\n## 代理模式\n"
+        "自主完成多步骤任务：识别目标 → 规划执行路径 → 调用所需工具 → "
+        "检查结果质量 → 输出最终结论。尽量少打扰用户，一次完成。"
+    ),
+    "auto": (
+        "\n\n## 自动模式\n"
+        "根据任务复杂程度自行选择策略：简单任务直接回答，复杂任务先规划再执行。"
+    ),
+}
 
 
 @wrap_model_call

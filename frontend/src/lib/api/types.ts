@@ -172,6 +172,7 @@ export interface ChatStreamRequest {
   message?: string | null;
   resume_run_id?: string | null;
   model_id?: number | null; // DB 模型 ID（GET /v1/providers 查询）；null/缺省 = 默认模型
+  mode?: string; // 代理模式（default/plan/agent/auto，2026-08-04 P1）
 }
 
 export interface ApproveRequest {

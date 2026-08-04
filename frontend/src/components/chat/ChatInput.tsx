@@ -35,10 +35,13 @@ export default function ChatInput({
   disabled = false,
 }: Props) {
   const [text, setText] = useState("");
-  const [mode, setMode] = useState<AgentMode>("default");
   const [attachments, setAttachments] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 代理模式（2026-08-04 P1）：存 chatStore，随请求透传后端
+  const agentMode = useChatStore((s) => s.agentMode);
+  const setAgentMode = useChatStore((s) => s.setAgentMode);
 
   /** 高度自伸缩（v3 §3.3）：scrollHeight 实时测量，44~320px，150ms 过渡 */
   const autosize = (el: HTMLTextAreaElement) => {
@@ -116,7 +119,13 @@ export default function ChatInput({
               </button>
             </>
           )}
-          {showAgentMode && <AgentModeSelector mode={mode} onChange={setMode} disabled={busy} />}
+          {showAgentMode && (
+            <AgentModeSelector
+              mode={agentMode as AgentMode}
+              onChange={(m) => setAgentMode(m)}
+              disabled={busy}
+            />
+          )}
           {showModel && (
             <ModelSelector
               providers={providers}
