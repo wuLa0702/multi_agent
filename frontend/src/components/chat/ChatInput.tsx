@@ -64,7 +64,8 @@ export default function ChatInput({
   };
 
   return (
-    <div className="border-t border-border bg-card/70 p-3 backdrop-blur-sm">
+    // 悬浮卡片（v3 §3.2.1）：圆角 16px + shadow-lg + 毛玻璃 + 不贴底
+    <div className="rounded-2xl border border-border bg-card/85 p-3 shadow-lg backdrop-blur-md">
       {isAwaiting && (
         <div className="mb-2 text-center text-xs text-warning">
           等待审批决策…（请在弹出的对话框中操作）
@@ -134,7 +135,7 @@ export default function ChatInput({
         </div>
       )}
 
-      {/* 第二行：输入区 + 发送 */}
+      {/* 第二行：输入区 + 发送（v3 §3.3：1-8 行自伸缩，行高 1.6，150ms 过渡） */}
       <div className="flex items-end gap-2">
         <Textarea
           value={text}
@@ -143,8 +144,11 @@ export default function ChatInput({
           placeholder={isAwaiting ? "审批中，暂不可输入" : "输入消息...（Enter 发送，Shift+Enter 换行）"}
           disabled={isAwaiting}
           rows={1}
-          className="min-h-[36px] max-h-[144px] flex-1 resize-none transition-[height] duration-150"
-          style={{ height: Math.min(36 + Math.floor(text.length / 60) * 18, 144) }}
+          className="min-h-[44px] max-h-[320px] flex-1 resize-none leading-[1.6] transition-[height] duration-150 ease-out"
+          style={{
+            height: Math.min(44 + Math.floor(text.length / 50) * 22, 320),
+            padding: "12px 16px",
+          }}
         />
         {isStreaming ? (
           <Button variant="outline" size="icon" onClick={onCancel} title="停止生成" aria-label="停止生成">

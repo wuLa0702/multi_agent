@@ -112,6 +112,13 @@
   --chart-4: #f59e0b;
   --chart-5: #ef4444;
   --radius: 0.625rem;
+
+  /* 对话区分级响应式（v3 §2.2-4）：clamp 平滑过渡，无硬断点 */
+  --chat-max-width: clamp(600px, 70vw, 1500px);
+  --chat-padding-x: clamp(20px, 5vw, 80px);
+
+  /* 全局基准字号（v3 §6.1：设置-外观主题三档调节） */
+  --font-size-base: 14px;
 }
 
 /* ── 暗色主题（方案 §4.2.1 色彩表）── */
@@ -167,10 +174,12 @@ html {
 body {
   margin: 0;
   font-family: var(--font-sans);
+  font-size: var(--font-size-base);
   background: var(--background);
   color: var(--foreground);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: font-size 150ms ease;
 }
 
 * {

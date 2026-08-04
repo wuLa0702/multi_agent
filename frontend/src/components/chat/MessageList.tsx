@@ -57,19 +57,22 @@ export default function MessageList() {
       ))}
 
       {messages.map((m, i) => {
+        // data-msg-index：概览标尺定位锚点（v3 §3.4）
+        const anchorProps = { "data-msg-index": i };
         if (m.role === "tool") {
           return (
-            <div key={`m-${m.id ?? i}`} className="mx-auto w-full max-w-[85%]">
+            <div key={`m-${m.id ?? i}`} {...anchorProps} className="mx-auto w-full max-w-[85%]">
               <ToolMessageBlock message={m} />
             </div>
           );
         }
         return (
-          <MessageBubble
-            key={`m-${m.id ?? i}`}
-            message={m}
-            streaming={i === lastIndex && lastIsStreaming}
-          />
+          <div key={`m-${m.id ?? i}`} {...anchorProps}>
+            <MessageBubble
+              message={m}
+              streaming={i === lastIndex && lastIsStreaming}
+            />
+          </div>
         );
       })}
 

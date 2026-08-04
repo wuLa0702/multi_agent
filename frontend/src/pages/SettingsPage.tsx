@@ -167,6 +167,9 @@ export default function SettingsPage() {
                   {theme === t.key && <Check className="size-4 text-success" />}
                 </button>
               ))}
+
+              {/* 字体大小三档（v3 §6.1：CSS 变量 --font-size-base + 实时预览） */}
+              <FontSizeSection />
             </div>
           )}
           {menu === "mcp" && (
@@ -212,6 +215,61 @@ export default function SettingsPage() {
           )}
         </div>
       </main>
+    </div>
+  );
+}
+
+// ── 字体大小（v3 §6.1：三档 + 实时预览，CSS 变量驱动全局生效）──
+
+const FONT_SIZES = [
+  { key: "small", label: "小", px: 13, desc: "大屏 / 内容密集" },
+  { key: "medium", label: "中（默认）", px: 14, desc: "常规使用" },
+  { key: "large", label: "大", px: 16, desc: "小屏 / 视力偏好" },
+] as const;
+
+function FontSizeSection() {
+  const [current, setCurrent] = useState<number>(() => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue("--font-size-base").trim();
+    const px = Number.parseFloat(v);
+    return Number.isFinite(px) && px > 0 ? px : 14;
+  });
+
+  const apply = (px: number) => {
+    document.documentElement.style.setProperty("--font-size-base", `${px}px`);
+    setCurrent(px);
+    showToast(`字体大小已切换（${px}px）`, "success");
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4 shadow-xs">
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+        字体大小
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">本地</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {FONT_SIZES.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            onClick={() => apply(f.px)}
+            className={cn(
+              "press rounded-lg border p-2.5 text-center transition-colors",
+              current === f.px ? "border-primary/50 bg-accent/40" : "border-border hover:bg-muted",
+            )}
+          >
+            <div className="font-medium" style={{ fontSize: `${f.px}px` }}>
+              示例
+            </div>
+            <div className="mt-1 text-[10px] text-muted-foreground">
+              {f.label} · {f.px}px
+            </div>
+          </button>
+        ))}
+      </div>
+      {/* 实时预览（v3 §6.1-3） */}
+      <p className="mt-3 border-t border-border pt-2 text-muted-foreground" style={{ fontSize: `${current}px` }}>
+        实时预览：这是当前字号效果，对话消息与会话列表同步变化。
+      </p>
     </div>
   );
 }

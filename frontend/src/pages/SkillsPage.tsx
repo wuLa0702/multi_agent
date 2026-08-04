@@ -100,23 +100,9 @@ export default function SkillsPage() {
 
   return (
     <div className="flex min-w-0 flex-1">
-      {/* 二级栏：分类导航（v2 §4.1：标题栏 56px + 已安装开关） */}
+      {/* 二级栏：分类导航（v3 §5.2：删「已安装」勾选，仅保留主区开关） */}
       <aside className="flex w-[280px] shrink-0 flex-col border-r border-border bg-card">
-        <PageHeader
-          title="能力市场"
-          icon={<Store className="size-4" />}
-          right={
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={onlyInstalled}
-                onChange={(e) => setOnlyInstalled(e.target.checked)}
-                className="size-3.5 accent-primary"
-              />
-              已安装
-            </label>
-          }
-        />
+        <PageHeader title="能力市场" icon={<Store className="size-4" />} />
         <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
           {CATEGORIES.map((c) => (
             <button

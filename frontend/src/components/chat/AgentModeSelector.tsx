@@ -58,7 +58,8 @@ export default function AgentModeSelector({ mode, onChange, disabled }: Props) {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} aria-hidden />
-          <div className="expand-down absolute left-0 top-full z-40 mt-1 w-44 rounded-xl border border-border bg-popover p-1 shadow-lg">
+          {/* 向上展开（v3 §3.2.2：输入框内下拉默认向上） */}
+          <div className="expand-down absolute bottom-full left-0 z-40 mb-1.5 w-44 rounded-xl border border-border bg-popover p-1 shadow-lg">
             {AGENT_MODES.map((m) => (
               <button
                 key={m.key}

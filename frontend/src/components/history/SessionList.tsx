@@ -5,10 +5,11 @@
  */
 
 import { useMemo, useState } from "react";
-import { MessageSquare, Plus, Pencil, Trash2, Check, Search } from "lucide-react";
+import { MessageSquare, Plus, Pencil, Trash2, Check, Search, Pin, PinOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/lib/stores/sessionStore";
 import { useChatStore } from "@/lib/stores/chatStore";
+import { usePinnedSessions } from "@/lib/hooks/usePinnedSessions";
 import { showConfirm } from "@/components/ui/confirm-dialog";
 import { showToast } from "@/components/shared/Toast";
 import { Input } from "@/components/ui/input";
@@ -125,7 +126,9 @@ export default function SessionList() {
     () => (query ? sessions.filter((s) => s.title.toLowerCase().includes(query.toLowerCase())) : sessions),
     [sessions, query],
   );
-  const groups = useMemo(() => groupSessions(filtered), [filtered]);
+
+  // 置顶持久化（v3 §4.1）
+  const { isPinned, togglePinned } = usePinnedSessions();
 
   return (
     <div className="flex h-full flex-col">
@@ -153,66 +156,117 @@ export default function SessionList() {
         </div>
       </div>
 
-      {/* 列表：今天/昨天/更早 分组，独立滚动 */}
-      <div className="flex-1 overflow-y-auto px-2 py-2">
-        {filtered.length === 0 && (
-          <div className="mt-8 text-center text-xs text-muted-foreground">
-            {query ? "无匹配会话" : "暂无会话，点击 + 新建"}
-          </div>
-        )}
-        {GROUP_ORDER.map((label) => {
-          const items = groups[label] ?? [];
-          if (items.length === 0) return null;
-          return (
-            <div key={label} className="mb-3">
-              <div className="sidebar-group-title">{label}</div>
-              <div className="space-y-0.5">
-                {items.map((s) => (
-                  <SessionRow
-                    key={s.id}
-                    session={s}
-                    active={s.id === sessionId}
-                    editing={editingId === s.id}
-                    draftTitle={draftTitle}
-                    onDraftChange={setDraftTitle}
-                    onSelect={() => handleSelect(s.id)}
-                    onStartEdit={() => {
-                      setEditingId(s.id);
-                      setDraftTitle(s.title);
-                    }}
-                    onCancelEdit={() => setEditingId(null)}
-                    onConfirmEdit={() => handleRename(s.id)}
-                    onDelete={() => handleDelete(s.id)}
-                  />
-                ))}
+      {/* 置顶持久化（v3 §4.1，localStorage mock） */}
+      {(() => {
+        const pinnedSessions = filtered.filter((s) => isPinned(s.id));
+        const unpinned = filtered.filter((s) => !isPinned(s.id));
+        const unpinnedGroups = groupSessions(unpinned);
+        return (
+          <div className="flex-1 overflow-y-auto px-2 py-2">
+            {filtered.length === 0 && (
+              <div className="mt-8 text-center text-xs text-muted-foreground">
+                {query ? "无匹配会话" : "暂无会话，点击 + 新建"}
               </div>
-            </div>
-          );
-        })}
-      </div>
+            )}
+
+            {/* 置顶分组（v3 §4.1：单独分组，图钉 + 数量） */}
+            {pinnedSessions.length > 0 && (
+              <div className="mb-3">
+                <div className="sidebar-group-title flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Pin className="size-3 text-primary" /> 置顶
+                  </span>
+                  <span className="rounded-full bg-primary/10 px-1.5 text-[10px] text-primary">
+                    {pinnedSessions.length}
+                  </span>
+                </div>
+                <div className="space-y-0.5">
+                  {pinnedSessions.map((s) => (
+                    <SessionRow
+                      key={s.id}
+                      session={s}
+                      pinned
+                      active={s.id === sessionId}
+                      editing={editingId === s.id}
+                      draftTitle={draftTitle}
+                      onDraftChange={setDraftTitle}
+                      onSelect={() => handleSelect(s.id)}
+                      onTogglePin={() => togglePinned(s.id)}
+                      onStartEdit={() => {
+                        setEditingId(s.id);
+                        setDraftTitle(s.title);
+                      }}
+                      onCancelEdit={() => setEditingId(null)}
+                      onConfirmEdit={() => handleRename(s.id)}
+                      onDelete={() => handleDelete(s.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 时间分组 */}
+            {GROUP_ORDER.map((label) => {
+              const items = unpinnedGroups[label] ?? [];
+              if (items.length === 0) return null;
+              return (
+                <div key={label} className="mb-3">
+                  <div className="sidebar-group-title">{label}</div>
+                  <div className="space-y-0.5">
+                    {items.map((s) => (
+                      <SessionRow
+                        key={s.id}
+                        session={s}
+                        pinned={false}
+                        active={s.id === sessionId}
+                        editing={editingId === s.id}
+                        draftTitle={draftTitle}
+                        onDraftChange={setDraftTitle}
+                        onSelect={() => handleSelect(s.id)}
+                        onTogglePin={() => togglePinned(s.id)}
+                        onStartEdit={() => {
+                          setEditingId(s.id);
+                          setDraftTitle(s.title);
+                        }}
+                        onCancelEdit={() => setEditingId(null)}
+                        onConfirmEdit={() => handleRename(s.id)}
+                        onDelete={() => handleDelete(s.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
     </div>
   );
 }
 
-/** 单个会话行（两行式：标题 + 时间/hover 操作，v2 §3.5-4） */
+/** 单个会话行（两行式 + 置顶，v3 §4.1） */
 function SessionRow({
   session: s,
+  pinned = false,
   active,
   editing,
   draftTitle,
   onDraftChange,
   onSelect,
+  onTogglePin,
   onStartEdit,
   onCancelEdit,
   onConfirmEdit,
   onDelete,
 }: {
   session: Session;
+  pinned?: boolean;
   active: boolean;
   editing: boolean;
   draftTitle: string;
   onDraftChange: (v: string) => void;
   onSelect: () => void;
+  onTogglePin: () => void;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onConfirmEdit: () => void;
@@ -222,7 +276,7 @@ function SessionRow({
     <div
       className={cn(
         "nav-item group relative flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5",
-        active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
+        active ? "bg-accent text-accent-foreground" : pinned ? "bg-muted/50 hover:bg-accent/50" : "hover:bg-accent/50",
       )}
       onClick={onSelect}
     >
@@ -255,12 +309,27 @@ function SessionRow({
         </>
       ) : (
         <div className="min-w-0 flex-1">
-          {/* 第一行：标题（截断） */}
-          <div className="truncate text-sm">{s.title}</div>
+          {/* 第一行：标题（置顶加粗 + 图钉，v3 §4.1） */}
+          <div className={cn("flex items-center gap-1 truncate text-sm", pinned && "font-semibold")}>
+            {pinned && <Pin className="size-3 shrink-0 text-primary" />}
+            <span className="truncate">{s.title}</span>
+          </div>
           {/* 第二行：时间（右）+ hover 操作 */}
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-muted-foreground/70">{formatSessionTime(s.updated_at)}</span>
             <span className="hidden items-center gap-0.5 group-hover:flex">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTogglePin();
+                }}
+                className="rounded p-0.5 text-muted-foreground hover:text-primary"
+                aria-label={pinned ? "取消置顶" : "置顶"}
+                title={pinned ? "取消置顶" : "置顶"}
+              >
+                {pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+              </button>
               <button
                 type="button"
                 onClick={(e) => {
