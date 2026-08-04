@@ -7,8 +7,9 @@
 @plugin "@tailwindcss/typography";
 
 /* ============================================================
-   LLM Wiki — Design System Tokens (light + dark)
-   See design-system.md for full documentation.
+   multi-agent — Design System Tokens (light + dark)
+   方案：前端UI设计评审与优化方案-v1.md §4.2 色彩体系
+   品牌主色靛蓝 #6366f1 / #818cf8；中性色 5 级
    ============================================================ */
 
 @theme inline {
@@ -32,6 +33,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
 
   /* Radius */
   --radius-xs: 0.25rem;
@@ -41,11 +44,12 @@
   --radius-xl: 1rem;
   --radius-2xl: 1.5rem;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
-  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1);
+  /* Shadows — 三级分层（方案 §4.2.1 卡片层次） */
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+  --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.06);
+  --shadow-lg: 0 10px 24px -4px rgb(0 0 0 / 0.12), 0 4px 8px -4px rgb(0 0 0 / 0.06);
+  --shadow-xl: 0 20px 32px -8px rgb(0 0 0 / 0.16), 0 8px 16px -6px rgb(0 0 0 / 0.08);
 
   /* Fonts */
   --font-sans: 'Geist Variable', sans-serif;
@@ -68,86 +72,87 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ── 亮色主题（方案 §4.2.1 色彩表）── */
 :root {
-  --background: oklch(0.96 0.006 250);
-  --foreground: oklch(0.13 0.01 250);
-  --card: oklch(0.995 0.002 250);
-  --card-foreground: oklch(0.13 0.01 250);
-  --popover: oklch(0.995 0.002 250);
-  --popover-foreground: oklch(0.13 0.01 250);
-  --primary: oklch(0.18 0.015 250);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.92 0.006 250);
-  --secondary-foreground: oklch(0.18 0.015 250);
-  --muted: oklch(0.93 0.006 250);
-  --muted-foreground: oklch(0.55 0.01 250);
-  --accent: oklch(0.9 0.008 250);
-  --accent-foreground: oklch(0.18 0.015 250);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: #fafafa;
-  --border: oklch(0.86 0.008 250);
-  --input: oklch(0.86 0.008 250);
-  --ring: oklch(0.65 0.015 250);
+  --background: #f9fafb;        /* 中性-1 页面背景 */
+  --foreground: #374151;        /* 中性-5 主要文字 */
+  --card: #ffffff;              /* 卡片（最浅） */
+  --card-foreground: #374151;
+  --popover: #ffffff;
+  --popover-foreground: #374151;
+  --primary: #6366f1;           /* 品牌主色（靛蓝） */
+  --primary-foreground: #ffffff;
+  --secondary: #e5e7eb;         /* 中性-3 卡片次深 / 边框 */
+  --secondary-foreground: #374151;
+  --muted: #f3f4f6;             /* 中性-2 */
+  --muted-foreground: #9ca3af;  /* 中性-4 次要文字 */
+  --accent: #eef2ff;            /* 靛蓝 10% 浅底（选中态） */
+  --accent-foreground: #4f46e5;
+  --destructive: #ef4444;       /* 危险色 */
+  --destructive-foreground: #ffffff;
+  --success: #10b981;           /* 成功色 */
+  --warning: #f59e0b;           /* 警告色 */
+  --border: #e5e7eb;
+  --input: #e5e7eb;
+  --ring: #6366f1;
 
-  --sidebar-background: oklch(0.97 0.005 250);
-  --sidebar-foreground: oklch(0.13 0.01 250);
-  --sidebar-primary: oklch(0.18 0.015 250);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.92 0.008 250);
-  --sidebar-accent-foreground: oklch(0.13 0.01 250);
-  --sidebar-border: oklch(0.88 0.008 250);
-  --sidebar-ring: oklch(0.65 0.015 250);
+  --sidebar-background: #f3f4f6;
+  --sidebar-foreground: #374151;
+  --sidebar-primary: #6366f1;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef2ff;
+  --sidebar-accent-foreground: #4f46e5;
+  --sidebar-border: #e5e7eb;
+  --sidebar-ring: #6366f1;
+  --sidebar: #ffffff;
 
-  /* Knowledge type colors */
-  --color-type-entity: #3b82f6;
-  --color-type-concept: #8b5cf6;
-  --color-type-source: #10b981;
-  --color-type-query: #f59e0b;
-  --color-type-comparison: #ec4899;
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --chart-1: #6366f1;
+  --chart-2: #8b5cf6;
+  --chart-3: #10b981;
+  --chart-4: #f59e0b;
+  --chart-5: #ef4444;
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
 }
 
+/* ── 暗色主题（方案 §4.2.1 色彩表）── */
 .dark {
-  --background: oklch(0.125 0.01 260);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.185 0.012 260);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.185 0.012 260);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.95 0.005 260);
-  --primary-foreground: oklch(0.15 0.01 260);
-  --secondary: oklch(0.24 0.012 260);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.155 0.01 260);
-  --muted-foreground: oklch(0.65 0.01 260);
-  --accent: oklch(0.22 0.012 260);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: #fafafa;
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --background: #18181b;        /* 中性-1 页面背景 */
+  --foreground: #d4d4d8;        /* 中性-5 主要文字 */
+  --card: #27272a;              /* 中性-2 卡片 */
+  --card-foreground: #d4d4d8;
+  --popover: #27272a;
+  --popover-foreground: #d4d4d8;
+  --primary: #818cf8;           /* 品牌主色（浅靛蓝） */
+  --primary-foreground: #18181b;
+  --secondary: #3f3f46;         /* 中性-3 */
+  --secondary-foreground: #d4d4d8;
+  --muted: #3f3f46;
+  --muted-foreground: #71717a;  /* 中性-4 */
+  --accent: rgba(129, 140, 248, 0.15);
+  --accent-foreground: #a5b4fc;
+  --destructive: #f87171;
+  --destructive-foreground: #18181b;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --border: #3f3f46;
+  --input: #3f3f46;
+  --ring: #818cf8;
 
-  --sidebar-background: #0a0a0d;
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.95 0.005 260);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.22 0.012 260);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.18 0.01 260);
+  --sidebar-background: #18181b;
+  --sidebar-foreground: #d4d4d8;
+  --sidebar-primary: #818cf8;
+  --sidebar-primary-foreground: #18181b;
+  --sidebar-accent: rgba(129, 140, 248, 0.15);
+  --sidebar-accent-foreground: #a5b4fc;
+  --sidebar-border: #3f3f46;
+  --sidebar-ring: #818cf8;
+  --sidebar: #27272a;
+
+  --chart-1: #818cf8;
+  --chart-2: #a78bfa;
+  --chart-3: #34d399;
+  --chart-4: #fbbf24;
+  --chart-5: #f87171;
 }
 
 /* ============================================================
@@ -170,6 +175,12 @@ body {
 
 * {
   border-color: var(--border);
+}
+
+/* 主题切换 300ms 平滑过渡（方案 §4.2.2） */
+body.theme-transition,
+body.theme-transition * {
+  transition: background-color 300ms ease, color 300ms ease, border-color 300ms ease;
 }
 
 /* Scrollbar */
@@ -196,12 +207,12 @@ body {
 .md-content h2 { font-size: 1.2rem; font-weight: 600; margin: 1.3em 0 0.4em; }
 .md-content h3 { font-size: 1.05rem; font-weight: 600; margin: 1em 0 0.3em; }
 .md-content p { margin-bottom: 0.8em; line-height: 1.7; }
-.md-content a { color: var(--color-type-entity); text-decoration: none; }
+.md-content a { color: var(--primary); text-decoration: none; }
 .md-content a:hover { text-decoration: underline; }
 .md-content code { background: var(--muted); padding: 0.15em 0.4em; border-radius: var(--radius-sm); font-size: 0.9em; }
 .md-content pre { background: var(--muted); padding: 1em; border-radius: var(--radius-md); overflow-x: auto; margin-bottom: 1em; border: 1px solid var(--border); }
 .md-content pre code { background: none; padding: 0; }
-.md-content blockquote { border-left: 3px solid var(--color-type-entity); padding-left: 1em; margin-left: 0; margin-bottom: 1em; color: var(--muted-foreground); }
+.md-content blockquote { border-left: 3px solid var(--primary); padding-left: 1em; margin-left: 0; margin-bottom: 1em; color: var(--muted-foreground); }
 .md-content ul, .md-content ol { margin-bottom: 1em; padding-left: 1.5em; }
 .md-content li { margin-bottom: 0.25em; }
 .md-content table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
@@ -209,49 +220,107 @@ body {
 .md-content th { background: var(--muted); font-weight: 600; }
 .md-content hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
 .md-content img { max-width: 100%; height: auto; border-radius: var(--radius-md); }
-.md-content .wikilink { color: var(--color-type-entity); cursor: pointer; border-bottom: 1px dashed var(--color-type-entity); }
-.md-content .wikilink:hover { border-bottom-style: solid; }
 
 /* ============================================================
-   Page transitions
+   动效体系（方案 §4.3：页面级 / 组件级 / 状态级）
+   统一 ease-out，时长 100/150/200/250/300ms
    ============================================================ */
 
-.page-enter {
-  opacity: 0;
-  transform: translateY(8px);
+/* ── 页面级：淡入 + 上移 8px，200ms（方案 §4.3.1） ── */
+@keyframes view-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.page-enter-active {
-  opacity: 1;
-  transform: translateY(0);
-  transition: opacity 200ms ease, transform 200ms ease;
-}
-
-/* Content swap — smooths wikilink navigation (no flash) */
-.content-swap {
-  transition: opacity 0.15s ease-out;
-}
-.content-swap-loading {
-  opacity: 0.7;
+.view-enter {
+  animation: view-enter 200ms ease-out both;
 }
 
-/* ============================================================
-   Skeleton loading
-   ============================================================ */
-
-@keyframes skeleton-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.8; }
+/* 一级导航切换：内容交叉淡入（250ms） */
+@keyframes view-crossfade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.view-crossfade {
+  animation: view-crossfade 250ms ease-out both;
 }
 
-.skeleton-pulse {
-  animation: skeleton-pulse 1.4s ease-in-out infinite;
+/* 二级内容淡入 + 上移（200ms） */
+@keyframes panel-enter {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.panel-enter {
+  animation: panel-enter 200ms ease-out both;
 }
 
-/* ============================================================
-   Chat UI animations
-   ============================================================ */
+/* ── 组件级 ── */
 
-/* Message entrance */
+/* 按钮 hover：背景加深 + 上浮 + 阴影（150ms，方案 §4.3.2） */
+.btn-lift {
+  transition: transform 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+.btn-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px -2px rgb(99 102 241 / 0.35);
+}
+
+/* 按钮点击：scale(0.97) 按压（100ms） */
+.press {
+  transition: transform 100ms ease;
+}
+.press:active {
+  transform: scale(0.97);
+}
+
+/* 卡片 hover：阴影加深 + 上浮（200ms） */
+.card-hover {
+  transition: box-shadow 200ms ease, transform 200ms ease, border-color 200ms ease;
+}
+.card-hover:hover {
+  box-shadow: 0 8px 24px -6px rgb(0 0 0 / 0.12), 0 2px 8px -4px rgb(0 0 0 / 0.06);
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+}
+
+/* 导航项 hover：背景加深 + 图标色变化（150ms） */
+.nav-item {
+  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
+}
+.nav-item:hover {
+  transform: translateX(2px);
+}
+
+/* 下拉展开：高度自适应 + 淡入（200ms） */
+@keyframes expand-down {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.expand-down {
+  animation: expand-down 200ms ease-out both;
+}
+
+/* ── 状态级（方案 §4.3.3） ── */
+
+/* 状态变化：对勾弹出动画 */
+@keyframes pop-in {
+  0%   { transform: scale(0.4); opacity: 0; }
+  60%  { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.pop-in {
+  animation: pop-in 250ms ease-out both;
+}
+
+/* 空状态插画：轻微呼吸，1.5s 循环 */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.04); opacity: 0.88; }
+}
+.breathe {
+  animation: breathe 1.5s ease-in-out infinite;
+}
+
+/* 消息进入（复用旧有） */
 @keyframes msg-enter {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -260,15 +329,25 @@ body {
   animation: msg-enter 200ms ease-out both;
 }
 
-/* Staggered delay utility classes */
-.msg-enter-d0  { animation-delay: 0ms; }
-.msg-enter-d1  { animation-delay: 50ms; }
-.msg-enter-d2  { animation-delay: 100ms; }
-.msg-enter-d3  { animation-delay: 150ms; }
-.msg-enter-d4  { animation-delay: 200ms; }
-.msg-enter-d5  { animation-delay: 250ms; }
+/* 流式光标脉冲 */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+.cursor-blink {
+  animation: cursor-blink 0.8s ease-in-out infinite;
+}
 
-/* Typing dots */
+/* 骨架屏脉冲 */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+.skeleton-pulse {
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+/* 类型点（打字指示） */
 @keyframes typing-bounce {
   0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
   40%           { opacity: 1;   transform: translateY(-3px); }
@@ -293,23 +372,6 @@ body {
     border-left-width: 3px;
   }
 
-  /* Press feedback */
-  .press {
-    transition: transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
-  }
-  .press:active {
-    transform: scale(0.97);
-  }
-
-  /* Card hover elevation */
-  .card-hover {
-    transition: box-shadow 0.2s ease, transform 0.2s ease;
-  }
-  .card-hover:hover {
-    box-shadow: 0 8px 30px -6px rgb(0 0 0 / 0.12), 0 2px 8px -4px rgb(0 0 0 / 0.06);
-    transform: translateY(-1px);
-  }
-
   /* Sidebar group title */
   .sidebar-group-title {
     @apply text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 px-3 py-1.5;
@@ -325,7 +387,7 @@ body {
     @apply w-full h-px bg-gradient-to-r from-border/0 via-border to-border/0 my-6;
   }
 
-  /* Stronger sidebar menu active state */
+  /* 一级导航选中态：左侧 3px 主题色竖条 + 浅主题色背景（方案 §4.1.2） */
   [data-slot="sidebar-menu-button"][data-active] {
     @apply bg-sidebar-accent font-medium text-sidebar-accent-foreground;
     position: relative;

@@ -1,26 +1,36 @@
 /**
- * 主聊天页 — 三区布局（会话/技能侧栏 + 对话流 + Agent 直播台）。
- * 左侧栏双 Tab：Sessions（历史会话）/ Skills（Skill 市场，见 components/skills）。
- * 编排：挂载加载会话列表 + 审批断点恢复提示（设计 §7.4）。
+ * 对话页（方案 §5.1）— 二级栏（会话列表）+ 主区（消息流居中 768px + 输入控制区）。
+ * 空状态：图标 + 欢迎语 + 3 个快捷问题（点击直接发送）。
+ * Agent 直播台改为右侧抽屉（AgentStatusDrawer），默认收起。
  */
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { Sparkles } from "lucide-react";
 import { useSessionStore } from "@/lib/stores/sessionStore";
 import { useChatStore } from "@/lib/stores/chatStore";
 import SessionList from "@/components/history/SessionList";
-import SkillMarketPanel from "@/components/skills/SkillMarketPanel";
 import MessageList from "@/components/chat/MessageList";
 import InputBar from "@/components/chat/InputBar";
-import ToolCallPanel from "@/components/agent/ToolCallPanel";
-import AgentTree from "@/components/agent/AgentTree";
+import AgentStatusDrawer from "@/components/agent/AgentStatusDrawer";
 import ApproveDialog from "@/components/agent/ApproveDialog";
+import EmptyState from "@/components/shared/EmptyState";
 import { showConfirm } from "@/components/ui/confirm-dialog";
+
+const QUICK_QUESTIONS = [
+  "帮我调研一下 MCP 协议的最新进展",
+  "写一个 Python 脚本统计当前目录文件数量",
+  "总结一下多 Agent 系统的架构设计要点",
+];
 
 export default function ChatPage() {
   const loadList = useSessionStore((s) => s.loadList);
+  const sessions = useSessionStore((s) => s.sessions);
   const resume = useChatStore((s) => s.resume);
   const loadProviders = useChatStore((s) => s.loadProviders);
-  const [leftTab, setLeftTab] = useState<"sessions" | "skills">("sessions");
+  const send = useChatStore((s) => s.send);
+  const sessionId = useChatStore((s) => s.sessionId);
+  const messages = useChatStore((s) => s.messages);
+  const streamStatus = useChatStore((s) => s.streamStatus);
 
   useEffect(() => {
     void loadList().catch(() => undefined);
@@ -40,48 +50,56 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const currentTitle = sessions.find((s) => s.id === sessionId)?.title ?? "新对话";
+  const isEmpty = messages.length === 0 && streamStatus === "idle";
+
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* 左：会话 / 技能 侧栏（双 Tab） */}
-      <aside className="flex w-56 shrink-0 flex-col border-r border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950">
-        <div className="flex shrink-0 border-b border-neutral-200 dark:border-neutral-800">
-          {(["sessions", "skills"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setLeftTab(tab)}
-              className={`flex-1 py-2 text-xs font-medium transition-colors ${
-                leftTab === tab
-                  ? "text-neutral-900 dark:text-neutral-100 border-b-2 border-primary"
-                  : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
-              }`}
-            >
-              {tab === "sessions" ? "会话" : "Skills"}
-            </button>
-          ))}
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {leftTab === "sessions" ? <SessionList /> : <SkillMarketPanel />}
-        </div>
+    <div className="flex min-w-0 flex-1">
+      {/* 二级栏：会话列表（280px，独立滚动） */}
+      <aside className="w-[280px] shrink-0 border-r border-border bg-card">
+        <SessionList />
       </aside>
 
-      {/* 中：对话流 */}
+      {/* 主内容区：标题 + 消息流（居中 768px）+ 输入控制区 */}
       <main className="flex min-w-0 flex-1 flex-col">
-        <div className="flex-1 overflow-hidden">
-          <MessageList />
+        <header className="flex h-11 shrink-0 items-center justify-center border-b border-border bg-card/60 px-4 backdrop-blur-sm">
+          <h1 className="truncate text-sm font-medium text-foreground">{currentTitle}</h1>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex min-h-full w-full max-w-[768px] flex-col px-4">
+            {isEmpty ? (
+              <div className="relative flex flex-1 items-center justify-center">
+                <EmptyState
+                  icon={Sparkles}
+                  title="多 Agent 工作台"
+                  desc="选择下方问题开始，或直接输入你的需求"
+                />
+                {/* 快捷问题（方案 §5.1.2-6） */}
+                <div className="absolute bottom-20 left-1/2 flex w-full max-w-[640px] -translate-x-1/2 flex-col gap-2 px-4">
+                  {QUICK_QUESTIONS.map((q, i) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => void send(q)}
+                      className="btn-lift press msg-enter msg-enter-d rounded-lg border border-border bg-card px-4 py-2.5 text-left text-xs text-foreground/80 hover:border-primary/40 hover:bg-accent/40"
+                      style={{ animationDelay: `${i * 50}ms` }}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <MessageList />
+            )}
+          </div>
         </div>
+
         <InputBar />
       </main>
 
-      {/* 右：Agent 直播台（工具调用 + 调用链） */}
-      <aside className="flex w-72 shrink-0 flex-col border-l border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950">
-        <div className="h-1/2 border-b border-neutral-200 dark:border-neutral-800 overflow-hidden">
-          <ToolCallPanel />
-        </div>
-        <div className="h-1/2 overflow-hidden">
-          <AgentTree />
-        </div>
-      </aside>
-
+      <AgentStatusDrawer />
       <ApproveDialog />
     </div>
   );
