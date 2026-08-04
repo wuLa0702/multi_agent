@@ -1,7 +1,7 @@
-"""main_agent 单测：进程单例 + 运行时模型切换 middleware。
+"""main_agent 单测：会话级缓存 + 运行时模型切换 middleware。
 
 覆盖（20-testing.md：正常 / 边界 / 错误）：
-- 单例：多次 get_agent() 只构建一次编译图
+- 会话级缓存：同 thread 复用同一编译图；不同 thread 独立编译图（v2.0）
 - middleware：按 ChatContext.model_id 路由到 get_chat_model(model_id)
 - middleware：model_id=None → 回落默认模型
 """
@@ -15,26 +15,30 @@ from src.agent import main_agent
 
 @pytest.fixture(autouse=True)
 def _reset_agent():
-    """单测内隔离：重置模块级单例（每次测试重新构建）。"""
-    main_agent._agent = None
+    """单测内隔离：重置模块级会话缓存（每次测试重新构建）。"""
+    main_agent._agents.clear()
     yield
-    main_agent._agent = None
+    main_agent._agents.clear()
 
 
-def test_get_agent_singleton(mocker) -> None:
-    """单例：多次调用只触发一次 create_deep_agent 构建。"""
+def test_get_agent_session_cache(mocker) -> None:
+    """会话级缓存：同会话复用；不同会话独立编译图（v2.0 会话隔离）。"""
     mocker.patch("src.agent.main_agent.get_chat_model", return_value=object())
+    # side_effect 每次返回新对象——不同会话的编译图必须是不同实例
     mock_create = mocker.patch(
-        "src.agent.main_agent.create_deep_agent", return_value=object()
+        "src.agent.main_agent.create_deep_agent",
+        side_effect=lambda *a, **k: object(),
     )
 
-    a1 = main_agent.get_agent()
-    a2 = main_agent.get_agent()
+    a1 = main_agent.get_agent("session-a")
+    a2 = main_agent.get_agent("session-a")
+    a3 = main_agent.get_agent("session-b")
 
-    assert a1 is a2, "编译图应进程内复用（单例）"
-    assert mock_create.call_count == 1
-    # 构建参数含运行时切换三件套：middleware + context_schema
-    # （2026-08-04 评审改版：middleware 含 TokenUsageMiddleware——图执行完自动统计用量存库）
+    assert a1 is a2, "同会话应复用同一编译图"
+    assert a1 is not a3, "不同会话应独立编译图（backend 文件根隔离）"
+    assert mock_create.call_count == 2
+    # 构建参数含运行时切换三件套：middleware + context_schema + backend
+    # （2026-08-04 评审改版：middleware 含 TokenUsageMiddleware；v2.0 会话级 backend）
     _, kwargs = mock_create.call_args
     middleware_types = [type(m) for m in kwargs["middleware"]]
     assert middleware_types == [
@@ -42,6 +46,7 @@ def test_get_agent_singleton(mocker) -> None:
         main_agent.TokenUsageMiddleware,
     ], "中间件栈应含模型切换 + 用量统计"
     assert kwargs["context_schema"] is main_agent.ChatContext
+    assert kwargs["backend"] is not None, "v2.0 会话级 backend 应挂载（文件根隔离）"
 
 
 async def _route_model_id(mocker, model_id: int | None) -> tuple[list[int | None], list[object]]:

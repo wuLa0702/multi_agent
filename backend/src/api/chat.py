@@ -280,7 +280,7 @@ async def _event_stream(
 
         # Agent 流式执行（异常统一转 error 事件）
         try:
-            agent = build_agent()  # 进程单例（模型经 middleware 按请求选择）
+            agent = build_agent(thread_id=session_id)  # 会话级缓存（v2.0：文件根绑会话）
             chat_context = ChatContext(model_id=req.model_id, mode=req.mode, session_id=session_id)
             full_text_parts: list[str] = []
             async for text in stream_agent_tokens(

@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # ── Skill Market（Smithery 托管 server 连接鉴权；浏览无需 key）──
     smithery_api_key: str = ""
 
+    # ── 工作区模式（v2.0 设计：CompositeBackend 内存/磁盘双模式）──
+    # True = 内存临时（StateBackend，dev 测试兼容"重启清空"）；False = 磁盘持久（prod 默认）
+    memory_workspace: bool = False
+
     @property
     def is_prod(self) -> bool:
         """是否生产环境。"""

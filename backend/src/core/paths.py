@@ -95,6 +95,33 @@ def get_store_path() -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
+def get_memory_dir() -> Path:
+    """记忆文件目录（v2.0 /memories/ 路由）：data/memory/，父目录自动创建。"""
+    base = get_app_dir() / "memory"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+def get_exports_dir() -> Path:
+    """导出报告目录（v2.0 /exports/ 路由）：data/exports/，父目录自动创建。"""
+    base = get_app_dir() / "exports"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+def get_static_skills_dir() -> Path:
+    """内置静态技能目录（v2.0 /skills/static/ 路由，Agent 只读）。
+
+    SKILL_RESOURCES_DIR 环境变量优先（不硬编码目录层级）；缺省项目根
+    skill-resources/；不存在时自动初始化 README 模板（启动自检容错）。
+    """
+    env = os.getenv("SKILL_RESOURCES_DIR")
+    base = Path(env) if env else Path(__file__).resolve().parents[3] / "skill-resources"
+    base.mkdir(parents=True, exist_ok=True)
+    if not (base / "README.md").exists():
+        (base / "README.md").write_text(
+            "# skill-resources\n\n内置静态技能目录（Agent 只读）。", encoding="utf-8"
+        )
+    return base
+
 def get_uploads_dir() -> Path:
     """用户上传文件目录（2026-08-04 P2 附件上传）：data/uploads/。"""
     base = get_app_dir() / "uploads"

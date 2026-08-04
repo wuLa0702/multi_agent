@@ -38,6 +38,7 @@ from langchain_core.messages import BaseMessage
 
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.subagents.loader import load_subagents
+from src.core.backend import create_backend
 from src.core.paths import get_checkpointer_path, get_skill_md_dir
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
@@ -114,9 +115,11 @@ async def _configurable_model(request, handler):
     return await handler(request.override(model=model))
 
 
-# 模块级单例：编译图进程内只构建一次
-_agent = None
-_agent_lock = threading.Lock()  # 双重检查锁：防止多线程首次构建重复建图
+# 会话级 Agent 缓存（v2.0 设计：CompositeBackend 会话隔离）：
+# 每会话（thread_id）一个编译图 + 独立 backend 文件根——废弃全局单例
+# （多会话文件混存是 v1 硬缺陷，见 docs/decisions/CompositeBackend文件存储-设计-v2.md §2.1）
+_agents: dict[str, object] = {}
+_agents_lock = threading.Lock()  # 双重检查锁（会话维度）：防止并发首次构建重复建图
 
 # Checkpointer（P0 断点持久化，2026-08-04）：
 # ⚠️ 实测修正（评审方式 A 需适配 async）：sync SqliteSaver 在 async astream 下
@@ -214,21 +217,27 @@ async def close_store() -> None:
         _store = None
 
 
-def get_agent():
-    """线程安全懒加载单例：deepagents 编译图（首次调用时构建一次）。
+def get_agent(thread_id: str = "default"):
+    """按会话懒构建 deepagents 编译图（v2.0 会话级缓存）。
 
-    构建仅做内存图装配（无网络 I/O）；模型每次调用经
-    _configurable_model middleware 按 ChatContext.provider 动态选择，
-    单例本身不绑定具体 provider。
+    每会话（thread_id）独立编译图 + 独立 backend 文件根（create_backend(thread_id)，
+    会话文件隔离——v2 硬缺陷 1 修复）；compile 是内存操作，单机会话数少可接受。
+    构建仅做内存图装配（无网络 I/O）；模型每次调用经 _configurable_model
+    middleware 按 ChatContext.provider 动态选择，图本身不绑定具体 provider。
+
+    Args:
+        thread_id: 会话 ID（== session_id）；demo/无会话场景默认 "default"
+
+    Returns:
+        deepagents 编译后的 Agent（LangGraph CompiledStateGraph）
     """
-    global _agent
-    if _agent is None:
-        with _agent_lock:
-            if _agent is None:
+    if thread_id not in _agents:
+        with _agents_lock:
+            if thread_id not in _agents:
                 # 工具 = 内部工具 + 外部 MCP 工具（lifespan 连接收集，见 src/mcp/client.py）
                 internal_tools = [run_code_in_sandbox]
                 mcp_tools = get_mcp_client_manager().get_tools()
-                _agent = create_deep_agent(
+                _agents[thread_id] = create_deep_agent(
                     model=get_chat_model(),  # 默认 provider 兜底（middleware 会覆盖）
                     system_prompt=DEFAULT_SYSTEM_PROMPT,
                     subagents=load_subagents(),
@@ -240,9 +249,10 @@ def get_agent():
                         TokenUsageMiddleware(),
                     ],
                     context_schema=ChatContext,
-                    # SKILL.md 渐进式加载：Skill Market 下载的 skill 放这里，
-                    # SkillsMiddleware 启动时扫描（目录不存在也安全）
-                    skills=[str(get_skill_md_dir())],
+                    # SKILL.md 渐进式加载：走 backend 虚拟路径 /skills/market/
+                    # （v2.0：SkillsMiddleware 经 backend 读文件，虚拟路径路由到
+                    # data/skills/skill_md——真实路径会被 virtual_mode 越权拒绝）
+                    skills=["/skills/market/"],
                     # Checkpointer（P0 断点持久化）：AsyncSqliteSaver 由 lifespan
                     # 初始化（init_checkpointer）；未初始化（测试/脚本）→ 不传，
                     # 降级无断点模式。astream 必须带 thread_id（stream_agent_tokens
@@ -251,31 +261,39 @@ def get_agent():
                     # Store 长期记忆（P1）：SqliteStore 由 lifespan 初始化（init_store）；
                     # 未初始化 → 降级无记忆。记忆注入/写入在 chat.py（memory_store 封装）
                     store=_store,
+                    # 会话级 Backend（v2.0）：文件根绑定 thread_id 目录，会话隔离
+                    backend=create_backend(thread_id),
                 )
-    return _agent
+    return _agents[thread_id]
 
 
-def rebuild_agent() -> None:
-    """失效 Agent 单例，下次请求重建（Skill Market 安装/卸载后调用）。
+def rebuild_agent(thread_id: str | None = None) -> None:
+    """失效 Agent 缓存，下次请求重建（Skill Market 安装/卸载后调用）。
+
+    Args:
+        thread_id: 指定会话失效；None → 清空全部会话缓存
 
     纯内存标记操作（编译图无状态），并发安全：get_agent 的双重检查锁
-    保证同一时刻只有一个线程在重建，重建期间到达的请求会等待锁。
+    保证同一时刻只有一个线程在重建。
     """
-    global _agent
-    with _agent_lock:
-        _agent = None
+    with _agents_lock:
+        if thread_id is None:
+            _agents.clear()
+        else:
+            _agents.pop(thread_id, None)
 
 
-def build_agent(model: BaseChatModel | None = None):
-    """获取主 Agent（历史签名兼容：model 参数已弃用，走进程单例）。
+def build_agent(model: BaseChatModel | None = None, thread_id: str = "default"):
+    """获取主 Agent（历史签名兼容：model 参数已弃用，走会话级缓存）。
 
     Args:
         model: 兼容旧调用方；单例模式下忽略（模型经 middleware 运行时选择）
+        thread_id: 会话 ID（== session_id，会话文件隔离）
 
     Returns:
         deepagents 编译后的 Agent（LangGraph CompiledStateGraph）
     """
-    return get_agent()
+    return get_agent(thread_id)
 
 
 async def stream_agent_tokens(

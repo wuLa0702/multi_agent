@@ -120,20 +120,21 @@ def mock_chat_llm(mocker, fake_deep_agent_model: FakeDeepAgentModel) -> FakeDeep
 
 @pytest.fixture(autouse=True)
 async def reset_agent_singleton(tmp_path):
-    """每个测试重置 agent 单例 + 初始化 checkpointer（P0）+ store（P1）。
+    """每个测试重置 agent 缓存 + 初始化 checkpointer（P0）+ store（P1）。
 
     Checkpointer/Store 生命周期模拟 lifespan：每测试在 tmp 重建
     （隔离 DB，不污染真实 data/），结束后关闭连接并复位。
+    v2.0：_agent 单例 → _agents 会话级缓存（全清）。
     """
     from src.agent import main_agent
 
-    main_agent._agent = None
+    main_agent._agents.clear()
     await main_agent.init_checkpointer(db_path=tmp_path)
     await main_agent.init_store(db_path=tmp_path)
     yield
     await main_agent.close_store()
     await main_agent.close_checkpointer()
-    main_agent._agent = None
+    main_agent._agents.clear()
 
 
 @pytest.fixture
