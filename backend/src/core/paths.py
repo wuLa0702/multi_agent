@@ -89,6 +89,12 @@ def get_checkpointer_path() -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
+def get_store_path() -> Path:
+    """Store 记忆数据库路径（P1 语义记忆）：data/store.db，父目录自动创建。"""
+    p = get_app_dir() / "store.db"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
 def get_uploads_dir() -> Path:
     """用户上传文件目录（2026-08-04 P2 附件上传）：data/uploads/。"""
     base = get_app_dir() / "uploads"

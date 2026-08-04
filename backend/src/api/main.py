@@ -31,7 +31,12 @@ from src.api.skills import router as skills_router
 from src.api.uploads import router as uploads_router
 from src.core import db as core_db
 from src.core.config import settings
-from src.agent.main_agent import close_checkpointer, init_checkpointer
+from src.agent.main_agent import (
+    close_checkpointer,
+    close_store,
+    init_checkpointer,
+    init_store,
+)
 from src.core.logging import setup_logging
 from src.core.model_registry import get_registry
 from src.core.redis import close_redis, get_redis
@@ -54,8 +59,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     except Exception:
         pass  # 本地没 Redis 也能起，/v1/health 会标记 disconnected
 
-    # Checkpointer 断点持久化（P0）：AsyncSqliteSaver 生命周期随进程
+    # Checkpointer 断点持久化（P0）+ Store 长期记忆（P1）：生命周期随进程
     await init_checkpointer()
+    await init_store()
 
     # FastMCP 要求：父 ASGI 应用执行其 lifespan（初始化 session manager task group）
     async with _mcp_http_app.lifespan(_):
@@ -70,6 +76,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await conn.close()
 
         yield
+    await close_store()
     await close_checkpointer()
     await close_redis()
 

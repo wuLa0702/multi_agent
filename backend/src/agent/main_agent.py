@@ -168,6 +168,52 @@ async def close_checkpointer() -> None:
         _checkpointer = None
 
 
+# Store 长期记忆（P1，2026-08-04）：SqliteStore 持久化（评审选型拍板），
+# 生命周期由 lifespan 管理（与 checkpointer 同模式）；未初始化 → 降级无记忆。
+_store = None
+
+
+def get_store():
+    """当前 store 实例（记忆读写用）；未初始化返回 None。"""
+    return _store
+
+
+async def init_store(db_path=None) -> None:
+    """初始化记忆存储（lifespan 启动调用，幂等）。
+
+    ⚠️ 实测修正（同 Checkpointer 教训）：SqliteStore 不支持 async 方法
+    （aput/asearch 抛 NotImplementedError），async 执行路径必须用
+    AsyncSqliteStore（aiosqlite 连接）。
+    """
+    global _store
+    if _store is not None:
+        return
+    import aiosqlite
+    from langgraph.store.sqlite.aio import AsyncSqliteStore
+
+    target = db_path if db_path is not None else get_store_path()
+    if hasattr(target, "is_dir") and target.is_dir():  # 传目录（tmp_path）→ 拼 store.db
+        target = target / "store.db"
+    # isolation_level=None：autocommit 连接——AsyncSqliteStore 内部自行管理事务，
+    # 默认 isolation 会触发 "cannot start a transaction within a transaction"
+    conn = await aiosqlite.connect(str(target), isolation_level=None)
+    await conn.execute("PRAGMA journal_mode=WAL")
+    await conn.execute("PRAGMA busy_timeout=5000")
+    _store = AsyncSqliteStore(conn)
+    await _store.setup()
+
+
+async def close_store() -> None:
+    """关闭记忆连接（lifespan 关闭调用，幂等）。"""
+    global _store
+    if _store is None:
+        return
+    try:
+        await _store.conn.close()
+    finally:
+        _store = None
+
+
 def get_agent():
     """线程安全懒加载单例：deepagents 编译图（首次调用时构建一次）。
 
@@ -202,6 +248,9 @@ def get_agent():
                     # 降级无断点模式。astream 必须带 thread_id（stream_agent_tokens
                     # 内部封装），否则直接报错
                     checkpointer=_checkpointer,
+                    # Store 长期记忆（P1）：SqliteStore 由 lifespan 初始化（init_store）；
+                    # 未初始化 → 降级无记忆。记忆注入/写入在 chat.py（memory_store 封装）
+                    store=_store,
                 )
     return _agent
 

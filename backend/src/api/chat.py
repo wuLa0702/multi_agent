@@ -184,6 +184,16 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
                     instruction = _MODE_INSTRUCTIONS.get(req.mode)
                     if instruction:
                         lc_messages = [SystemMessage(content=instruction), *lc_messages]
+
+                # 2.6 长期记忆注入（P1 Store，2026-08-04）：取最近记忆拼 SystemMessage，
+                #     新会话能回忆此前会话关键事实（检索失败静默降级）
+                from src.agent.main_agent import get_store
+                from src.agent.memory_store import load_recent_memories
+
+                memories = await load_recent_memories(get_store())
+                if memories:
+                    memory_text = "以下是你的长期记忆（供参考，可能与本对话无关）：\n" + "\n".join(memories)
+                    lc_messages = [SystemMessage(content=memory_text), *lc_messages]
             else:
                 # ── resume 模式：checkpoint 状态接管，已完成步骤不重跑（计划文档 A）──
                 lc_messages: list[BaseMessage] = []
@@ -238,6 +248,14 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
                 conn,
                 Message(session_id=session_id, role="assistant", content=assistant_text),
             )
+
+            # 5.5 长期记忆写入（P1 Store）：对话产出进记忆库（噪音阈值过滤，
+            #     由 memory_store 控制）；resume 模式跳过（checkpoint 状态接管）
+            if not is_resume and assistant_text:
+                from src.agent.main_agent import get_store
+                from src.agent.memory_store import save_conversation_memory
+
+                await save_conversation_memory(get_store(), assistant_text)
 
             # 6. done 事件（流内异常时不发）
             duration_ms = int((time.monotonic() - started_at) * 1000)
