@@ -6,6 +6,7 @@
 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v1.2 | 2026-08-04 | 吸收评审修订：§2.0 挂载改同步 SqliteSaver（缺陷 1）；§A 恢复健壮性 + SSE 增量（缺陷 3/隐患 3）；§B memory/store 并行关系 + backend 前置 + Store 选型表（缺陷 2）；§C 新增高风险隐患缓解（写锁/thread_id 封装/细节优化） |
 > | v1.1 | 2026-08-04 | §1.3 范围澄清（删 Redis 误导、标注单用户不扩多租户/云）；§2 新增「核心代码速览」（Checkpointer 三段 + Store 两段） |
 > | v1 | 2026-08-04 | 初版：总分总结构持久化能力计划（Checkpointer 断点恢复 + Store 长期记忆） |
 
@@ -59,37 +60,42 @@
 
 > 完整落地见 A/B 改造点；本速览为直观理解（API 与 langgraph-checkpoint-sqlite 3.1.0 / deepagents 一致）。
 
-#### Checkpointer 核心三段
+#### Checkpointer 核心三段（v1.2 修正：同步 SqliteSaver，方式 A）
 
 ```python
 # ① 编译时挂载（main_agent.py）——图从无状态变有状态
-from langgraph.checkpoint.sqlite.aio import SqliteSaver
-async with SqliteSaver.from_conn_string(str(get_checkpointer_path())) as saver:
-    _agent = create_deep_agent(
-        model=get_chat_model(),
-        checkpointer=saver,          # ← 状态快照链落 SQLite（表由 Saver 自管）
-        middleware=[...],
-    )
+# ⚠️ 必须用【同步】SqliteSaver（非 aio）：create_deep_agent 是同步初始化，
+#    全局懒加载不在 async 上下文，aio 版连接无法持有（评审缺陷 1）
+from langgraph.checkpoint.sqlite import SqliteSaver   # 非 aio.SqliteSaver！
+saver = SqliteSaver.from_conn_string(str(get_checkpointer_path()))
+saver.setup()                        # 建表 + 启用 WAL（缓解并发写锁）
+_agent = create_deep_agent(
+    model=get_chat_model(),
+    checkpointer=saver,              # ← 框架内部自动兼容 async 流式调用
+    middleware=[...],
+)
 
-# ② 每次执行必带 thread_id（stream_agent_tokens）——⚠️ 不传直接报错
+# ② 每次执行必带 thread_id（stream_agent_tokens 内部封装，见 C.2）——⚠️ 不传直接报错
 config = {"configurable": {"thread_id": session_id}}   # thread_id == session_id
 async for evt in agent.astream_events(
     {"messages": messages}, version="v2", context=context, config=config
 ):
 
 # ③ 审批恢复（chat.py resume 分支）——checkpoint_id 精确恢复挂起点
+#    （含归属校验与失效兜底，见 A.2）
 config = {"configurable": {"thread_id": session_id, "checkpoint_id": resume_run_id}}
 ```
 
-#### Store 核心两段
+#### Store 核心两段（v1.2 修正：memory 与 store 是并行能力，非递进）
 
 ```python
-# ① 挂载 memory + store（main_agent.py）
-from langgraph.store.memory import InMemoryStore    # 或 SqliteStore（持久化）
+# ① 挂载 store（main_agent.py）——结构化键值记忆（持久化选 SqliteStore）
+from langgraph.store.sqlite import SqliteStore
+store = SqliteStore.from_conn_string(str(get_store_path()))
 _agent = create_deep_agent(
     model=...,
-    memory=[str(get_memory_dir())],  # 文件记忆：AGENTS.md 渐进记忆
-    store=store,                     # 语义记忆：键值 + 语义检索
+    store=store,                     # 语义记忆：键值 + 检索（独立能力）
+    # memory=[...] 需先落地 backend 文件系统（见 B.1 前置约束），P1 再启用
 )
 
 # ② 记忆写入 / 检索
@@ -103,10 +109,16 @@ results = await store.asearch(("memory", session_id))
 
 > 目标：对话图状态持久化到 SQLite，审批中断可精确恢复。
 
-#### A.1 依赖与存储位置
+#### A.1 依赖与存储位置（v1.2 修正：同步 SqliteSaver）
 
-- 复用已装的 `langgraph_checkpoint.sqlite.aio.SqliteSaver`（async 版，与项目异步流式匹配）
-- 存储：`data/checkpoints.db`（`core/paths.py` 加 `get_checkpointer_path()`，路径自适应）
+- ⚠️ **必须用同步 `langgraph.checkpoint.sqlite.SqliteSaver`**（非 aio 版）——评审缺陷 1：
+  `create_deep_agent` 是**同步初始化**函数，全局懒加载（get_agent）不在 async 上下文，
+  aio 版连接无法正常持有（连接提前关闭/读写阻塞）；官方规范两种合法挂载：
+  - **方式 A（推荐，适配单例）**：全局创建同步 SqliteSaver → `checkpointer=saver` 直接传入，
+    框架内部自动兼容 async 流式调用（已验证：`create_deep_agent` 的 checkpointer 参数接受 `BaseCheckpointSaver`）
+  - 方式 B（备选）：不全局挂载，仅在 `astream_events` 的 config 里传 saver 实例
+- 存储：`data/checkpoints.db`（`core/paths.py` 加 `get_checkpointer_path()`，路径自适应，目录自动创建）
+- `saver.setup()` 建表 + 启用 **WAL 模式**（缓解并发写锁，见 C.1）
 - checkpoint 表由 SqliteSaver **自动建表自管**（checkpoints/checkpoint_blobs/checkpoint_writes），业务 schema 不动
 
 #### A.2 改造点
@@ -136,42 +148,121 @@ session_id（业务会话 UUID）== thread_id（LangGraph 图执行线）
               → astream 从 interrupt 挂起点继续 → 已完成步骤不重跑
 ```
 
-#### A.5 验收
+#### A.5 恢复健壮性（v1.2 新增，评审缺陷 3）
+
+恢复不能只传 checkpoint_id，必须做**快照链上下文校验**：
+
+| 异常场景 | 校验 | 兜底 |
+|---------|------|------|
+| checkpoint_id 不属于当前 thread_id（脏数据） | langgraph 校验（checkpoint 按 thread 隔离查询） | 捕获 → 404 `RESUME_NOT_FOUND` → 前端提示「断点已失效，可重新开始」 |
+| 快照链被截断 / 旧 checkpoint 过期删除 | 恢复前确认 checkpoint 存在且属于该 thread | 同上友好降级，不抛内部异常 |
+| 校验失败一律转业务错误码 | `chat.py` resume 分支 try/except 包裹 | SSE `error` 事件（code=RESUME_NOT_FOUND, retryable=false） |
+
+#### A.6 SSE 增量事件（v1.2 新增，评审隐患 3）
+
+resume 恢复时**旧事件会完整重放**给前端 → 消息重复渲染/重复弹窗。缓解：
+- `tool_call`：陈旧 running 不覆盖已完成状态（**已有保护**，resume 重放天然过滤）
+- `token`/`subagent` 重放：前端按 message id / node key 幂等（subagent 按 name+seq 定位已有）；
+  后端可选：resume 响应中带 `resumed_checkpoint_id`，前端对已渲染内容去重
+- 验收：中断恢复后前端无重复消息、无重复弹窗
+
+#### A.7 验收
 
 - 中断 → resume → 从断点继续（日志/工具调用不重复）
 - 刷新进程后（重启后端）仍能恢复（SQLite 持久化非内存）
 - 多会话并发互不干扰（thread_id 隔离）
+- 脏 checkpoint_id 恢复 → 友好错误提示不 500
 
 ### B. Store 长期记忆（P1）
 
-> 目标：跨会话记忆——新会话能回忆此前关键事实。分两层次渐进。
+> 目标：跨会话记忆——新会话能回忆此前关键事实。
+> ⚠️ v1.2 修正（评审缺陷 2）：**memory 与 store 是并行能力，不是两层递进记忆**：
+> - `memory` 参数 = **文件型渐进记忆**（AGENTS.md），属于 backend 文件后端体系
+> - `store` 参数 = **独立结构化键值存储**（键值 + 语义检索），与文件记忆互不依赖
 
-#### B.1 层次一：文件记忆（MemoryMiddleware）
+#### B.0 前置约束（评审缺陷 2，必须先落地）
 
-- deepagents 原生 `MemoryMiddleware`（`memory=["..."]` 参数）：基于 AGENTS.md 的渐进记忆——对话关键事实写入记忆文件，后续会话自动注入
-- 存储位置：`data/memory/`（get_app_dir() 下，路径自适应）
-- 改造点：`main_agent.py` 加 `memory=[str(get_memory_dir())]`
+`MemoryMiddleware` 构造签名**强依赖 `backend: BackendProtocol`**（已验证源码）——
+记忆文件读写走 backend 文件 API。项目当前用 deepagents 默认 StateBackend（进程内存），
+**直接启用 MemoryMiddleware 会出现文件读写路径异常**。
+
+- **P1 第一步：落地 `core/backend.py`**——封装 FilesystemBackend（或 StateBackend + 文件落盘
+  CompositeBackend），记忆目录 `data/memory/` 映射 backend 文件路径
+- 之后再启用 `memory=[...]`
+
+#### B.1 文件记忆（MemoryMiddleware，backend 前置后启用）
+
+- deepagents 原生 `MemoryMiddleware`：基于 AGENTS.md 的渐进记忆——对话关键事实写入记忆文件，后续会话自动注入
+- 存储位置：`data/memory/`（backend 文件系统管理）
+- 改造点：`main_agent.py` 加 `memory=[str(get_memory_dir())]` + backend
+- **噪音控制**（细节优化）：记忆写入阈值——仅当对话出现「明确事实/用户偏好/关键决策」时写入（简化版：用户消息含偏好关键词 或 assistant 输出含决策性内容；后续可接 LLM 抽取）
 - 验收：会话 A 提到事实 X → 新会话 B 问 X → Agent 能回忆
 
-#### B.2 层次二：语义记忆（Store）
+#### B.2 语义记忆（Store，独立能力可先行）
 
 - `create_deep_agent(store=BaseStore)`——langgraph store 存结构化记忆（键值 + 检索）
-- 存储选型（评审决策点）：`InMemoryStore`（简单、进程内存）vs `SqliteStore`（持久化，复用 checkpoint-sqlite 包）vs Redis（现有连接）
+- **存储选型对比表**（评审决策点）：
+  | 选型 | 持久化 | 场景 | 结论 |
+  |------|--------|------|------|
+  | `InMemoryStore` | ❌ 进程内存 | 仅调试/开发 | 不用于生产 |
+  | `SqliteStore` | ✅ SQLite | 单机持久化 | **推荐**（复用 checkpoint-sqlite 包） |
+  | `RedisStore` | ✅ Redis | 高并发备选 | 个人项目不启用 |
 - 写入时机：对话关键事实抽取（简化版：assistant 回复摘要存 store，后续可接 LLM 抽取）
-- 验收：重启后端后记忆仍在（选持久化 store）
+- 验收：重启后端后记忆仍在（SqliteStore 持久化）
 
 #### B.3 与现有分层关系
 
 - 依赖单向不变：`api → agent → {mcp, sandbox, memory, db}`——memory 层补实
 - 架构文档 `agent/memory/` 占位目录落地（state_store Redis 短期 + vector_store 长期——向量库选型后置，先用文件/键值记忆）
 
-### C. 技术要点（横切）
+### C. 高风险落地隐患与缓解（v1.2 重写，评审意见）
 
-1. **thread_id 必传**：所有 astream/invoke 调用统一 `config={"configurable": {"thread_id": session_id}}`——遗漏即报错（已预警）
-2. **async Saver**：项目走异步流式，用 `aio.SqliteSaver`（async 版本）；连接管理与请求生命周期
-3. **并发安全**：多会话并发执行——SqliteSaver 线程/协程安全需验证（官方文档确认）
+#### C.1 SQLite 并发写锁（最严重，单机多浏览器并发必踩）
+
+多浏览器并发对话同时触发断点落库 → `database is locked` 高频报错。三层缓解：
+
+1. **WAL 模式 + busy timeout**：`SqliteSaver.setup()` 启用 WAL（读写不互斥），连接设 `busy_timeout=5000`
+2. **协程并发限流**：`async.Semaphore(4)` 包裹 `stream_agent_tokens`（对话流并发上限 4，超出排队）
+3. **长期备选**：记忆缓存走 Redis，checkpoint 仍落 SQLite（单机不启用）
+
+#### C.2 thread_id 兜底封装（杜绝漏传 500）
+
+`stream_agent_tokens` **内部自动**从 `context.session_id` 拼装 config：
+
+```python
+async def stream_agent_tokens(agent, messages, context=None):
+    config = None
+    if context is not None and context.session_id:
+        config = {"configurable": {"thread_id": context.session_id}}
+    async for evt in agent.astream_events(
+        {"messages": messages}, version="v2", context=context, config=config
+    ):
+        ...
+```
+
+- 上层 `chat.py` 零感知（不手动传 config），前端传参遗漏也不会 500
+
+#### C.3 SSE 增量事件重放（见 A.6）
+
+#### C.4 细节优化清单（评审）
+
+| # | 项 | 说明 |
+|---|----|------|
+| 1 | **requirements.txt 版本锁定** | `langgraph-checkpoint-sqlite==3.1.0`、`langgraph-checkpoint==4.1.1` 显式锁定，防环境迁移不兼容 |
+| 2 | **Store 选型表** | 见 B.2（InMemory 调试 / SqliteStore 推荐 / RedisStore 备选） |
+| 3 | **MemoryMiddleware 噪音控制** | 见 B.1（写入阈值规则，避免每轮写冗余事实） |
+| 4 | **资源生命周期** | 连接池管理（SqliteSaver 单例复用）；`get_checkpointer_path()` 自动建目录；**过期 checkpoint 清理**（保留每 thread 最近 N 个 / 30 天，防 DB 无限膨胀） |
+| 5 | **日志埋点** | 断点保存 / 恢复 / 记忆读写关键日志（logging.getLogger(__name__)），方便排查会话恢复异常 |
+| 6 | **与 TokenUsageMiddleware 联动** | Checkpointer 完整读取 thread 全部 messages → 前端 XX/128k 上下文展示更准（替代现 chars/4 估算的写入源，见接口文档 v1.2） |
+| 7 | **目录落地 + 初始化脚本** | `agent/memory/` 规范落地；新增 `scripts/init_data.py` 自动创建 `data/checkpoints.db`、`data/memory/` |
+
+#### C.5 技术要点（横切）
+
+1. **thread_id 必传**：统一由 C.2 封装，调用方零感知
+2. **同步 Saver 在 async 流式**：sync SqliteSaver 由框架内部调度兼容（方式 A 已验证）
+3. **并发安全**：WAL + Semaphore 限流（C.1）
 4. **schema/迁移**：checkpoint 表由 Saver 自管（自动建表），业务表零改动
-5. **测试策略**：mock LLM + tmp_path——①中断 → resume 恢复状态一致 ②重启后恢复 ③多线程并发
+5. **测试策略**：mock LLM + tmp_path——①中断 → resume 恢复状态一致 ②重启后恢复 ③多线程并发 ④脏 checkpoint_id 友好降级
 6. **契约同步**：resume 真实现后，接口文档 v1.2 的「resume_run_id 501」标注改 ✅
 
 ---
