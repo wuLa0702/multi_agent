@@ -177,3 +177,72 @@ class TestResourceLimit:
         assert fake.files.write_file.call_args_list[0][0] == ("main.py", "code")
         assert fake.files.write_file.call_args_list[1][0] == ("utils.py", "util")
         fake.commands.run.assert_called_once_with("python main.py")
+
+
+class TestCommandEnhanceAndSync:
+    """命令增强（timeout/envs 透传）+ 文件同步 + 快照（能力计划 §3.2/§3.3/P2）。"""
+
+    def test_run_command_passes_opts(self, mocker) -> None:
+        """run_command 增强：timeout/envs 经 RunCommandOpts 透传。"""
+        from datetime import timedelta
+
+        from opensandbox.models.execd import RunCommandOpts
+
+        fake = SimpleNamespace(
+            commands=SimpleNamespace(run=mocker.Mock(return_value=_execution(["ok"])))
+        )
+        adapter = OpenSandboxAdapter(url="http://test:8080")
+
+        adapter.run_command(fake, "pip install x", timeout=timedelta(seconds=60), envs={"A": "1"})
+
+        args, kwargs = fake.commands.run.call_args
+        assert args[0] == "pip install x"
+        assert isinstance(kwargs["opts"], RunCommandOpts)
+        assert kwargs["opts"].timeout == timedelta(seconds=60)
+        assert kwargs["opts"].envs == {"A": "1"}
+
+    def test_run_command_no_opts_when_plain(self, mocker) -> None:
+        """run_command 无增强参数：不传 opts（兼容旧调用，服务端不强制超时）。"""
+        fake = SimpleNamespace(
+            commands=SimpleNamespace(run=mocker.Mock(return_value=_execution(["ok"])))
+        )
+        adapter = OpenSandboxAdapter(url="http://test:8080")
+
+        adapter.run_command(fake, "echo hi")
+
+        _, kwargs = fake.commands.run.call_args
+        assert kwargs.get("opts") is None
+
+    def test_upload_download_files(self, mocker) -> None:
+        """文件同步：upload 写沙箱 / download 读沙箱。"""
+        fake = SimpleNamespace(
+            files=SimpleNamespace(
+                write_file=mocker.Mock(),
+                read_file=mocker.Mock(return_value="content"),
+            ),
+            commands=mocker.Mock(),
+            destroy=mocker.Mock(),
+        )
+        adapter = OpenSandboxAdapter(url="http://test:8080")
+
+        adapter.upload_file(fake, "workspace/x.py", "code")
+        out = adapter.download_file(fake, "workspace/x.py")
+
+        fake.files.write_file.assert_called_once_with("workspace/x.py", "code")
+        fake.files.read_file.assert_called_once_with("workspace/x.py")
+        assert out == "content"
+
+    def test_create_sandbox_snapshot_id(self, mocker, monkeypatch) -> None:
+        """P2 快照：配置 sandbox_snapshot_id → image 置 None + snapshot_id 透传（SDK 二选一）。"""
+        from src.core.config import settings
+
+        fake = SimpleNamespace(files=mocker.Mock(), commands=mocker.Mock(), destroy=mocker.Mock())
+        create_mock = mocker.patch("src.sandbox.adapter.SandboxSync.create", return_value=fake)
+        monkeypatch.setattr(settings, "sandbox_snapshot_id", "snap-1")
+
+        adapter = OpenSandboxAdapter(url="http://test:8080")
+        adapter.create_sandbox()
+
+        args, kwargs = create_mock.call_args
+        assert args[0] is None, "快照模式 image 必须为 None（SDK image/snapshot_id 二选一）"
+        assert kwargs["snapshot_id"] == "snap-1"
