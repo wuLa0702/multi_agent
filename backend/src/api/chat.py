@@ -308,13 +308,19 @@ async def _event_stream(
                 _save_memory_in_background(req.message or "", assistant_text)
             )
 
-        # done 事件（流内异常时不发）
+        # done 事件（流内异常时不发）；context_used 查库（TokenUsageMiddleware
+        # 在 token 流结束时已落库，此处取最新值带给前端 store 同步）
         duration_ms = int((time.monotonic() - started_at) * 1000)
+        cur = await conn.execute(
+            "SELECT context_used FROM sessions WHERE id = ?", (session_id,)
+        )
+        row = await cur.fetchone()
         yield {
             "data": DoneEvent(
                 run_id=run_id,
                 session_id=session_id,
                 duration_ms=duration_ms,
+                context_used=row["context_used"] if row else None,
             ).model_dump_json()
         }
     finally:
