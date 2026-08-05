@@ -16,7 +16,10 @@ htmlcov/
 .env.local
 
 # ── 数据/日志 ──
-data/
+data/*
+!data/memory/
+data/memory/*
+!data/memory/decisions.md
 logs/
 *.db
 *.sqlite3

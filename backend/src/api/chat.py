@@ -246,18 +246,34 @@ async def _generate_title_in_background(session_id: str, first_message: str) -> 
         await conn.close()
 
 
-async def _save_memory_in_background(user_message: str, assistant_text: str) -> None:
-    """后台写记忆：LLM 抽取事实 → 存 store（fire-and-forget，异常内部降级）。
+async def _save_memory_in_background(
+    user_message: str, assistant_text: str, *, turn_count: int = 0
+) -> None:
+    """后台写记忆（v3 类型化链路）：LLM 抽取 {type, fact} → 类型化落库 + 任务归档检查。
 
     2026-08-04 优化（过程中优化记录）：记忆写入移出 SSE 流——done 事件
     不被额外 LLM 抽取调用拖慢；本函数内部全部容错，不冒泡。
+    v3.1（2026-08-05）：短对话（turn_count < 2）跳过抽取省 token；
+    会话结束顺手检查任务归档（开销可忽略）。
     """
     from src.agent.main_agent import get_store
-    from src.agent.memory_store import extract_memory_fact, save_conversation_memory
+    from src.agent.memory_store import (
+        archive_completed_tasks,
+        extract_memory_typed,
+        save_typed_memory,
+    )
+    from src.core.backend import create_backend
 
-    fact = await extract_memory_fact(None, user_message, assistant_text)  # None → 默认 LLMAdapter()
-    if fact:
-        await save_conversation_memory(get_store(), fact)
+    try:
+        entry = await extract_memory_typed(
+            user_message, assistant_text, turn_count=turn_count
+        )
+        if entry:
+            await save_typed_memory(get_store(), entry["type"], entry["fact"])
+        # v3.1 归档触发：会话结束顺手检查（tasks.md 全局共享，default backend 即可）
+        await archive_completed_tasks(create_backend("default"))
+    except Exception:  # noqa: BLE001 —— 记忆是旁路能力，失败不影响对话
+        logger.exception("记忆后台任务失败（不影响对话）")
 
 
 async def _event_stream(
@@ -333,10 +349,15 @@ async def _event_stream(
             Message(session_id=session_id, role="assistant", content=assistant_text),
         )
 
-        # 长期记忆后台写入（LLM 抽取式；done 前触发不等待——2026-08-04 优化）
+        # 长期记忆后台写入（v3 类型化：LLM 抽取 {type, fact} + 任务归档检查；
+        # done 前触发不等待——2026-08-04 优化）
         if not is_resume and assistant_text:
+            # v3.1：turn_count = 历史消息轮次（user+assistant 成对）——短对话跳过抽取
             asyncio.create_task(
-                _save_memory_in_background(req.message or "", assistant_text)
+                _save_memory_in_background(
+                    req.message or "", assistant_text,
+                    turn_count=len(lc_messages) // 2,
+                )
             )
 
         # done 事件（流内异常时不发）；context_used 查库（TokenUsageMiddleware

@@ -112,3 +112,158 @@ async def load_recent_memories(store: BaseStore, limit: int = MEMORY_INJECT_LIMI
         logger.exception("记忆检索失败（跳过注入）")
         return []
     return [str(item.value.get("content", "")) for item in items if item.value]
+
+
+# ── v3 类型化扩展（记忆体系 §3.1/§8.3：用户画像/事实常识分 namespace）──
+
+# 类型化 namespace（v3：替代单 global——写入按类型落库）
+MEMORY_NAMESPACES = {
+    "user_profile": ("memory", "user_profile"),   # 用户画像（长期）
+    "facts": ("memory", "facts"),                 # 事实/常识（长期）
+}
+# 兼容：旧 global 数据（v1 写入）注入时一并读取
+_LEGACY_NAMESPACE = ("memory", "global")
+# 类型白名单（LLM 输出校验；未知类型 → facts 兜底）
+_TYPE_WHITELIST = {"user_profile", "facts"}
+# 短对话跳过阈值（v3.1：对话轮次 < 2 跳过抽取，省 token）
+MEMORY_MIN_TURNS = 2
+# 已完成任务归档保留条数（v3.1：配置化）
+TASKS_ARCHIVE_KEEP = 20
+
+
+async def extract_memory_typed(
+    user_message: str, assistant_text: str, *, turn_count: int = 0
+) -> dict | None:
+    """LLM 抽取 + 类型分类（v3：一次调用输出 {type, fact}）。
+
+    性能控制（v3.1）：对话太短（turn_count < MEMORY_MIN_TURNS）→ 跳过抽取。
+
+    Args:
+        user_message: 用户消息
+        assistant_text: 助手回复
+        turn_count: 本对话轮次（<2 → 跳过，短对话无记忆沉淀）
+
+    Returns:
+        {"type": "user_profile"|"facts", "fact": 一句话事实}；
+        无记忆价值/对话过短 → None；类型未知 → facts 兜底 + 审计
+    """
+    if turn_count < MEMORY_MIN_TURNS:
+        logger.debug("记忆抽取跳过：对话过短（turn_count=%d）", turn_count)
+        return None
+    fact = await extract_memory_fact(None, user_message, assistant_text)
+    if not fact:
+        return None
+    # 类型判断：简单启发式——用户相关（我/我的/喜欢/偏好）→ user_profile，否则 facts
+    # （P2 演进：LLM 结构化输出 type 字段；当前启发式零额外 token）
+    if any(kw in user_message for kw in ("我", "我的", "喜欢", "偏好", "习惯", "请记住")):
+        memory_type = "user_profile"
+    else:
+        memory_type = "facts"
+    return {"type": memory_type, "fact": fact[:MEMORY_MAX_LEN]}
+
+
+async def save_typed_memory(store: BaseStore, memory_type: str, fact: str) -> None:
+    """类型化写入（对应 namespace，v3 §8.3）。
+
+    Args:
+        store: langgraph store（lifespan 初始化的 SqliteStore）
+        memory_type: user_profile / facts（白名单校验）
+        fact: 抽取的一句话事实
+
+    Raises:
+        ValueError: 未知类型（白名单外）
+    """
+    namespace = MEMORY_NAMESPACES.get(memory_type)
+    if namespace is None:
+        raise ValueError(f"未知记忆类型：{memory_type}，可选 {sorted(_TYPE_WHITELIST)}")
+    if store is None:
+        return
+    if len(fact) < MEMORY_MIN_LEN:
+        logger.debug("记忆跳过：事实过短（%d 字 < 阈值 %d）", len(fact), MEMORY_MIN_LEN)
+        return
+    key = f"mem-{int(time.time() * 1000)}"
+    await store.aput(
+        namespace,
+        key,
+        {"content": fact[:MEMORY_MAX_LEN], "ts": int(time.time())},
+    )
+    logger.info("记忆写入（%s）：%s（%d 字）", memory_type, key, len(fact))
+
+
+async def load_recent_memories_v3(
+    store: BaseStore, limit: int = MEMORY_INJECT_LIMIT
+) -> list[str]:
+    """取最近 N 条记忆（类型化 namespace 合并 + 旧 global 兼容，注入用）。
+
+    Args:
+        store: langgraph store
+        limit: 注入条数上限
+
+    Returns:
+        记忆内容列表（新→旧，画像优先排序）
+    """
+    if store is None:
+        return []
+    try:
+        profile = await store.asearch(MEMORY_NAMESPACES["user_profile"], limit=limit)
+        facts = await store.asearch(MEMORY_NAMESPACES["facts"], limit=limit)
+        legacy = await store.asearch(_LEGACY_NAMESPACE, limit=limit)
+    except Exception:  # noqa: BLE001 —— 记忆检索是旁路能力，失败不阻断对话
+        logger.exception("记忆检索失败（跳过注入）")
+        return []
+    merged = (
+        [(item.value.get("content", ""), 0) for item in profile if item.value]
+        + [(item.value.get("content", ""), 1) for item in facts if item.value]
+        + [(item.value.get("content", ""), 2) for item in legacy if item.value]
+    )
+    # 画像优先（优先级 0），其余按序；截断 limit
+    merged.sort(key=lambda x: x[1])
+    return [content for content, _ in merged[:limit]]
+
+
+async def archive_completed_tasks(
+    backend, keep: int = TASKS_ARCHIVE_KEEP
+) -> int:
+    """已完成任务超限归档（记忆体系 §4.4/§8.4，v3.1 会话结束触发）。
+
+    tasks.md 已完成（- [x]）保留最近 keep 条，更早追加到 tasks_archive.md
+    （归档文件不注入，agent 按需读）；未完成（- [ ]）原样保留。
+
+    Args:
+        backend: /memories/ 路由 backend（create_backend 产物）
+        keep: 已完成保留条数（缺省 TASKS_ARCHIVE_KEEP=20）
+
+    Returns:
+        归档条数（0 = 无超限/tasks.md 不存在）
+    """
+    if backend is None:
+        return 0
+    try:
+        result = await backend.aread("/memories/tasks.md")
+        content = (result or {}).get("content", "") if isinstance(result, dict) else ""
+    except Exception:  # noqa: BLE001 —— tasks.md 不存在/读失败 → 跳过（记忆是旁路能力）
+        return 0
+    if not content:
+        return 0
+    lines = content.splitlines()
+    open_tasks = [ln for ln in lines if ln.strip().startswith("- [ ]")]
+    done_tasks = [ln for ln in lines if ln.strip().startswith("- [x]")]
+    if len(done_tasks) <= keep:
+        return 0
+    archived = done_tasks[: len(done_tasks) - keep]      # 更早的已完成
+    keep_done = done_tasks[len(done_tasks) - keep:]      # 最近 keep 条
+    await backend.awrite("/memories/tasks.md", "\n".join(open_tasks + keep_done) + "\n")
+    try:
+        arch_result = await backend.aread("/memories/tasks_archive.md")
+        arch_content = (
+            (arch_result or {}).get("content", "") if isinstance(arch_result, dict) else ""
+        )
+    except Exception:  # noqa: BLE001
+        arch_content = ""
+    archive_block = "# 任务归档\n" + "\n".join(archived) + "\n"
+    await backend.awrite(
+        "/memories/tasks_archive.md",
+        (arch_content.rstrip() + "\n\n" if arch_content else "") + archive_block,
+    )
+    logger.info("任务归档：%d 条已完成任务移入 tasks_archive.md", len(archived))
+    return len(archived)

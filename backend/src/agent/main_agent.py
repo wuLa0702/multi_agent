@@ -57,6 +57,38 @@ from src.mcp.tools.skill_tool import run_skill_script
 
 logger = logging.getLogger(__name__)
 
+# 记忆文件注入（记忆体系 v3：AGENTS.md 单文件全量注入——官方 MemoryMiddleware
+# 原生支持，零自建；tasks/decisions 为分类承载文件，agent 按需读）
+MEMORY_SOURCES = [
+    "/memories/AGENTS.md",   # 唯一注入源：系统级渐进披露（技能激活提示/全局规则）
+]
+
+# 记忆维护指引 v3（记忆方案 §8.2：触发条件 + 格式 + AGENTS 禁写用户记忆）
+MEMORY_GUIDANCE_V3 = """
+
+## 记忆维护（v3：有规矩地记）
+
+### 什么值得记（满足任一才写，不是每轮都写）
+1. 用户明确说"记住"/"以后都这样"
+2. 新的用户偏好/习惯（语言、风格、技术栈）
+3. 重要决策/约定（选型、规则、踩坑教训）
+4. 任务状态变化（新增/完成/取消）
+
+### 记到哪里、什么格式
+- 用户偏好/客观事实 → 不要写文件，由系统自动抽取分类（无需你操作）
+- 任务/待办 → /memories/tasks.md：`- [ ] 任务（优先级：高/中/低）`；
+  完成后勾选 ✅，超过 20 条已完成 → 移到 /memories/tasks_archive.md
+- 决策/知识 → /memories/decisions.md：
+  `## 日期 主题` + `- 决策：…` + `- 原因：…` + `- 风险：…`
+- 🔴 /memories/AGENTS.md 只放系统级规则（技能激活提示/全局约定），
+  **禁止写入用户记忆**（用户记忆走分类文件或系统抽取）
+
+### 更新规则
+- 追加优先：新信息追加，不随便删旧
+- 冲突：新覆盖旧，旧信息移到文件内"历史"区
+- 去重：相同信息合并，不重复写
+"""
+
 DEFAULT_SYSTEM_PROMPT = """你是一名资深研究员，负责开展深入调研，并输出一份精炼的研究报告。
 
 你有搜索子代理（search_agent）可委派联网搜索任务，获取最新资料后再撰写报告。
@@ -357,7 +389,7 @@ def _build_agent(thread_id: str):
         )
     return create_deep_agent(
         model=model,
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        system_prompt=DEFAULT_SYSTEM_PROMPT + MEMORY_GUIDANCE_V3,
         # P2 子代理隔离：SUBAGENT_ISOLATION=True 时 loader 用同一 model 预编译子代理
         subagents=load_subagents(model=model if settings.subagent_isolation else None),
         tools=internal_tools + mcp_tools,
@@ -375,6 +407,9 @@ def _build_agent(thread_id: str):
         # Store 长期记忆（P1）：SqliteStore 由 lifespan 初始化（init_store）；
         # 未初始化 → 降级无记忆。记忆注入/写入在 chat.py（memory_store 封装）
         store=_store,
+        # 文件记忆（记忆体系 v3）：AGENTS.md 单文件全量注入（官方
+        # MemoryMiddleware，虚拟路径语义）；tasks/decisions 分类承载按需读
+        memory=MEMORY_SOURCES,
         # 会话级 Backend（v2.0）：文件根绑定 thread_id 目录，会话隔离
         backend=create_backend(thread_id),
         # 上层声明式权限（P0 深化）：/skills/** 写 deny 等模板，见 core/permissions.py
