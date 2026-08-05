@@ -92,11 +92,14 @@ class Settings(BaseSettings):
     # 快照模板 ID（P2）：依赖预装后 create_snapshot 生成，配置后起沙箱跳过拉镜像/装依赖
     sandbox_snapshot_id: str = ""
 
-    # ── 事件流增强（2026-08-05 引入方案，学习 demo；默认关回退现状）──
-    # True = token 走 v2 chunk 流 + 多事件分发（tool_call/subagent 事件）
-    # False = 现状 v2 token-only 流。实测结论：v3 messages 投影为 message 粒度
-    # （打字机效果退化）且本模型栈无 content-block 协议——v3 仅作学习脚本。
-    event_stream_v3: bool = False
+    # ── 事件流增强（2026-08-05 引入方案；默认开——多事件分发）──
+    # True = token 走 v2 chunk 流（打字机不退化）+ 多事件分发
+    #   （tool_call/subagent 事件，契约 v3 落地）
+    # False = 仅 token 流（回退旧行为，排查用）
+    # 实测结论（2026-08-05）：v3 messages 投影为 message 粒度且本模型栈
+    # 无 content-block 协议——token 通道必须保留 v2 chunk；v3 声明式投影
+    # 仅作学习脚本（examples/event_streaming_v3_demo.py）
+    event_stream_v3: bool = True
     # True = 挂载 CodeInterpreterMiddleware（QuickJS eval + PTC）。
     # ⚠️ 环境阻塞（2026-08-05 实测）：Python 3.14 无 bsdiff4 wheel 且源码构建
     # 失败（langchain-quickjs 硬依赖）——当前环境开启会得到明确错误提示；

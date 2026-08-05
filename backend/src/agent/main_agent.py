@@ -268,32 +268,36 @@ def get_agent(thread_id: str = "default"):
         return agent
 
 
-def _parse_ptc_whitelist(raw: str) -> list[str]:
-    """PTC 白名单解析 + 配置校验（引入方案 §3.4 小优化 1，fail fast）。
+# PTC 可暴露的只读工具白名单（2026-08-05 反转为**默认拒绝**语义：
+# 名单外的工具一律拒绝——新增工具天然安全，无需维护黑名单；
+# 新增只读工具时显式加入本集合）
+_READONLY_PTC_TOOLS = {"internet_search"}
 
-    只允许只读工具；配置了文件/沙箱工具名 → 直接抛错——PTC 调用不走正常
-    工具路径（interrupt_on 审批不生效），文件/沙箱工具入白名单 = 权限绕过。
+
+def _parse_ptc_whitelist(raw: str) -> list[str]:
+    """PTC 白名单解析 + 校验（默认拒绝语义，fail fast）。
+
+    PTC 调用不走正常工具路径（interrupt_on 审批不生效）——能暴露什么由
+    _READONLY_PTC_TOOLS 白名单决定（不是黑名单兜底）：配置名单外工具
+    （文件/沙箱/未知工具）→ 直接抛错，新增工具天然安全。
 
     Args:
         raw: 逗号分隔的工具名（settings.interpreter_ptc）
 
     Returns:
-        白名单工具名列表
+        校验通过的白名单工具名列表
 
     Raises:
-        ValueError: 配置包含非只读工具
+        ValueError: 配置了只读白名单外的工具
     """
     names = [t.strip() for t in raw.split(",") if t.strip()]
-    blocked = {
-        "write_file", "edit_file", "delete", "upload_files",
-        "run_code_in_sandbox", "run_command_in_sandbox",
-        "upload_workspace_file", "download_sandbox_file",
-    }
     for name in names:
-        if name in blocked:
+        if name not in _READONLY_PTC_TOOLS:
             raise ValueError(
-                f"interpreter_ptc 禁止配置非只读工具：{name}（PTC 调用绕过 "
-                "interrupt_on 审批，只允许只读工具，如 internet_search）"
+                f"interpreter_ptc 只允许只读白名单工具：{name} 不在 "
+                f"{sorted(_READONLY_PTC_TOOLS)}（PTC 调用绕过 interrupt_on 审批，"
+                "文件/沙箱工具绝不可暴露；新增只读工具需显式加入 "
+                "_READONLY_PTC_TOOLS）"
             )
     return names
 

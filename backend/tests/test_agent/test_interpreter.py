@@ -17,25 +17,32 @@ from src.core.config import settings
 # ── T07/T08：PTC 白名单解析与校验 ──
 
 def test_ptc_whitelist_parses_normal() -> None:
-    """T07：逗号分隔 → 列表（空白容忍）。"""
+    """T07：白名单内工具解析通过（空白容忍）；空配置 → 空列表。"""
     assert _parse_ptc_whitelist("internet_search") == ["internet_search"]
-    assert _parse_ptc_whitelist(" a , b ,c ") == ["a", "b", "c"]
+    assert _parse_ptc_whitelist(" internet_search ,internet_search ") == [
+        "internet_search", "internet_search",
+    ]
     assert _parse_ptc_whitelist("") == []
 
 
 @pytest.mark.parametrize(
     "bad",
     ["write_file", "run_code_in_sandbox", "run_command_in_sandbox",
-     "upload_workspace_file", "download_sandbox_file", "edit_file", "delete"],
+     "upload_workspace_file", "download_sandbox_file", "edit_file", "delete",
+     "a", "b", "unknown_tool"],
 )
 def test_ptc_whitelist_rejects_non_readonly(bad: str) -> None:
-    """T08：文件/沙箱工具入白名单 → ValueError（fail fast，PTC 绕审批红线）。"""
-    with pytest.raises(ValueError, match="interpreter_ptc 禁止配置非只读工具"):
+    """T08：白名单外工具（文件/沙箱/未知）→ ValueError（默认拒绝语义）。
+
+    白名单语义（2026-08-05 反转）：不是黑名单兜底——名单外一律拒绝，
+    新增工具天然安全，无需维护黑名单。
+    """
+    with pytest.raises(ValueError, match="interpreter_ptc 只允许只读白名单工具"):
         _parse_ptc_whitelist(bad)
 
 
 def test_ptc_whitelist_keeps_search_when_mixed() -> None:
-    """T08 边界：白名单含只读 + 非只读 → 仍拒绝（不是部分放行）。"""
+    """T08 边界：只读 + 名单外混合 → 仍拒绝（不是部分放行）。"""
     with pytest.raises(ValueError):
         _parse_ptc_whitelist("internet_search, run_code_in_sandbox")
 
