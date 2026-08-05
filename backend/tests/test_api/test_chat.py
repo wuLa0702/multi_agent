@@ -21,6 +21,22 @@ from src.api.main import app
 from src.core.config import settings
 
 
+@pytest.fixture(autouse=True)
+def no_background_llm(mocker):
+    """后台任务（自动标题/记忆抽取）不真调 LLM：返回 None → 走规则回退。
+
+    chat.py 的 _generate_title_in_background / _save_memory_in_background
+    在 adapter=None 时会构造默认 LLMAdapter() 真调 API（20-testing.md：
+    LLM 全部 mock）。两个后台函数均在调用时才 import 模块属性，
+    patch 模块属性即可拦截；返回 None → 标题走规则截断回退、
+    记忆跳过写入，断言确定性通过。
+    模块级（仅本文件）：test_memory_store.py 直接调 extract_memory_fact
+    （adapter 显式注入），conftest 全局 autouse 会破坏它。
+    """
+    mocker.patch("src.agent.assistant_tasks.generate_title", return_value=None)
+    mocker.patch("src.agent.memory_store.extract_memory_fact", return_value=None)
+
+
 def parse_sse(text: str) -> list[dict]:
     """解析 SSE 文本 → 事件 dict 列表（data: 行提取）。"""
     events: list[dict] = []

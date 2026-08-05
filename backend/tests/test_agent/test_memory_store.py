@@ -134,7 +134,7 @@ def test_agent_builds_with_store(mocker, tmp_path) -> None:
     import asyncio
 
     async def run() -> None:
-        main_agent._agent = None
+        main_agent._agents.clear()
         await main_agent.init_store(db_path=tmp_path)
         try:
             main_agent.get_agent()
