@@ -19,8 +19,50 @@ import threading
 import aiosqlite
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from pydantic import PrivateAttr
 
 logger = logging.getLogger(__name__)
+
+
+class _SafeTool(BaseTool):
+    """MCP 工具安全包装：协议层异常（429/连接失败）降级为错误字符串返回。
+
+    langchain_mcp_adapters 的 handle_tool_errors 只处理「工具结果 error」，
+    协议层异常（Smithery 限流 429、连接失败）会在调用处抛异常中断 agent run——
+    本包装捕获一切异常转字符串（与项目「工具失败降级不中断」设计一致）。
+
+    Attributes:
+        _tool: 被包装的原始 MCP 工具（PrivateAttr——BaseTool 是 Pydantic 模型，
+            下划线字段必须用 PrivateAttr 声明，否则不实例化）
+    """
+
+    _tool: BaseTool = PrivateAttr()
+
+    def __init__(self, tool: BaseTool, **kwargs) -> None:
+        super().__init__(
+            name=tool.name, description=tool.description, args_schema=tool.args_schema, **kwargs
+        )
+        self._tool = tool
+
+    def _run(self, *args, **kwargs):  # pragma: no cover - MCP 工具走 async
+        raise NotImplementedError("MCP 工具为 async，使用 _arun")
+
+    async def _arun(self, *args, **kwargs):
+        try:
+            # 走原始工具 ainvoke（顶层入口：内部处理 RunnableConfig/args_schema，
+            # 直接调 _arun 会丢 config 参数——实测 StructuredTool 必传 config）
+            config = kwargs.pop("config", None)
+            if args and isinstance(args[0], dict):
+                return await self._tool.ainvoke(args[0], config=config)
+            return await self._tool.ainvoke(kwargs, config=config)
+        except Exception as exc:  # noqa: BLE001 —— 工具失败降级为错误消息，不中断 run
+            logger.warning("MCP 工具 %s 执行失败（降级）：%s", self.name, exc)
+            return f"工具执行失败（{type(exc).__name__}）：{str(exc)[:300]}，请勿重试，改用其他方式。"
+
+
+def _wrap_safe(tool: BaseTool) -> BaseTool:
+    """包装单个 MCP 工具为安全版本（保留 name/description/args_schema）。"""
+    return _SafeTool(tool=tool)
 
 _manager: "McpClientManager | None" = None
 _manager_lock = threading.Lock()
@@ -69,7 +111,9 @@ class McpClientManager:
                 failed.append(name)
                 logger.warning("MCP server %s 连接/取工具失败（跳过）：%s", name, result)
             else:
-                tools.extend(result)
+                # 安全包装：协议层异常（Smithery 限流 429 等）降级为错误字符串，
+                # 不中断 agent run（实测：搜索任务调 Exa → 429 → TaskGroup 崩溃）
+                tools.extend(_wrap_safe(t) for t in result)
         if failed:
             logger.warning("MCP 客户端共 %d 个 server，%d 个失败跳过", len(connections), len(failed))
 
