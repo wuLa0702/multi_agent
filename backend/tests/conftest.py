@@ -138,6 +138,26 @@ async def reset_agent_singleton(tmp_path):
 
 
 @pytest.fixture
+def audit_records():
+    """捕获 audit logger 记录（深化 v3 审计测试用）。
+
+    audit logger propagate=False → pytest caplog（挂 root）捕不到，必须直接给
+    audit logger 挂临时 handler。断言模板：
+        rec = json.loads(records[-1].getMessage())   # 每行完整 JSON，字段顶层
+    """
+    import logging
+
+    audit = logging.getLogger("audit")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record)  # type: ignore[method-assign]
+    audit.addHandler(handler)
+    audit.setLevel(logging.INFO)
+    yield records
+    audit.removeHandler(handler)
+
+
+@pytest.fixture
 async def seeded_registry(tmp_db_path):
     """基于隔离 DB 加载默认 seed 的模型注册表（模型 ID 测试用）。
 

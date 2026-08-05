@@ -38,15 +38,18 @@ def test_get_agent_session_cache(mocker) -> None:
     assert a1 is not a3, "不同会话应独立编译图（backend 文件根隔离）"
     assert mock_create.call_count == 2
     # 构建参数含运行时切换三件套：middleware + context_schema + backend
-    # （2026-08-04 评审改版：middleware 含 TokenUsageMiddleware；v2.0 会话级 backend）
+    # （2026-08-04 评审改版：middleware 含 TokenUsageMiddleware；v2.0 会话级 backend；
+    # v3.0：+ ToolAuditMiddleware + permissions 上层声明式规则）
     _, kwargs = mock_create.call_args
     middleware_types = [type(m) for m in kwargs["middleware"]]
     assert middleware_types == [
         type(main_agent._configurable_model),
         main_agent.TokenUsageMiddleware,
-    ], "中间件栈应含模型切换 + 用量统计"
+        main_agent.ToolAuditMiddleware,
+    ], "中间件栈应含模型切换 + 用量统计 + 工具审计"
     assert kwargs["context_schema"] is main_agent.ChatContext
     assert kwargs["backend"] is not None, "v2.0 会话级 backend 应挂载（文件根隔离）"
+    assert kwargs["permissions"][0].mode == "deny", "P0 上层声明式规则应挂载（/skills/** 写 deny）"
 
 
 async def _route_model_id(mocker, model_id: int | None) -> tuple[list[int | None], list[object]]:
@@ -95,3 +98,33 @@ async def test_configurable_model_default_model_id(mocker) -> None:
     calls, _ = await _route_model_id(mocker, model_id=None)
 
     assert calls == [None], "不指定 model_id 时应回落默认模型"
+
+
+# ── v3：有界 LRU 缓存治理（深化方案 §2.3）──
+
+def test_agent_cache_lru_eviction(mocker) -> None:
+    """T4：缓存超限逐出最久未用会话（只逐内存图，不删磁盘）。"""
+    mocker.patch("src.agent.main_agent.get_chat_model", return_value=object())
+    mocker.patch("src.agent.main_agent.create_deep_agent", side_effect=lambda *a, **k: object())
+
+    for i in range(main_agent._AGENT_CACHE_MAX + 5):
+        main_agent.get_agent(f"t{i}")
+
+    assert len(main_agent._agents) == main_agent._AGENT_CACHE_MAX, "超限应逐出到上限"
+    assert "t0" not in main_agent._agents, "最早使用的最先被逐出"
+    assert f"t{main_agent._AGENT_CACHE_MAX + 4}" in main_agent._agents, "最近使用的保留"
+
+
+def test_agent_cache_lru_refresh(mocker) -> None:
+    """T4：命中刷新（pop 后放回）——重新访问过的会话不被逐出。"""
+    mocker.patch("src.agent.main_agent.get_chat_model", return_value=object())
+    mocker.patch("src.agent.main_agent.create_deep_agent", side_effect=lambda *a, **k: object())
+
+    main_agent.get_agent("t0")
+    main_agent.get_agent("t1")
+    main_agent.get_agent("t0")  # 刷新 t0 为最近使用 → 使用序 [t1, t0]
+    for i in range(2, main_agent._AGENT_CACHE_MAX + 1):  # 再加 31 个 → 恰逐出 1 个（最老的 t1）
+        main_agent.get_agent(f"t{i}")
+
+    assert "t0" in main_agent._agents, "刷新后的 t0 不应被逐出"
+    assert "t1" not in main_agent._agents, "最久未用的 t1 应被逐出"

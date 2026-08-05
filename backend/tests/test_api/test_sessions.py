@@ -102,6 +102,55 @@ async def test_delete_session_returns_ok(app_env_dev, tmp_db_path, session_id) -
 
 
 @pytest.mark.asyncio
+async def test_delete_evicts_cache_and_cleans_workspace(
+    app_env_dev, tmp_db_path, session_id, monkeypatch
+) -> None:
+    """P0 联动：DELETE 后——Agent 缓存失效 + 工作区文件全量清理（深化方案 §2.4）。"""
+    from src.agent import main_agent
+    from src.core import backend as core_backend
+
+    main_agent._agents[session_id] = object()  # 哨兵：模拟该会话已有编译图
+    ws = tmp_db_path.parent / "ws" / session_id
+    ws.mkdir(parents=True)
+    (ws / "draft.py").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(core_backend, "get_workspace_dir", lambda: tmp_db_path.parent / "ws")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.delete(f"/v1/sessions/{session_id}")
+
+    assert resp.status_code == 200
+    assert session_id not in main_agent._agents, "缓存图应失效"
+    assert not (ws / "draft.py").exists(), "工作区文件应全量清理"
+    assert ws.exists(), "工作区目录保留（防误删路径本身）"
+
+
+@pytest.mark.asyncio
+async def test_delete_calls_rebuild_and_cleanup(
+    app_env_dev, tmp_db_path, session_id, mocker, monkeypatch
+) -> None:
+    """P0 联动：rebuild_agent 与 cleanup_workspace 均以 session_id 调用（404 不触发）。"""
+    from src.agent import main_agent
+
+    mock_rebuild = mocker.patch("src.api.sessions.main_agent.rebuild_agent")
+    mock_cleanup = mocker.patch("src.api.sessions.cleanup_workspace")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.delete(f"/v1/sessions/{session_id}")
+    assert resp.status_code == 200
+    mock_rebuild.assert_called_once_with(session_id)
+    mock_cleanup.assert_called_once_with(session_id, older_than_days=0)
+
+    # 404 路径：不触发联动（会话不存在）
+    mock_rebuild.reset_mock()
+    mock_cleanup.reset_mock()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp404 = await client.delete(f"/v1/sessions/not-exist")
+    assert resp404.status_code == 404
+    mock_rebuild.assert_not_called()
+    mock_cleanup.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_list_messages_paginates_with_cursor(
     app_env_dev, tmp_db_path, messages_fixture, session_id
 ) -> None:
