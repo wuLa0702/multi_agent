@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     # False = 现状 v2 token-only 流。实测结论：v3 messages 投影为 message 粒度
     # （打字机效果退化）且本模型栈无 content-block 协议——v3 仅作学习脚本。
     event_stream_v3: bool = False
+    # True = 挂载 CodeInterpreterMiddleware（QuickJS eval + PTC）。
+    # ⚠️ 环境阻塞（2026-08-05 实测）：Python 3.14 无 bsdiff4 wheel 且源码构建
+    # 失败（langchain-quickjs 硬依赖）——当前环境开启会得到明确错误提示；
+    # 换 3.11/3.12 venv 或 bsdiff4 出 wheel 后即可用
+    interpreter_enabled: bool = False
+    # PTC 白名单（逗号分隔；🔴 只允许只读工具——PTC 调用绕 interrupt_on 审批）
+    interpreter_ptc: str = "internet_search"
 
     # ── 记忆/存储 ──
     redis_url: str = "redis://localhost:6379/0"

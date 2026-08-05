@@ -268,6 +268,36 @@ def get_agent(thread_id: str = "default"):
         return agent
 
 
+def _parse_ptc_whitelist(raw: str) -> list[str]:
+    """PTC 白名单解析 + 配置校验（引入方案 §3.4 小优化 1，fail fast）。
+
+    只允许只读工具；配置了文件/沙箱工具名 → 直接抛错——PTC 调用不走正常
+    工具路径（interrupt_on 审批不生效），文件/沙箱工具入白名单 = 权限绕过。
+
+    Args:
+        raw: 逗号分隔的工具名（settings.interpreter_ptc）
+
+    Returns:
+        白名单工具名列表
+
+    Raises:
+        ValueError: 配置包含非只读工具
+    """
+    names = [t.strip() for t in raw.split(",") if t.strip()]
+    blocked = {
+        "write_file", "edit_file", "delete", "upload_files",
+        "run_code_in_sandbox", "run_command_in_sandbox",
+        "upload_workspace_file", "download_sandbox_file",
+    }
+    for name in names:
+        if name in blocked:
+            raise ValueError(
+                f"interpreter_ptc 禁止配置非只读工具：{name}（PTC 调用绕过 "
+                "interrupt_on 审批，只允许只读工具，如 internet_search）"
+            )
+    return names
+
+
 def _build_agent(thread_id: str):
     """构建单个会话的编译图（get_agent 的构建体抽离，v3）。
 
@@ -287,20 +317,44 @@ def _build_agent(thread_id: str):
     ]
     mcp_tools = get_mcp_client_manager().get_tools()
     model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用
+    middleware = [
+        _configurable_model,
+        # 上下文用量：图执行完自动算全量 messages token 并存库
+        # （2026-08-04 评审改版：中间件替代 CallbackHandler，前端查表）
+        TokenUsageMiddleware(),
+        # 工具调用审计（P1）：MCP/沙箱逃逸面统一审计，只记不拦
+        ToolAuditMiddleware(),
+    ]
+    if settings.interpreter_enabled:
+        # 解释器（引入方案 P2）：惰性 import——quickjs 包缺失（Python 3.14
+        # 无 bsdiff4 wheel，2026-08-05 实测）→ 明确错误提示而非构建炸掉。
+        # 中间件顺序（评审问题 2.2 预案）：ToolAudit 在 CodeInterpreter 前
+        # （外层），eval 工具调用先经审计链；真执行验证待环境解决。
+        try:
+            from langchain_quickjs import CodeInterpreterMiddleware
+        except ImportError as exc:  # pragma: no cover - 环境阻塞路径
+            raise RuntimeError(
+                "interpreter_enabled=True 但 langchain-quickjs 不可用："
+                f"{exc}。Python 3.14 无 bsdiff4 wheel 且源码构建失败——"
+                "请换 Python 3.11/3.12 venv 或等待 bsdiff4 发布 py3.14 wheel。"
+            ) from exc
+        middleware.append(
+            CodeInterpreterMiddleware(
+                memory_limit=64 * 1024 * 1024,   # 官方默认 64MB
+                timeout=5.0,                     # 单次 eval 5s
+                max_result_chars=4000,
+                # 🔴 PTC 只读白名单：绝不含文件/沙箱工具（PTC 绕 interrupt_on 审批）
+                ptc=_parse_ptc_whitelist(settings.interpreter_ptc),
+                mode="turn",                     # 轮内持久（学习：turn/call 对比）
+            )
+        )
     return create_deep_agent(
         model=model,
         system_prompt=DEFAULT_SYSTEM_PROMPT,
         # P2 子代理隔离：SUBAGENT_ISOLATION=True 时 loader 用同一 model 预编译子代理
         subagents=load_subagents(model=model if settings.subagent_isolation else None),
         tools=internal_tools + mcp_tools,
-        middleware=[
-            _configurable_model,
-            # 上下文用量：图执行完自动算全量 messages token 并存库
-            # （2026-08-04 评审改版：中间件替代 CallbackHandler，前端查表）
-            TokenUsageMiddleware(),
-            # 工具调用审计（P1）：MCP/沙箱逃逸面统一审计，只记不拦
-            ToolAuditMiddleware(),
-        ],
+        middleware=middleware,
         context_schema=ChatContext,
         # SKILL.md 渐进式加载：走 backend 虚拟路径 /skills/market/
         # （v2.0：SkillsMiddleware 经 backend 读文件，虚拟路径路由到
