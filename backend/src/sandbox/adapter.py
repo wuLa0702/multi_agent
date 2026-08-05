@@ -56,12 +56,19 @@ class OpenSandboxAdapter:
         image: str = DEFAULT_IMAGE,
         *,
         timeout: timedelta = DEFAULT_TIMEOUT,
+        resource: dict[str, str] | None = None,
     ) -> SandboxSync:
-        """创建沙箱并等待就绪。
+        """创建沙箱并等待就绪（增强：单沙箱资源限额配置化）。
+
+        原签名 create_sandbox(image, timeout) 完全兼容——resource 为新增可选参数。
+        限额来自 settings（sandbox_cpu / sandbox_memory，能力计划 §3.5），
+        显式传参优先；settings 已配则兜底注入——⚠️ 不注入时 SDK 默认
+        1cpu/2Gi（sync/sandbox.py:554），云端 4G 下 2 沙箱即吃满。
 
         Args:
             image: 沙箱容器镜像
             timeout: 沙箱最长存活时间（到期自动回收）
+            resource: 容器资源限额 {"cpu": "1", "memory": "1Gi"}；None → settings 兜底
 
         Returns:
             就绪的 SandboxSync 实例
@@ -69,9 +76,12 @@ class OpenSandboxAdapter:
         Raises:
             SandboxException: 创建失败或超时未就绪
         """
+        if resource is None and settings.sandbox_cpu and settings.sandbox_memory:
+            resource = {"cpu": settings.sandbox_cpu, "memory": settings.sandbox_memory}
         return SandboxSync.create(
             image,
             timeout=timeout,
+            resource=resource,
             connection_config=self._connection_config(),
         )
 
@@ -84,6 +94,24 @@ class OpenSandboxAdapter:
             content: 文件内容（UTF-8）
         """
         sandbox.files.write_file(path, content)
+
+    def run_script(self, sandbox: SandboxSync, files: dict[str, str], entry: str) -> str:
+        """多文件执行（能力计划 §3.2）：逐文件写入 → 运行入口文件。
+
+        Args:
+            sandbox: 沙箱实例（池化复用或一次性均可）
+            files: {沙箱内路径: 内容}（如 {"main.py": "...", "utils.py": "..."}）
+            entry: 入口文件（如 "main.py"）
+
+        Returns:
+            run_command 的 stdout 文本
+
+        Raises:
+            SandboxException: 写入/执行失败（调用方降级）
+        """
+        for path, content in files.items():
+            self.write_file(sandbox, path, content)
+        return self.run_command(sandbox, f"python {entry}")
 
     def run_command(self, sandbox: SandboxSync, command: str) -> str:
         """在沙箱内执行 shell 命令。

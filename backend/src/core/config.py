@@ -72,6 +72,24 @@ class Settings(BaseSettings):
     sandbox_url: str = ""
     sandbox_api_key: str = ""
 
+    # ── 沙箱池（2026-08-05 能力计划 §3.1/§3.5：配置化，代码零写死）──
+    # 会话级池化总开关：False = 一次性语义（工具自管生命周期 try/finally destroy）
+    sandbox_pool_enabled: bool = True
+    # 池化默认镜像（现有 adapter.DEFAULT_IMAGE 迁移）
+    sandbox_image: str = "python:3.11"
+    # 沙箱 TTL 秒（现 DEFAULT_TIMEOUT=30min 迁移；取用即 renew 续期）
+    sandbox_timeout: int = 1800
+    # 空闲回收阈值（15min 无取用即销毁）
+    sandbox_idle_ttl: int = 900
+    # 并发沙箱上限（本地 6；云端 .env.prod 改 4——4G 云 4 个并发对话封顶）
+    sandbox_pool_max: int = 6
+    # 单沙箱 CPU 限额（云端 .env.prod 改 0.5）
+    sandbox_cpu: str = "1"
+    # 单沙箱内存限额（云端 .env.prod 改 512Mi；SDK 默认 2Gi 云端吃满）
+    sandbox_memory: str = "1Gi"
+    # 单次命令输出截断字节（防上下文爆炸）
+    sandbox_output_limit: int = 8192
+
     # ── 记忆/存储 ──
     redis_url: str = "redis://localhost:6379/0"
     db_path: str = "./data/wiki.db"
