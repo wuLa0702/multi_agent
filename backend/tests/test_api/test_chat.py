@@ -232,3 +232,73 @@ async def test_chat_stream_llm_error_event(mocker, tmp_db_path) -> None:
     assert "retryable" in events[-1]
     # done 不得出现（§5.5：done/error 二选一）
     assert not any(e["type"] == "done" for e in events)
+
+
+# ── 事件流增强（引入方案 P0：EVENT_STREAM_V3=true 多事件分发）──
+
+class _FakeStreamAgent:
+    """假 agent：astream_events 产出合成事件（token 交错工具调用）。"""
+
+    async def astream_events(self, input, **kwargs):  # noqa: ANN001
+        from langchain_core.messages import AIMessageChunk
+
+        yield {"event": "on_chat_model_stream", "data": {"chunk": AIMessageChunk(content="你好")}}
+        yield {"event": "on_tool_start", "name": "run_code_in_sandbox", "data": {"input": '{"code": "x"}'}}
+        yield {"event": "on_tool_end", "name": "run_code_in_sandbox", "data": {"output": "ok"}}
+        yield {"event": "on_chat_model_stream", "data": {"chunk": AIMessageChunk(content="，结果如上")}}
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_v3_emits_tool_call_events(
+    mock_chat_llm, tmp_db_path, mocker, monkeypatch
+) -> None:
+    """P0：EVENT_STREAM_V3=true → SSE 输出 tool_call 事件（契约 v3 落地）。
+
+    事件序：start → token → tool_call(running) → tool_call(completed) → token → done
+    ——工具调用事件**穿插在 token 流中**（评审问题 1 的集成回归）。
+    """
+    from src.api import chat as chat_api
+
+    monkeypatch.setattr(settings, "event_stream_v3", True)
+    mocker.patch.object(chat_api, "build_agent", return_value=_FakeStreamAgent())
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with client.stream(
+            "POST", "/v1/chat/stream",
+            json={"message": "帮我算一下"},
+        ) as resp:
+            body = (await resp.aread()).decode("utf-8")
+
+    events = parse_sse(body)
+    types = [e["type"] for e in events]
+    # start 首 / done 尾；tool_call 夹在 token 之间（交错，非串行）
+    assert types[0] == "start" and types[-1] == "done"
+    assert types == [
+        "start", "token", "tool_call", "tool_call", "token", "done",
+    ], "工具调用事件必须交错在 token 流中（评审问题 1）"
+    tool_events = [e for e in events if e["type"] == "tool_call"]
+    assert tool_events[0]["status"] == "running"
+    assert tool_events[1]["status"] == "completed"
+    assert tool_events[0]["tool"] == "run_code_in_sandbox"
+    assert tool_events[0]["id"] < tool_events[1]["id"], "事件序号自增（前端排序）"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_v3_default_off_token_only(
+    mock_chat_llm, tmp_db_path, mocker, monkeypatch
+) -> None:
+    """P0：EVENT_STREAM_V3=false（默认）→ 仅 token 事件，现状零行为变化。"""
+    from src.api import chat as chat_api
+
+    monkeypatch.setattr(settings, "event_stream_v3", False)
+    mocker.patch.object(chat_api, "build_agent", return_value=_FakeStreamAgent())
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with client.stream(
+            "POST", "/v1/chat/stream",
+            json={"message": "hi"},
+        ) as resp:
+            body = (await resp.aread()).decode("utf-8")
+
+    events = parse_sse(body)
+    assert all(e["type"] in ("start", "token", "done") for e in events), "默认开关应只出 token"

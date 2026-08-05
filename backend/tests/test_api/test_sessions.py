@@ -222,3 +222,19 @@ async def test_messages_limit_over_cap_422(app_env_dev, tmp_db_path, session_id)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(f"/v1/sessions/{session_id}/messages?limit=201")
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_delete_destroys_sandbox_pool(
+    app_env_dev, tmp_db_path, session_id, mocker
+) -> None:
+    """P1 联动：DELETE 会话 → sandbox_pool.destroy(session_id)（沙箱资源释放）。"""
+    from src.sandbox.pool import sandbox_pool
+
+    mock_destroy = mocker.patch.object(sandbox_pool, "destroy")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.delete(f"/v1/sessions/{session_id}")
+
+    assert resp.status_code == 200
+    mock_destroy.assert_called_once_with(session_id)

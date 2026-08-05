@@ -3,9 +3,10 @@
 统一信封规则：每条事件是 JSON 对象，必含 type 字段，帧只用 data: 行。
 事件顺序保证（§5.5）：首事件必为 start；尾事件为 done 或 error（二选一）。
 
-当前实现（最初级对话闭环）：
-- start / token / done / error 四类
-后续阶段按契约补齐：tool_call / subagent / approve / summarize
+当前实现：
+- start / token / done / error 四类（最初级闭环）
+- tool_call / subagent 两类（2026-08-05 引入方案 P1 落地，契约 v3 定稿）
+后续阶段按契约补齐：approve / summarize
 """
 
 from __future__ import annotations
@@ -52,6 +53,42 @@ class DoneEvent(SSEEvent):
         default=128_000,
         description="上下文上限（模型窗口，2026-08-04 P2）",
     )
+
+
+class ToolCallEvent(SSEEvent):
+    """工具调用事件（契约 v3 定稿，2026-08-05 落地）：前端驱动"工具调用进度条"。
+
+    Attributes:
+        tool: 工具名（如 run_code_in_sandbox）
+        status: running / completed / error
+        input: 入参截断 ≤300（密钥纪律，同 ToolAudit 脱敏）
+        output: 结果截断 ≤300
+        id: 事件序号（前端去重/排序）
+    """
+
+    type: Literal["tool_call"] = "tool_call"
+    tool: str = Field(description="工具名")
+    status: Literal["running", "completed", "error"] = Field(description="工具调用状态")
+    input: str = Field(default="", description="入参（截断 ≤300，脱敏）")
+    output: str | None = Field(default=None, description="结果（截断 ≤300）")
+    id: int = Field(description="事件序号（流内自增，前端去重/排序）")
+
+
+class SubagentEvent(SSEEvent):
+    """子代理生命周期事件（契约 v3 定稿，2026-08-05 落地）：前端驱动"子代理卡片"。
+
+    Attributes:
+        name: 子代理名（search_agent）
+        status: started / completed / failed
+        depth: 嵌套深度（递归展平后可渲染树形层级）
+        id: 事件序号
+    """
+
+    type: Literal["subagent"] = "subagent"
+    name: str = Field(description="子代理名")
+    status: Literal["started", "completed", "failed"] = Field(description="子代理状态")
+    depth: int = Field(default=0, description="嵌套深度（0 = 顶层）")
+    id: int = Field(description="事件序号（流内自增）")
 
 
 class ErrorEvent(SSEEvent):

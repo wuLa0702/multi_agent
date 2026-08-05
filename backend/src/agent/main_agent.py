@@ -47,7 +47,12 @@ from src.core.paths import get_checkpointer_path, get_skill_md_dir, get_store_pa
 from src.core.permissions import build_main_permissions
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
-from src.mcp.tools.sandbox_tool import run_code_in_sandbox
+from src.mcp.tools.sandbox_tool import (
+    download_sandbox_file,
+    run_code_in_sandbox,
+    run_command_in_sandbox,
+    upload_workspace_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +268,40 @@ def get_agent(thread_id: str = "default"):
         return agent
 
 
+# PTC 可暴露的只读工具白名单（2026-08-05 反转为**默认拒绝**语义：
+# 名单外的工具一律拒绝——新增工具天然安全，无需维护黑名单；
+# 新增只读工具时显式加入本集合）
+_READONLY_PTC_TOOLS = {"internet_search"}
+
+
+def _parse_ptc_whitelist(raw: str) -> list[str]:
+    """PTC 白名单解析 + 校验（默认拒绝语义，fail fast）。
+
+    PTC 调用不走正常工具路径（interrupt_on 审批不生效）——能暴露什么由
+    _READONLY_PTC_TOOLS 白名单决定（不是黑名单兜底）：配置名单外工具
+    （文件/沙箱/未知工具）→ 直接抛错，新增工具天然安全。
+
+    Args:
+        raw: 逗号分隔的工具名（settings.interpreter_ptc）
+
+    Returns:
+        校验通过的白名单工具名列表
+
+    Raises:
+        ValueError: 配置了只读白名单外的工具
+    """
+    names = [t.strip() for t in raw.split(",") if t.strip()]
+    for name in names:
+        if name not in _READONLY_PTC_TOOLS:
+            raise ValueError(
+                f"interpreter_ptc 只允许只读白名单工具：{name} 不在 "
+                f"{sorted(_READONLY_PTC_TOOLS)}（PTC 调用绕过 interrupt_on 审批，"
+                "文件/沙箱工具绝不可暴露；新增只读工具需显式加入 "
+                "_READONLY_PTC_TOOLS）"
+            )
+    return names
+
+
 def _build_agent(thread_id: str):
     """构建单个会话的编译图（get_agent 的构建体抽离，v3）。
 
@@ -273,23 +312,53 @@ def _build_agent(thread_id: str):
         deepagents 编译后的 Agent（LangGraph CompiledStateGraph）
     """
     # 工具 = 内部工具 + 外部 MCP 工具（lifespan 连接收集，见 src/mcp/client.py）
-    internal_tools = [run_code_in_sandbox]
+    # 沙箱域工具（P1 挂载：命令执行 + 文件同步，能力计划 §3.2/§3.3）
+    internal_tools = [
+        run_code_in_sandbox,
+        run_command_in_sandbox,
+        upload_workspace_file,
+        download_sandbox_file,
+    ]
     mcp_tools = get_mcp_client_manager().get_tools()
     model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用
+    middleware = [
+        _configurable_model,
+        # 上下文用量：图执行完自动算全量 messages token 并存库
+        # （2026-08-04 评审改版：中间件替代 CallbackHandler，前端查表）
+        TokenUsageMiddleware(),
+        # 工具调用审计（P1）：MCP/沙箱逃逸面统一审计，只记不拦
+        ToolAuditMiddleware(),
+    ]
+    if settings.interpreter_enabled:
+        # 解释器（引入方案 P2）：惰性 import——quickjs 包缺失（Python 3.14
+        # 无 bsdiff4 wheel，2026-08-05 实测）→ 明确错误提示而非构建炸掉。
+        # 中间件顺序（评审问题 2.2 预案）：ToolAudit 在 CodeInterpreter 前
+        # （外层），eval 工具调用先经审计链；真执行验证待环境解决。
+        try:
+            from langchain_quickjs import CodeInterpreterMiddleware
+        except ImportError as exc:  # pragma: no cover - 环境阻塞路径
+            raise RuntimeError(
+                "interpreter_enabled=True 但 langchain-quickjs 不可用："
+                f"{exc}。Python 3.14 无 bsdiff4 wheel 且源码构建失败——"
+                "请换 Python 3.11/3.12 venv 或等待 bsdiff4 发布 py3.14 wheel。"
+            ) from exc
+        middleware.append(
+            CodeInterpreterMiddleware(
+                memory_limit=64 * 1024 * 1024,   # 官方默认 64MB
+                timeout=5.0,                     # 单次 eval 5s
+                max_result_chars=4000,
+                # 🔴 PTC 只读白名单：绝不含文件/沙箱工具（PTC 绕 interrupt_on 审批）
+                ptc=_parse_ptc_whitelist(settings.interpreter_ptc),
+                mode="turn",                     # 轮内持久（学习：turn/call 对比）
+            )
+        )
     return create_deep_agent(
         model=model,
         system_prompt=DEFAULT_SYSTEM_PROMPT,
         # P2 子代理隔离：SUBAGENT_ISOLATION=True 时 loader 用同一 model 预编译子代理
         subagents=load_subagents(model=model if settings.subagent_isolation else None),
         tools=internal_tools + mcp_tools,
-        middleware=[
-            _configurable_model,
-            # 上下文用量：图执行完自动算全量 messages token 并存库
-            # （2026-08-04 评审改版：中间件替代 CallbackHandler，前端查表）
-            TokenUsageMiddleware(),
-            # 工具调用审计（P1）：MCP/沙箱逃逸面统一审计，只记不拦
-            ToolAuditMiddleware(),
-        ],
+        middleware=middleware,
         context_schema=ChatContext,
         # SKILL.md 渐进式加载：走 backend 虚拟路径 /skills/market/
         # （v2.0：SkillsMiddleware 经 backend 读文件，虚拟路径路由到
@@ -339,13 +408,112 @@ def build_agent(model: BaseChatModel | None = None, thread_id: str = "default"):
     return get_agent(thread_id)
 
 
+async def stream_agent_events(
+    agent,
+    messages: list[BaseMessage],
+    context: ChatContext | None = None,
+    checkpoint_id: str | None = None,
+) -> AsyncIterator[dict]:
+    """事件流（引入方案 P0 校准版）：token + tool_call + subagent 三类事件。
+
+    ⚠️ 实测校准（2026-08-05，方案 §6.2 风险项 2.3）：v3 messages 投影为
+    message 粒度（整条消息，非逐 chunk），且本模型栈（OpenAI 兼容 adapter）
+    无 content-block 协议支持——v3 直接出 token 会摧毁打字机效果。
+    校准：单次 v2 事件流多事件分发——token 走 on_chat_model_stream（逐 chunk），
+    tool_call 走 on_tool_start/on_tool_end，subagent 走 stream_subgraphs 子图链。
+    v3 声明式投影保留为 examples/ 学习脚本（不接生产链路）。
+
+    产出事件（SSE 协议 v3 对齐）：
+      {"type": "token",     "text": ..., "id": 序号}
+      {"type": "tool_call", "tool": ..., "status": "running|completed|error",
+       "input": ..., "output": ..., "id": 序号}
+      {"type": "subagent",  "name": ..., "status": "started|completed|failed",
+       "depth": 0, "id": 序号}
+
+    Args:
+        agent: build_agent 的产物
+        messages: LangChain 消息列表（含历史）；resume 模式传空列表
+        context: 请求级上下文（session_id → thread_id config 封装）
+        checkpoint_id: resume 模式从精确快照继续
+
+    Yields:
+        事件 dict（SSE 层据此分发）
+
+    Raises:
+        Exception: checkpoint_id 无效/不属于该 thread（API 层转 RESUME_NOT_FOUND）
+    """
+    config = None
+    if context is not None and context.session_id:
+        config = {"configurable": {"thread_id": context.session_id}}
+        if checkpoint_id:
+            config["configurable"]["checkpoint_id"] = checkpoint_id
+    # stream_subgraphs：子代理/子图事件（v3 subagents 投影的 v2 等价物）
+    config = {**(config or {}), "stream_subgraphs": True}
+
+    seq = 0
+    async with _stream_semaphore:  # 并发限流：SQLite 写锁缓解
+        async for evt in agent.astream_events(
+            {"messages": messages}, version="v2", context=context, config=config
+        ):
+            event_type = evt.get("event")
+            if event_type == "on_chat_model_stream":
+                chunk = evt.get("data", {}).get("chunk")
+                text = getattr(chunk, "text", None) if chunk is not None else None
+                if text:
+                    seq += 1
+                    yield {"type": "token", "text": text, "id": seq}
+            elif event_type == "on_tool_start":
+                seq += 1
+                yield {
+                    "type": "tool_call",
+                    "tool": evt.get("name", ""),
+                    "status": "running",
+                    "input": _truncate(str(evt.get("data", {}).get("input", ""))),
+                    "output": None,
+                    "id": seq,
+                }
+            elif event_type == "on_tool_end":
+                seq += 1
+                yield {
+                    "type": "tool_call",
+                    "tool": evt.get("name", ""),
+                    "status": "completed",
+                    "input": "",
+                    "output": _truncate(str(evt.get("data", {}).get("output", ""))),
+                    "id": seq,
+                }
+            elif event_type in ("on_chain_start", "on_chain_end") and evt.get(
+                "metadata", {}
+            ).get("lc_agent_name"):
+                # 子代理事件：deepagents 子代理经 with_config 注入
+                # lc_agent_name（_compile_spec 约定，subagents.py:437）——
+                # 子图链事件携带该 metadata 即子代理启停。
+                # ⚠️ 待浏览器实测校准：Fake 模型不出工具调用，子代理不触发，
+                # 事件形态（字段名/嵌套深度）需真实链路验证
+                seq += 1
+                yield {
+                    "type": "subagent",
+                    "name": evt["metadata"]["lc_agent_name"],
+                    "status": "started" if event_type == "on_chain_start" else "completed",
+                    "depth": 0,
+                    "id": seq,
+                }
+
+
+def _truncate(text: str, limit: int = 300) -> str:
+    """事件字段截断（密钥纪律 + 防上下文膨胀；同 ToolAudit 脱敏口径）。"""
+    if len(text) > limit:
+        return text[:limit] + "…"
+    return text
+
+
 async def stream_agent_tokens(
     agent,
     messages: list[BaseMessage],
     context: ChatContext | None = None,
     checkpoint_id: str | None = None,
 ) -> AsyncIterator[str]:
-    """流式执行 Agent，产出对话文本增量。
+    """流式执行 Agent，产出对话文本增量（v2 兼容层，EVENT_STREAM_V3=false 回退）。
 
     实现：astream_events v2 监听 on_chat_model_stream，只取文本 chunk
     （工具调用 chunk 的 text 为空，天然过滤；deepagents 内部 todo 工具

@@ -25,11 +25,24 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, System
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from src.agent.main_agent import ChatContext, build_agent, stream_agent_tokens
+from src.agent.main_agent import (
+    ChatContext,
+    build_agent,
+    stream_agent_events,
+    stream_agent_tokens,
+)
 from src.core import db as core_db
+from src.core.config import settings
 from src.core.errors import RetryableError
 from src.core.model_registry import get_registry
-from src.schemas.events import DoneEvent, ErrorEvent, StartEvent, TokenEvent
+from src.schemas.events import (
+    DoneEvent,
+    ErrorEvent,
+    StartEvent,
+    SubagentEvent,
+    TokenEvent,
+    ToolCallEvent,
+)
 from src.schemas.message import Message
 
 logger = logging.getLogger(__name__)
@@ -283,14 +296,32 @@ async def _event_stream(
             agent = build_agent(thread_id=session_id)  # 会话级缓存（v2.0：文件根绑会话）
             chat_context = ChatContext(model_id=req.model_id, mode=req.mode, session_id=session_id)
             full_text_parts: list[str] = []
-            async for text in stream_agent_tokens(
-                agent,
-                lc_messages,
-                context=chat_context,
-                checkpoint_id=req.resume_run_id,  # resume 模式：从精确快照继续
-            ):
-                full_text_parts.append(text)
-                yield {"data": TokenEvent(text=text).model_dump_json()}
+            if settings.event_stream_v3:
+                # 事件流增强（2026-08-05 引入方案 P0）：token + tool_call + subagent
+                # 三类事件分发（契约 v3 定稿事件落地）；token 仍逐 chunk（打字机效果）
+                async for event in stream_agent_events(
+                    agent,
+                    lc_messages,
+                    context=chat_context,
+                    checkpoint_id=req.resume_run_id,
+                ):
+                    if event["type"] == "token":
+                        full_text_parts.append(event["text"])
+                        yield {"data": TokenEvent(text=event["text"]).model_dump_json()}
+                    elif event["type"] == "tool_call":
+                        yield {"data": ToolCallEvent(**event).model_dump_json()}
+                    elif event["type"] == "subagent":
+                        yield {"data": SubagentEvent(**event).model_dump_json()}
+            else:
+                # v2 现状：仅 token 流（默认，零行为变化）
+                async for text in stream_agent_tokens(
+                    agent,
+                    lc_messages,
+                    context=chat_context,
+                    checkpoint_id=req.resume_run_id,  # resume 模式：从精确快照继续
+                ):
+                    full_text_parts.append(text)
+                    yield {"data": TokenEvent(text=text).model_dump_json()}
         except Exception as exc:  # noqa: BLE001 - 流内错误统一转 error 事件
             yield _build_error_event(is_resume, exc)
             return

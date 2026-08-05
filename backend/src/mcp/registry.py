@@ -11,12 +11,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from src.mcp.tools.sandbox_tool import run_code_in_sandbox
+from src.mcp.tools.sandbox_tool import (
+    download_sandbox_file,
+    run_code_in_sandbox,
+    run_command_in_sandbox,
+    upload_workspace_file,
+)
 from src.mcp.tools.search import internet_search
 
 TOOL_REGISTRY: dict[str, Callable[..., str]] = {
     "internet_search": internet_search,
     "run_code_in_sandbox": run_code_in_sandbox,
+    "run_command_in_sandbox": run_command_in_sandbox,
+    "upload_workspace_file": upload_workspace_file,
+    "download_sandbox_file": download_sandbox_file,
 }
 
 
