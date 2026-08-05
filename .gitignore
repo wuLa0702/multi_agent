@@ -40,7 +40,6 @@ Thumbs.db
 # 浏览器实测产物（page 快照 / console log / 截图）
 .playwright-mcp/
 # 静态技能目录（paths.py get_static_skills_dir 自动重建 README）
-skill-resources/
 
 # ── 前端 ──
 frontend/node_modules/

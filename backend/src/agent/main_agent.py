@@ -53,6 +53,7 @@ from src.mcp.tools.sandbox_tool import (
     run_command_in_sandbox,
     upload_workspace_file,
 )
+from src.mcp.tools.skill_tool import run_skill_script
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +319,8 @@ def _build_agent(thread_id: str):
         run_command_in_sandbox,
         upload_workspace_file,
         download_sandbox_file,
+        # 技能域（Skill 体系 P1）：技能脚本执行闭环（读文件→沙箱→执行一步封装）
+        run_skill_script,
     ]
     mcp_tools = get_mcp_client_manager().get_tools()
     model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用

@@ -18,6 +18,7 @@ from src.mcp.tools.sandbox_tool import (
     upload_workspace_file,
 )
 from src.mcp.tools.search import internet_search
+from src.mcp.tools.skill_tool import run_skill_script
 
 TOOL_REGISTRY: dict[str, Callable[..., str]] = {
     "internet_search": internet_search,
@@ -25,6 +26,7 @@ TOOL_REGISTRY: dict[str, Callable[..., str]] = {
     "run_command_in_sandbox": run_command_in_sandbox,
     "upload_workspace_file": upload_workspace_file,
     "download_sandbox_file": download_sandbox_file,
+    "run_skill_script": run_skill_script,
 }
 
 
