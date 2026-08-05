@@ -5,8 +5,9 @@
 - 会话列表：按 updated_at 倒序（最近活跃在前）
 - 消息分页：cursor 分页（limit ≤200 + before_id），响应 items 升序 + next_before_id/has_more
 - 错误统一 ErrorResponse（契约 §3.3），404 用 SESSION_NOT_FOUND（契约 §7）
+- DELETE 联动（v3.0）：缓存失效 + 工作区清理（api → agent 单向，不反向）
 
-依赖单向：api → core/db + db/repository，不反向。
+依赖单向：api → {agent, core/db, db/repository}，不反向。
 """
 
 from __future__ import annotations
@@ -16,7 +17,9 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from src.agent import main_agent
 from src.core import db as core_db
+from src.core.backend import cleanup_workspace
 from src.db import repository as repo
 from src.schemas.message import Message
 from src.schemas.session import Session
@@ -172,6 +175,11 @@ async def update_session_title(
 async def delete_session(session_id: str) -> DeleteResponse:
     """删除会话（消息由外键 ON DELETE CASCADE 级联清理）。
 
+    v3.0 联动（深化方案 §2.4，P0）：删库成功后——
+    1. rebuild_agent(session_id)：失效会话缓存图（LRU 空间释放，下次请求重建）
+    2. cleanup_workspace(session_id, 0)：工作区文件全量清理（防草稿/临时代码堆积）
+    两动作均幂等；会话不存在时（404 已拦）不执行。
+
     Args:
         session_id: 会话 ID
 
@@ -185,6 +193,8 @@ async def delete_session(session_id: str) -> DeleteResponse:
     try:
         if not await repo.delete_session(conn, session_id):
             _raise_404(session_id)
+        main_agent.rebuild_agent(session_id)
+        cleanup_workspace(session_id, older_than_days=0)
         return DeleteResponse()
     finally:
         await conn.close()

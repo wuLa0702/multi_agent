@@ -127,5 +127,21 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
         logger.handlers.clear()
         logger.propagate = True
 
+    # 审计 logger（2026-08-04 深化 v3）：统一文件访问审计 → logs/file_access_audit.jsonl
+    # formatter 直接透传 %(message)s——业务侧已构造完整扁平 JSON 行（core/backend.py _audit），
+    # 不再二次包字段（修正 #2：JSON 套字符串问题）。propagate=False：审计独立成流，不混入主日志。
+    audit = logging.getLogger("audit")
+    if not audit.handlers:
+        audit_handler = SizeTimedRotatingFileHandler(
+            log_dir / "file_access_audit.jsonl",
+            max_bytes=MAX_BYTES,
+            backup_count=BACKUP_COUNT,
+            encoding=LOG_ENCODING,
+        )
+        audit_handler.setFormatter(logging.Formatter("%(message)s"))
+        audit.setLevel(logging.INFO)
+        audit.addHandler(audit_handler)
+        audit.propagate = False
+
     root._multilog_configured = True  # type: ignore[attr-defined]
     return root

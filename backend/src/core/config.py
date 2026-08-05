@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     # True = 内存临时（StateBackend，dev 测试兼容"重启清空"）；False = 磁盘持久（prod 默认）
     memory_workspace: bool = False
 
+    # ── 安全分层（2026-08-04 深化 v3）──
+    # 策略层总开关：False = PolicyBackend 透明直通（测试隔离/性能对比/排查）
+    backend_policy_enabled: bool = True
+    # 子代理隔离：False(默认) = P1 权限覆盖（原生）；True = P2 编译子代理独立内存 backend
+    subagent_isolation: bool = False
+
     @property
     def is_prod(self) -> bool:
         """是否生产环境。"""
