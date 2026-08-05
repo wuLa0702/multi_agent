@@ -94,7 +94,7 @@ sandbox_adapter = OpenSandboxAdapter()
 # Checkpointer is REQUIRED for human-in-the-loop
 checkpointer = MemorySaver()
 # FilesystemBackend 工作目录（demo 用，路径自适应 dev data/）：
-# backend/data/agent_demo_ws——agent 的写文件/读文件都限定在此目录，不碰项目其他文件
+# 项目根 data/agent_demo_ws（parents[2]=项目根，路径自适应）——agent 的写文件/读文件都限定在此目录，不碰项目其他文件
 root_dir = Path(__file__).resolve().parents[2] / "data" / "agent_demo_ws"
 root_dir.mkdir(parents=True, exist_ok=True)
 (root_dir / "skills").mkdir(exist_ok=True)
