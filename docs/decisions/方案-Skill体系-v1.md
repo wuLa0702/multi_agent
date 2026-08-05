@@ -427,8 +427,9 @@ def get_static_skills_dir() -> Path:
     base = (
         Path(env)
         if env
-        else Path(__file__).resolve().parents[1] / "assets" / "skills" / "builtin"
-        # parents[1] = backend（src/core → backend/src → backend）
+        else Path(__file__).resolve().parents[2] / "assets" / "skills" / "builtin"
+        # parents[2] = backend（实测校准 2026-08-05：本文件在 src/core/ 下，
+        # parents[0]=src/core, parents[1]=src, parents[2]=backend）——测试断言防回归
     )
     base.mkdir(parents=True, exist_ok=True)
     if not (base / "README.md").exists():
@@ -438,9 +439,9 @@ def get_static_skills_dir() -> Path:
     return base
 ```
 
-> ⚠️ 路径计算核对：现实现为 `parents[3]`（项目根）。方案 B 目标为
-> `backend/assets/skills/builtin/` → 应为 `parents[1] / "assets" / "skills" / "builtin"`。
-> 实施时以实际目录树为准（paths.py 单测断言路径）。
+> 🔧 路径计算已实测校准（2026-08-05）：`parents[2]` = backend（非 parents[1]——
+> 本文件在 src/core/ 下多一层）；`test_static_skills_default_path_is_builtin`
+> 断言默认路径，防层级回归（实施时抓到 parents 算错并修复）。
 
 ### 8.2 技能模板生成器（`src/skills/templates.py`，新建）
 
