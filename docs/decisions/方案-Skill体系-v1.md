@@ -5,6 +5,7 @@
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v1.1 | 2026-08-05 | 评审 2 问题修复：§8.2 `create_skill_from_template` 改 **shutil.copytree 整体复制**（含子目录示例文件，非空壳；排除 __pycache__ 等）；§4.5 生命周期补 **run_skill_script 封装工具**（读文件→送沙箱→执行打包成一步，消除"agent 自觉"依赖）；§8 新增 run_skill_script 核心代码；§7.2 风险清单同步 |
 > | v1 | 2026-08-05 | 合并版：由《方案-Skills目录体系重构-v1》+《方案-Skill能力深化-v1》合并重组——§2 现状盘点（四层目录 + 能力差距 + 已清理项）；§3 目录体系设计（方案 B：backend/assets/skills/builtin/）；§4 能力深化设计（多文件技能/模板/渐进披露/allowed_tools/生命周期）；§5 完整技能示例（research-report）；§7 优先级合并（P0 目录迁移+规范+模板 / P1 installer 多文件+示例 / P2 联动+版本）；§8 核心代码合并；附录 frontmatter 字段表。原两文件已删除（git 历史可查） |
 
 > **目录**：
@@ -448,6 +449,9 @@ def get_static_skills_dir() -> Path:
 
 模板源：backend/assets/skills/builtin/template/；
 生成目标：data/skills/skill_md/<name>/（市场技能）或 builtin/（内置技能）。
+
+⚠️ 评审问题 1 修复（v1.1）：copytree 整体复制模板目录（含 scripts/references/
+assets 的示例文件），非"只建空子目录 + 只复制 SKILL.md"的空壳。
 """
 
 from __future__ import annotations
@@ -457,18 +461,18 @@ from pathlib import Path
 
 from src.core.paths import get_skill_md_dir
 
-# 标准技能目录骨架（多文件规范 §4.1）
-_SUBDIRS = ("scripts", "references", "assets")
+# 模板目录中排除的文件（运行时产物/缓存）
+_EXCLUDE_DIRS = {"__pycache__"}
 
 
 def create_skill_from_template(
     name: str, template_dir: Path, *, target: Path | None = None
 ) -> Path:
-    """从模板复制生成技能目录。
+    """从模板整体复制生成技能目录（copytree，含子目录示例文件）。
 
     Args:
         name: 技能名（snake_case，目录名）
-        template_dir: 模板目录（含 SKILL.md + 子目录骨架）
+        template_dir: 模板目录（SKILL.md + scripts/references/assets 含示例）
         target: 生成目标（缺省 data/skills/skill_md/<name>）
 
     Returns:
@@ -480,10 +484,11 @@ def create_skill_from_template(
     target = target or get_skill_md_dir() / name
     if target.exists():
         raise FileExistsError(f"技能目录已存在：{target}——不覆盖（SkillMarket 升级请走安装器）")
-    target.mkdir(parents=True)
-    for sub in _SUBDIRS:
-        (target / sub).mkdir(exist_ok=True)
-    shutil.copy2(template_dir / "SKILL.md", target / "SKILL.md")
+    shutil.copytree(
+        template_dir,
+        target,
+        ignore=shutil.ignore_patterns(*_EXCLUDE_DIRS),
+    )
     return target
 
 
@@ -555,7 +560,76 @@ def install_skill_directory(
     return str(target)
 ```
 
-### 8.4 `.gitignore` 增量
+### 8.4 `run_skill_script` 工具（评审问题 2 修复：scripts 执行闭环工具层强制）
+
+```python
+"""（src/mcp/tools/sandbox_tool.py 或新 tools/skill_tool.py：scripts 执行封装）
+
+评审问题 2（v1.1）：scripts/ 执行闭环不能只靠 SKILL.md 文字指引 agent 自觉——
+封装 run_skill_script 工具，把「读技能脚本 → 送沙箱 → 执行」打包成一步，
+agent 直接调用，减少出错概率（绕开工具 = 无法执行，工具层强制闭环）。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from langchain_core.runnables import RunnableConfig
+
+from src.core.config import settings
+from src.core.paths import get_skill_md_dir
+from src.mcp.tools.sandbox_tool import (
+    _thread_id_from,
+    sandbox_adapter,
+    sandbox_pool,
+)
+
+# 技能内可执行目录（防执行 assets/ 模板等非脚本文件）
+_SCRIPTS_SUBDIR = "scripts"
+
+
+def run_skill_script(
+    skill_name: str,
+    script_name: str,
+    *,
+    args: str = "",
+    config: RunnableConfig | None = None,
+) -> str:
+    """执行技能脚本（读文件 → 沙箱执行，一步封装）。
+
+    Args:
+        skill_name: 技能名（data/skills/skill_md/<skill_name>/）
+        script_name: scripts/ 下的脚本文件名（禁 ../ 与绝对路径）
+        args: 脚本命令行参数（如 "sample_data.json"）
+        config: 执行配置（框架注入，取 thread_id 定位会话沙箱）
+
+    Returns:
+        脚本 stdout（截断）；校验失败/资源已满时返回错误提示字符串
+    """
+    if not settings.sandbox_url:
+        return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
+    # 路径校验（00-security）：禁 ../ 与绝对路径
+    parts = script_name.replace("\\", "/").split("/")
+    if script_name.startswith("/") or any(p == ".." for p in parts):
+        return "技能脚本路径不合法：仅允许 scripts/ 内相对文件名。"
+    script_file = get_skill_md_dir() / skill_name / _SCRIPTS_SUBDIR / script_name
+    if not script_file.is_file():
+        return f"技能脚本不存在：{skill_name}/scripts/{script_name}（可用 ls /skills/market/ 查看技能目录）。"
+    try:
+        content = script_file.read_text(encoding="utf-8")
+        sandbox = sandbox_pool.get_sandbox(_thread_id_from(config))
+        return sandbox_adapter.run_script(
+            sandbox, {script_name: content}, f"{script_name} {args}".strip()
+        )
+    except Exception as e:  # noqa: BLE001 —— 工具失败降级为错误信息，不冒泡中断 run
+        return f"技能脚本执行失败（{type(e).__name__}）：{e}。请勿重试沙箱。"
+```
+
+- 注册：`mcp/registry.py` 加 `"run_skill_script"`；ToolAuditMiddleware 敏感名单加
+  `run_skill_script`（记 skill_name/script_name 参数）
+- 依赖：sandbox 池（沙箱能力方案 P0）+ skills 目录（本方案 P0）——两者就绪后接线
+
+### 8.5 `.gitignore` 增量
 
 ```gitignore
 # 移除（原 skill-resources/ 忽略行——固定资产必须入库）：
@@ -564,7 +638,7 @@ def install_skill_directory(
 # 确认 assets/ 不被忽略（若前端 assets 规则存在需精确化，勿用裸 assets/ 忽略）
 ```
 
-### 8.5 测试设计（增量）
+### 8.6 测试设计（增量）
 
 | 用例 | 断言 |
 |------|------|
