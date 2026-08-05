@@ -39,7 +39,7 @@ from langchain_core.messages import BaseMessage
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.subagents.loader import load_subagents
 from src.core.backend import create_backend
-from src.core.paths import get_checkpointer_path, get_skill_md_dir
+from src.core.paths import get_checkpointer_path, get_skill_md_dir, get_store_path
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
 from src.mcp.tools.sandbox_tool import run_code_in_sandbox
@@ -150,9 +150,13 @@ async def init_checkpointer(db_path=None) -> None:
     import aiosqlite
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+    # ⚠️ 修复（2026-08-04 浏览器实测发现）：不能用 hasattr(__truediv__) 判断
+    # 目录——Path 文件也有 __truediv__，会把 get_checkpointer_path() 的完整
+    # 文件路径误拼成 .../checkpoints.db/checkpoints.db（unable to open）。
+    # 正确判断：is_dir()（仅存在的目录为 True，如测试传 tmp_path）。
     target = db_path if db_path is not None else get_checkpointer_path()
-    if hasattr(target, "__truediv__"):  # 传目录（tmp_path）→ 拼 checkpoints.db
-        target = target / "checkpoints.db"
+    if db_path is not None and db_path.is_dir():
+        target = db_path / "checkpoints.db"
     conn = await aiosqlite.connect(str(target))
     await conn.execute("PRAGMA journal_mode=WAL")
     await conn.execute("PRAGMA busy_timeout=5000")
@@ -195,8 +199,8 @@ async def init_store(db_path=None) -> None:
     from langgraph.store.sqlite.aio import AsyncSqliteStore
 
     target = db_path if db_path is not None else get_store_path()
-    if hasattr(target, "is_dir") and target.is_dir():  # 传目录（tmp_path）→ 拼 store.db
-        target = target / "store.db"
+    if db_path is not None and db_path.is_dir():  # 传目录（tmp_path）→ 拼 store.db
+        target = db_path / "store.db"
     # isolation_level=None：autocommit 连接——AsyncSqliteStore 内部自行管理事务，
     # 默认 isolation 会触发 "cannot start a transaction within a transaction"
     conn = await aiosqlite.connect(str(target), isolation_level=None)
