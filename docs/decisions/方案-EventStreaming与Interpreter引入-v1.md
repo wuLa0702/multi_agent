@@ -5,6 +5,7 @@
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v1.2 | 2026-08-05 | 评审 6 项修复：§7.1 **三投影串行消费改 asyncio 并发交错**（官方"Consume concurrently"形态：gather + 队列合并，按实际发生顺序输出——评审问题 1）；§7.1 子代理嵌套改**递归 `_yield_subagents`（任意深度）**（评审问题 2.1）；§7.4 中间件顺序补**验证与调整预案**（CodeInterpreterMiddleware 与 ToolAuditMiddleware 谁外层，实施时实测 eval 审计）；（评审问题 2.2）；§6.2 风险补 **v3 token 粒度实测**（message 粒度 vs chunk 粒度，打字机效果风险，评审问题 2.3）；§7.2 SSE 事件模型补 **id 字段**（前端去重排序，小优化 2）；§7.5 PTC 白名单补**配置校验**（防误配文件/沙箱工具，小优化 1） |
 > | v1.1 | 2026-08-05 | §7 新增**完整核心代码章节**（文档规范 v4 新规则：设计方案必含核心代码）——事件分发器全量 / SSE 事件模型 / _event_stream 增量 / 解释器挂载 / config 字段；§3.1 代码片段标注指向 §7；§6.2 风险清单补 1 条（v3 投影 API 实测前置已在实施风险，补"核心代码以实测为准"） |
 > | v1 | 2026-08-05 | 初版：基于版本可行性核实的引入方案——§2 现状盘点与版本核实（v3 在 langchain_core 1.3.14 支持且源码标注 beta；quickjs 可装）；§3 设计（event-streaming v3 迁移 + SSE 契约补齐 + interpreters + 两者结合 + 安全边界）；§4 兼容回退；§5 测试；§6 优先级；§7 风险自检；附录版本核实记录 |
 
@@ -260,6 +261,14 @@ interpreter_ptc: str = "internet_search"  # PTC 白名单（逗号分隔，默�
       投影消费形态需实施第一步最小脚本实测——**先写 10 行冒烟脚本验证 v3 投影
       可用，再动 stream_agent_tokens**（不猜 API）；§7 核心代码为设计形态，
       **以实测校准为准**（投影字段名/协程形态可能调整）
+- [ ] **v3 token 粒度实测（评审问题 2.3）**：`stream.messages` 可能是 message 粒度
+      （整条消息）而非 chunk 粒度（逐 token）——若是 message 粒度，前端打字机
+      效果会退化。实施第一步实测粒度；若 v3 无 chunk 级 token 流，则 token 投影
+      仍走 v2（混合消费：v2 出 token + v3 出 tool_call/subagent），开关语义相应调整
+- [ ] **中间件顺序与 eval 审计（评审问题 2.2）**：CodeInterpreterMiddleware 追加在
+      列表尾部（内层），eval 调用是否被外层 ToolAuditMiddleware 捕获需实施时
+      实测（audit_records 断言）；捕获不到 → 将 CodeInterpreterMiddleware 移到
+      ToolAuditMiddleware **前面**（更外层，langchain 组合"先定义者最外层"）
 - [ ] **v3 beta**：langchain_core 源码标注 beta（base.py:1549）——开关默认关、
       v2 保留，beta 升级兼容面被开关隔离
 - [ ] **PTC 审批绕行（红线）**：PTC 白名单只允许只读工具（internet_search）；
@@ -294,7 +303,29 @@ interpreter_ptc: str = "internet_search"  # PTC 白名单（逗号分隔，默�
 ```python
 """（main_agent.py 增量：替换 stream_agent_tokens 的内部实现，签名兼容扩展）"""
 
+import asyncio
 from collections.abc import AsyncIterator
+
+
+async def _yield_subagents(stream, depth: int = 0) -> AsyncIterator[dict]:
+    """递归产出子代理事件（评审问题 2.1：任意深度嵌套，非一层）。
+
+    Args:
+        stream: 子代理投影句柄（stream.subagents 或 subagent.subagents）
+        depth: 嵌套深度（事件带 depth 字段，前端可渲染树形层级）
+
+    Yields:
+        {"type": "subagent", "name", "status", "depth"} 事件
+    """
+    async for subagent in stream:
+        yield {
+            "type": "subagent",
+            "name": subagent.name,
+            "status": subagent.status,
+            "depth": depth,
+        }
+        async for nested in _yield_subagents(subagent.subagents, depth + 1):
+            yield nested
 
 
 async def stream_agent_events(
@@ -303,22 +334,19 @@ async def stream_agent_events(
     context: ChatContext | None = None,
     checkpoint_id: str | None = None,
 ) -> AsyncIterator[dict]:
-    """v3 事件流（学习点：声明式投影消费——按投影取数，不手写事件过滤）。
+    """v3 事件流（学习点：声明式投影消费 + 并发交错）。
+
+    评审问题 1 修复：三投影**并发消费 + 队列合并**——流式事件本质交错
+    （token 流到一半触发工具调用、工具里再有子代理、子代理里又出 token），
+    串行 async for 会打乱时序且破坏打字机效果。官方文档 "Consume
+    concurrently" 节即 asyncio.gather 形态（投影是独立句柄，可并发）。
 
     产出三类事件（SSE 协议 v3 对齐）：
-      {"type": "token",     "text": ...}
+      {"type": "token",     "text": ..., "id": 序号}
       {"type": "tool_call", "tool": ..., "input": ..., "status": "running|completed|error",
-       "output": ...}
-      {"type": "subagent",  "name": ..., "status": "started|completed|failed"}
-
-    Args:
-        agent: build_agent 的产物
-        messages: 消息列表（resume 模式传空，checkpoint 接管）
-        context: 请求级上下文（session_id → thread_id config 封装，同现状）
-        checkpoint_id: resume 模式从精确快照继续
-
-    Yields:
-        事件 dict（SSE 层据此分发）
+       "output": ..., "id": 序号}
+      {"type": "subagent",  "name": ..., "status": "started|completed|failed",
+       "depth": 嵌套深度, "id": 序号}
     """
     config = None
     if context is not None and context.session_id:
@@ -330,24 +358,54 @@ async def stream_agent_events(
         stream = await agent.astream_events(
             {"messages": messages}, version="v3", context=context, config=config
         )
-        # 投影消费：消息 / 工具调用 / 子代理（互相独立，交错由投影句柄隔离）
-        async for message in stream.messages:
-            text = getattr(message, "text", None)
-            if text:
-                yield {"type": "token", "text": text}
-        async for call in stream.tool_calls:
-            yield {
-                "type": "tool_call",
-                "tool": call.tool_name,
-                "input": str(call.input)[:300],   # 截断（密钥纪律，同 ToolAudit）
-                "status": "completed" if call.completed else "error" if call.error else "running",
-                "output": call.output if call.completed else None,
-            }
-        async for subagent in stream.subagents:
-            yield {"type": "subagent", "name": subagent.name, "status": subagent.status}
-            # 嵌套子代理：subagent.subagents 递归（学习点：树形可观测）
-            async for nested in subagent.subagents:
-                yield {"type": "subagent", "name": nested.name, "status": nested.status}
+        queue: asyncio.Queue = asyncio.Queue()
+        remaining = 3
+
+        async def _drain(agen, tag: str) -> None:
+            """单投影消费：事件入队（tag 标记来源投影）。"""
+            nonlocal remaining
+            try:
+                async for item in agen:
+                    await queue.put((tag, item))
+            finally:
+                remaining -= 1
+                if remaining == 0:
+                    await queue.put(None)  # 三投影全部耗尽 → 通知主循环结束
+
+        tasks = [
+            asyncio.create_task(_drain(stream.messages, "token")),
+            asyncio.create_task(_drain(stream.tool_calls, "tool_call")),
+            asyncio.create_task(_drain(_yield_subagents(stream.subagents), "subagent")),
+        ]
+        seq = 0
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                tag, payload = item
+                seq += 1
+                if tag == "token":
+                    text = getattr(payload, "text", None)
+                    if text:
+                        yield {"type": "token", "text": text, "id": seq}
+                elif tag == "tool_call":
+                    yield {
+                        "type": "tool_call",
+                        "tool": payload.tool_name,
+                        "input": str(payload.input)[:300],  # 截断（密钥纪律，同 ToolAudit）
+                        "status": (
+                            "completed" if payload.completed
+                            else "error" if payload.error else "running"
+                        ),
+                        "output": payload.output if getattr(payload, "completed", False) else None,
+                        "id": seq,
+                    }
+                else:
+                    yield {**payload, "id": seq}  # subagent 事件（递归已展平）
+        finally:
+            for task in tasks:
+                task.cancel()
 
 
 async def stream_agent_tokens(agent, messages, context=None, checkpoint_id=None):
@@ -372,6 +430,7 @@ class ToolCallEvent(SSEEvent):
     status: str        # running / completed / error
     input: str         # 入参截断 ≤300（密钥纪律，同 ToolAudit 脱敏）
     output: str | None = None
+    id: int            # 事件序号（小优化 2：前端去重/排序；由分发器自增）
 
 
 class SubagentEvent(SSEEvent):
@@ -380,6 +439,8 @@ class SubagentEvent(SSEEvent):
     type: str = "subagent"
     name: str          # 子代理名（search_agent）
     status: str        # started / completed / failed
+    depth: int = 0     # 嵌套深度（递归展平后前端可渲染树形层级）
+    id: int            # 事件序号
 ```
 
 ### 7.3 `chat.py`：`_event_stream` 增量（P1）
@@ -426,10 +487,38 @@ from langchain_quickjs import CodeInterpreterMiddleware
                     timeout=5.0,                     # 单次 eval 5s
                     max_result_chars=4000,
                     # 🔴 PTC 只读白名单：绝不含文件/沙箱工具（PTC 绕 interrupt_on 审批）
-                    ptc=[t.strip() for t in settings.interpreter_ptc.split(",") if t.strip()],
+                    ptc=_parse_ptc_whitelist(settings.interpreter_ptc),
                     mode="turn",                     # 轮内持久（学习：turn/call 对比）
                 )
             )
+
+
+def _parse_ptc_whitelist(raw: str) -> list[str]:
+    """PTC 白名单解析 + 配置校验（小优化 1：防误配把文件/沙箱工具加进去）。
+
+    只允许 registry 中的只读工具（internet_search）；配置了文件/沙箱工具
+    名 → 直接抛错（fail fast，配置错误尽早暴露，不让 agent 带病启动）。
+
+    Args:
+        raw: 逗号分隔的工具名（settings.interpreter_ptc）
+
+    Returns:
+        白名单工具名列表
+
+    Raises:
+        ValueError: 配置包含非只读工具（write_file/run_code_in_sandbox 等）
+    """
+    names = [t.strip() for t in raw.split(",") if t.strip()]
+    blocked = {"write_file", "edit_file", "delete", "upload_files",
+               "run_code_in_sandbox", "run_command_in_sandbox",
+               "upload_workspace_file", "download_sandbox_file"}
+    for name in names:
+        if name in blocked:
+            raise ValueError(
+                f"interpreter_ptc 禁止配置非只读工具：{name}（PTC 调用绕过 "
+                "interrupt_on 审批，只允许只读工具，如 internet_search）"
+            )
+    return names
         return create_deep_agent(
             ...,
             middleware=middleware,
