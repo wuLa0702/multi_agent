@@ -92,6 +92,12 @@ class Settings(BaseSettings):
     # 快照模板 ID（P2）：依赖预装后 create_snapshot 生成，配置后起沙箱跳过拉镜像/装依赖
     sandbox_snapshot_id: str = ""
 
+    # ── 事件流增强（2026-08-05 引入方案，学习 demo；默认关回退现状）──
+    # True = token 走 v2 chunk 流 + 多事件分发（tool_call/subagent 事件）
+    # False = 现状 v2 token-only 流。实测结论：v3 messages 投影为 message 粒度
+    # （打字机效果退化）且本模型栈无 content-block 协议——v3 仅作学习脚本。
+    event_stream_v3: bool = False
+
     # ── 记忆/存储 ──
     redis_url: str = "redis://localhost:6379/0"
     db_path: str = "./data/wiki.db"

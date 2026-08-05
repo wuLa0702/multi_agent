@@ -350,13 +350,112 @@ def build_agent(model: BaseChatModel | None = None, thread_id: str = "default"):
     return get_agent(thread_id)
 
 
+async def stream_agent_events(
+    agent,
+    messages: list[BaseMessage],
+    context: ChatContext | None = None,
+    checkpoint_id: str | None = None,
+) -> AsyncIterator[dict]:
+    """事件流（引入方案 P0 校准版）：token + tool_call + subagent 三类事件。
+
+    ⚠️ 实测校准（2026-08-05，方案 §6.2 风险项 2.3）：v3 messages 投影为
+    message 粒度（整条消息，非逐 chunk），且本模型栈（OpenAI 兼容 adapter）
+    无 content-block 协议支持——v3 直接出 token 会摧毁打字机效果。
+    校准：单次 v2 事件流多事件分发——token 走 on_chat_model_stream（逐 chunk），
+    tool_call 走 on_tool_start/on_tool_end，subagent 走 stream_subgraphs 子图链。
+    v3 声明式投影保留为 examples/ 学习脚本（不接生产链路）。
+
+    产出事件（SSE 协议 v3 对齐）：
+      {"type": "token",     "text": ..., "id": 序号}
+      {"type": "tool_call", "tool": ..., "status": "running|completed|error",
+       "input": ..., "output": ..., "id": 序号}
+      {"type": "subagent",  "name": ..., "status": "started|completed|failed",
+       "depth": 0, "id": 序号}
+
+    Args:
+        agent: build_agent 的产物
+        messages: LangChain 消息列表（含历史）；resume 模式传空列表
+        context: 请求级上下文（session_id → thread_id config 封装）
+        checkpoint_id: resume 模式从精确快照继续
+
+    Yields:
+        事件 dict（SSE 层据此分发）
+
+    Raises:
+        Exception: checkpoint_id 无效/不属于该 thread（API 层转 RESUME_NOT_FOUND）
+    """
+    config = None
+    if context is not None and context.session_id:
+        config = {"configurable": {"thread_id": context.session_id}}
+        if checkpoint_id:
+            config["configurable"]["checkpoint_id"] = checkpoint_id
+    # stream_subgraphs：子代理/子图事件（v3 subagents 投影的 v2 等价物）
+    config = {**(config or {}), "stream_subgraphs": True}
+
+    seq = 0
+    async with _stream_semaphore:  # 并发限流：SQLite 写锁缓解
+        async for evt in agent.astream_events(
+            {"messages": messages}, version="v2", context=context, config=config
+        ):
+            event_type = evt.get("event")
+            if event_type == "on_chat_model_stream":
+                chunk = evt.get("data", {}).get("chunk")
+                text = getattr(chunk, "text", None) if chunk is not None else None
+                if text:
+                    seq += 1
+                    yield {"type": "token", "text": text, "id": seq}
+            elif event_type == "on_tool_start":
+                seq += 1
+                yield {
+                    "type": "tool_call",
+                    "tool": evt.get("name", ""),
+                    "status": "running",
+                    "input": _truncate(str(evt.get("data", {}).get("input", ""))),
+                    "output": None,
+                    "id": seq,
+                }
+            elif event_type == "on_tool_end":
+                seq += 1
+                yield {
+                    "type": "tool_call",
+                    "tool": evt.get("name", ""),
+                    "status": "completed",
+                    "input": "",
+                    "output": _truncate(str(evt.get("data", {}).get("output", ""))),
+                    "id": seq,
+                }
+            elif event_type in ("on_chain_start", "on_chain_end") and evt.get(
+                "metadata", {}
+            ).get("lc_agent_name"):
+                # 子代理事件：deepagents 子代理经 with_config 注入
+                # lc_agent_name（_compile_spec 约定，subagents.py:437）——
+                # 子图链事件携带该 metadata 即子代理启停。
+                # ⚠️ 待浏览器实测校准：Fake 模型不出工具调用，子代理不触发，
+                # 事件形态（字段名/嵌套深度）需真实链路验证
+                seq += 1
+                yield {
+                    "type": "subagent",
+                    "name": evt["metadata"]["lc_agent_name"],
+                    "status": "started" if event_type == "on_chain_start" else "completed",
+                    "depth": 0,
+                    "id": seq,
+                }
+
+
+def _truncate(text: str, limit: int = 300) -> str:
+    """事件字段截断（密钥纪律 + 防上下文膨胀；同 ToolAudit 脱敏口径）。"""
+    if len(text) > limit:
+        return text[:limit] + "…"
+    return text
+
+
 async def stream_agent_tokens(
     agent,
     messages: list[BaseMessage],
     context: ChatContext | None = None,
     checkpoint_id: str | None = None,
 ) -> AsyncIterator[str]:
-    """流式执行 Agent，产出对话文本增量。
+    """流式执行 Agent，产出对话文本增量（v2 兼容层，EVENT_STREAM_V3=false 回退）。
 
     实现：astream_events v2 监听 on_chat_model_stream，只取文本 chunk
     （工具调用 chunk 的 text 为空，天然过滤；deepagents 内部 todo 工具
