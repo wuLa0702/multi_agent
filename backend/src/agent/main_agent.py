@@ -27,7 +27,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -37,12 +39,17 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
+from src.agent.middlewares.tool_audit import ToolAuditMiddleware
 from src.agent.subagents.loader import load_subagents
 from src.core.backend import create_backend
+from src.core.config import settings
 from src.core.paths import get_checkpointer_path, get_skill_md_dir, get_store_path
+from src.core.permissions import build_main_permissions
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
 from src.mcp.tools.sandbox_tool import run_code_in_sandbox
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = """你是一名资深研究员，负责开展深入调研，并输出一份精炼的研究报告。
 
@@ -115,11 +122,15 @@ async def _configurable_model(request, handler):
     return await handler(request.override(model=model))
 
 
-# 会话级 Agent 缓存（v2.0 设计：CompositeBackend 会话隔离）：
+# 会话级 Agent 缓存（v2.0 设计：CompositeBackend 会话隔离 + v3 有界 LRU）：
 # 每会话（thread_id）一个编译图 + 独立 backend 文件根——废弃全局单例
-# （多会话文件混存是 v1 硬缺陷，见 docs/decisions/CompositeBackend文件存储-设计-v2.md §2.1）
-_agents: dict[str, object] = {}
+# （多会话文件混存是 v1 硬缺陷，见 docs/decisions/CompositeBackend文件存储-设计-v3.md §2.1）
+# v3.0 治理（深化方案 §2.3）：OrderedDict 有界 LRU——超限逐出最久未用会话，
+# 只逐内存图不删磁盘文件（工作区文件由 DELETE 会话联动清理）；逐出经 popitem(last=False)。
+_agents: "OrderedDict[str, object]" = OrderedDict()
 _agents_lock = threading.Lock()  # 双重检查锁（会话维度）：防止并发首次构建重复建图
+# 会话缓存上限（单机单用户场景 32 个并发会话足够；compile 是纯内存操作）
+_AGENT_CACHE_MAX = 32
 
 # Checkpointer（P0 断点持久化，2026-08-04）：
 # ⚠️ 实测修正（评审方式 A 需适配 async）：sync SqliteSaver 在 async astream 下
@@ -222,12 +233,16 @@ async def close_store() -> None:
 
 
 def get_agent(thread_id: str = "default"):
-    """按会话懒构建 deepagents 编译图（v2.0 会话级缓存）。
+    """按会话懒构建 deepagents 编译图（v2.0 会话级缓存 + v3 有界 LRU）。
 
     每会话（thread_id）独立编译图 + 独立 backend 文件根（create_backend(thread_id)，
     会话文件隔离——v2 硬缺陷 1 修复）；compile 是内存操作，单机会话数少可接受。
     构建仅做内存图装配（无网络 I/O）；模型每次调用经 _configurable_model
     middleware 按 ChatContext.provider 动态选择，图本身不绑定具体 provider。
+
+    v3.0 LRU（深化方案 §2.3）：命中即刷新（pop 后放回，保持最近使用序）；
+    超 _AGENT_CACHE_MAX 逐出最久未用（popitem(last=False)）。逐出只清内存图，
+    磁盘工作区文件由 DELETE /v1/sessions 联动清理（防 LRU 误删活跃会话文件）。
 
     Args:
         thread_id: 会话 ID（== session_id）；demo/无会话场景默认 "default"
@@ -235,40 +250,64 @@ def get_agent(thread_id: str = "default"):
     Returns:
         deepagents 编译后的 Agent（LangGraph CompiledStateGraph）
     """
-    if thread_id not in _agents:
-        with _agents_lock:
-            if thread_id not in _agents:
-                # 工具 = 内部工具 + 外部 MCP 工具（lifespan 连接收集，见 src/mcp/client.py）
-                internal_tools = [run_code_in_sandbox]
-                mcp_tools = get_mcp_client_manager().get_tools()
-                _agents[thread_id] = create_deep_agent(
-                    model=get_chat_model(),  # 默认 provider 兜底（middleware 会覆盖）
-                    system_prompt=DEFAULT_SYSTEM_PROMPT,
-                    subagents=load_subagents(),
-                    tools=internal_tools + mcp_tools,
-                    middleware=[
-                        _configurable_model,
-                        # 上下文用量：图执行完自动算全量 messages token 并存库
-                        # （2026-08-04 评审改版：中间件替代 CallbackHandler，前端查表）
-                        TokenUsageMiddleware(),
-                    ],
-                    context_schema=ChatContext,
-                    # SKILL.md 渐进式加载：走 backend 虚拟路径 /skills/market/
-                    # （v2.0：SkillsMiddleware 经 backend 读文件，虚拟路径路由到
-                    # data/skills/skill_md——真实路径会被 virtual_mode 越权拒绝）
-                    skills=["/skills/market/"],
-                    # Checkpointer（P0 断点持久化）：AsyncSqliteSaver 由 lifespan
-                    # 初始化（init_checkpointer）；未初始化（测试/脚本）→ 不传，
-                    # 降级无断点模式。astream 必须带 thread_id（stream_agent_tokens
-                    # 内部封装），否则直接报错
-                    checkpointer=_checkpointer,
-                    # Store 长期记忆（P1）：SqliteStore 由 lifespan 初始化（init_store）；
-                    # 未初始化 → 降级无记忆。记忆注入/写入在 chat.py（memory_store 封装）
-                    store=_store,
-                    # 会话级 Backend（v2.0）：文件根绑定 thread_id 目录，会话隔离
-                    backend=create_backend(thread_id),
-                )
-    return _agents[thread_id]
+    with _agents_lock:
+        agent = _agents.pop(thread_id, None)  # LRU 刷新（先移除再放回，保持使用序）
+        if agent is not None:
+            _agents[thread_id] = agent
+            return agent
+        agent = _build_agent(thread_id)
+        _agents[thread_id] = agent
+        while len(_agents) > _AGENT_CACHE_MAX:
+            evicted, _ = _agents.popitem(last=False)
+            logger.info("Agent 缓存逐出（LRU）：thread=%s", evicted)
+        return agent
+
+
+def _build_agent(thread_id: str):
+    """构建单个会话的编译图（get_agent 的构建体抽离，v3）。
+
+    Args:
+        thread_id: 会话 ID（== session_id，backend 文件根绑定它）
+
+    Returns:
+        deepagents 编译后的 Agent（LangGraph CompiledStateGraph）
+    """
+    # 工具 = 内部工具 + 外部 MCP 工具（lifespan 连接收集，见 src/mcp/client.py）
+    internal_tools = [run_code_in_sandbox]
+    mcp_tools = get_mcp_client_manager().get_tools()
+    model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用
+    return create_deep_agent(
+        model=model,
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        # P2 子代理隔离：SUBAGENT_ISOLATION=True 时 loader 用同一 model 预编译子代理
+        subagents=load_subagents(model=model if settings.subagent_isolation else None),
+        tools=internal_tools + mcp_tools,
+        middleware=[
+            _configurable_model,
+            # 上下文用量：图执行完自动算全量 messages token 并存库
+            # （2026-08-04 评审改版：中间件替代 CallbackHandler，前端查表）
+            TokenUsageMiddleware(),
+            # 工具调用审计（P1）：MCP/沙箱逃逸面统一审计，只记不拦
+            ToolAuditMiddleware(),
+        ],
+        context_schema=ChatContext,
+        # SKILL.md 渐进式加载：走 backend 虚拟路径 /skills/market/
+        # （v2.0：SkillsMiddleware 经 backend 读文件，虚拟路径路由到
+        # data/skills/skill_md——真实路径会被 virtual_mode 越权拒绝）
+        skills=["/skills/market/"],
+        # Checkpointer（P0 断点持久化）：AsyncSqliteSaver 由 lifespan
+        # 初始化（init_checkpointer）；未初始化（测试/脚本）→ 不传，
+        # 降级无断点模式。astream 必须带 thread_id（stream_agent_tokens
+        # 内部封装），否则直接报错
+        checkpointer=_checkpointer,
+        # Store 长期记忆（P1）：SqliteStore 由 lifespan 初始化（init_store）；
+        # 未初始化 → 降级无记忆。记忆注入/写入在 chat.py（memory_store 封装）
+        store=_store,
+        # 会话级 Backend（v2.0）：文件根绑定 thread_id 目录，会话隔离
+        backend=create_backend(thread_id),
+        # 上层声明式权限（P0 深化）：/skills/** 写 deny 等模板，见 core/permissions.py
+        permissions=build_main_permissions(),
+    )
 
 
 def rebuild_agent(thread_id: str | None = None) -> None:
