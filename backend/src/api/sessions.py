@@ -21,6 +21,7 @@ from src.agent import main_agent
 from src.core import db as core_db
 from src.core.backend import cleanup_workspace
 from src.db import repository as repo
+from src.sandbox.pool import sandbox_pool
 from src.schemas.message import Message
 from src.schemas.session import Session
 
@@ -195,6 +196,7 @@ async def delete_session(session_id: str) -> DeleteResponse:
             _raise_404(session_id)
         main_agent.rebuild_agent(session_id)
         cleanup_workspace(session_id, older_than_days=0)
+        sandbox_pool.destroy(session_id)  # 会话删除 → 沙箱销毁（幂等，不存在静默通过）
         return DeleteResponse()
     finally:
         await conn.close()

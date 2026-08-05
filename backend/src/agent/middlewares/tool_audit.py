@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 audit_logger = logging.getLogger("audit")
 
 # 需要记录参数的工具（写操作/执行类）；其余工具只记名（防上下文膨胀）
-_SENSITIVE_TOOLS = {"run_code_in_sandbox", "write_file", "edit_file", "delete", "upload_files"}
+# P1 扩充：run_command_in_sandbox（命令本身）、upload/download（文件同步）
+_SENSITIVE_TOOLS = {
+    "run_code_in_sandbox", "write_file", "edit_file", "delete", "upload_files",
+    "run_command_in_sandbox", "upload_workspace_file", "download_sandbox_file",
+}
 # 参数截断上限（防审计行无限膨胀；密钥纪律：超长即截断）
 _MAX_ARGS_LEN = 300
 

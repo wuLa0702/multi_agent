@@ -47,7 +47,12 @@ from src.core.paths import get_checkpointer_path, get_skill_md_dir, get_store_pa
 from src.core.permissions import build_main_permissions
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
-from src.mcp.tools.sandbox_tool import run_code_in_sandbox
+from src.mcp.tools.sandbox_tool import (
+    download_sandbox_file,
+    run_code_in_sandbox,
+    run_command_in_sandbox,
+    upload_workspace_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +278,13 @@ def _build_agent(thread_id: str):
         deepagents 编译后的 Agent（LangGraph CompiledStateGraph）
     """
     # 工具 = 内部工具 + 外部 MCP 工具（lifespan 连接收集，见 src/mcp/client.py）
-    internal_tools = [run_code_in_sandbox]
+    # 沙箱域工具（P1 挂载：命令执行 + 文件同步，能力计划 §3.2/§3.3）
+    internal_tools = [
+        run_code_in_sandbox,
+        run_command_in_sandbox,
+        upload_workspace_file,
+        download_sandbox_file,
+    ]
     mcp_tools = get_mcp_client_manager().get_tools()
     model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用
     return create_deep_agent(

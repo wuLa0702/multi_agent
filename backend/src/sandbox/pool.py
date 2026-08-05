@@ -162,3 +162,7 @@ class SandboxPool:
     @staticmethod
     def _sandbox_id(sandbox: SandboxSync) -> str:
         return str(getattr(sandbox, "id", ""))  # 防御：实例属性随 SDK 版本
+
+
+# 进程内共享池单例（sandbox_tool 工具与 sessions 删除联动共用同一实例）
+sandbox_pool = SandboxPool()

@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     sandbox_memory: str = "1Gi"
     # 单次命令输出截断字节（防上下文爆炸）
     sandbox_output_limit: int = 8192
+    # 快照模板 ID（P2）：依赖预装后 create_snapshot 生成，配置后起沙箱跳过拉镜像/装依赖
+    sandbox_snapshot_id: str = ""
 
     # ── 记忆/存储 ──
     redis_url: str = "redis://localhost:6379/0"
