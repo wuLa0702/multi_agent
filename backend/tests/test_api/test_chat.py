@@ -33,8 +33,8 @@ def no_background_llm(mocker):
     模块级（仅本文件）：test_memory_store.py 直接调 extract_memory_fact
     （adapter 显式注入），conftest 全局 autouse 会破坏它。
     """
-    mocker.patch("src.agent.assistant_tasks.generate_title", return_value=None)
-    mocker.patch("src.agent.memory_store.extract_memory_fact", return_value=None)
+    mocker.patch("src.agent.tasks.assistant.generate_title", return_value=None)
+    mocker.patch("src.agent.memory.store.extract_memory_fact", return_value=None)
 
 
 def parse_sse(text: str) -> list[dict]:

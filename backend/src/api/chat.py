@@ -189,7 +189,7 @@ async def _prepare_new_messages(
 
     # 2.6 长期记忆注入（P1 Store）：取最近记忆拼 SystemMessage（失败静默降级）
     from src.agent.main_agent import get_store
-    from src.agent.memory_store import load_recent_memories
+    from src.agent.memory.store import load_recent_memories
 
     memories = await load_recent_memories(get_store())
     if memories:
@@ -223,9 +223,9 @@ async def _generate_title_in_background(session_id: str, first_message: str) -> 
     """后台生成会话标题（LLM → 回退截断；fire-and-forget，异常内部捕获）。
 
     2026-08-04 升级：标题从规则截断改为 LLM 生成（统一走 LLMAdapter，
-    见 agent/assistant_tasks.py），后台执行不拖慢 SSE start；失败 → 回退消息前 20 字。
+    见 agent/tasks/assistant.py），后台执行不拖慢 SSE start；失败 → 回退消息前 20 字。
     """
-    from src.agent.assistant_tasks import generate_title
+    from src.agent.tasks.assistant import generate_title
 
     title = None
     try:
@@ -257,7 +257,7 @@ async def _save_memory_in_background(
     会话结束顺手检查任务归档（开销可忽略）。
     """
     from src.agent.main_agent import get_store
-    from src.agent.memory_store import (
+    from src.agent.memory.store import (
         archive_completed_tasks,
         extract_memory_typed,
         save_typed_memory,

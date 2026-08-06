@@ -18,6 +18,7 @@ import time
 from langgraph.store.base import BaseStore
 
 from src.agent.prompts import MEMORY_EXTRACT_PROMPT
+from src.core.paths import MEMORY_TASKS_ARCHIVE_FILE, MEMORY_TASKS_FILE
 from src.llm.adapter import LLMAdapter
 
 logger = logging.getLogger(__name__)
@@ -239,7 +240,7 @@ async def archive_completed_tasks(
     if backend is None:
         return 0
     try:
-        result = await backend.aread("/memories/tasks.md")
+        result = await backend.aread(MEMORY_TASKS_FILE)
         content = (result or {}).get("content", "") if isinstance(result, dict) else ""
     except Exception:  # noqa: BLE001 —— tasks.md 不存在/读失败 → 跳过（记忆是旁路能力）
         return 0
@@ -252,9 +253,9 @@ async def archive_completed_tasks(
         return 0
     archived = done_tasks[: len(done_tasks) - keep]      # 更早的已完成
     keep_done = done_tasks[len(done_tasks) - keep:]      # 最近 keep 条
-    await backend.awrite("/memories/tasks.md", "\n".join(open_tasks + keep_done) + "\n")
+    await backend.awrite(MEMORY_TASKS_FILE, "\n".join(open_tasks + keep_done) + "\n")
     try:
-        arch_result = await backend.aread("/memories/tasks_archive.md")
+        arch_result = await backend.aread(MEMORY_TASKS_ARCHIVE_FILE)
         arch_content = (
             (arch_result or {}).get("content", "") if isinstance(arch_result, dict) else ""
         )
@@ -262,7 +263,7 @@ async def archive_completed_tasks(
         arch_content = ""
     archive_block = "# 任务归档\n" + "\n".join(archived) + "\n"
     await backend.awrite(
-        "/memories/tasks_archive.md",
+        MEMORY_TASKS_ARCHIVE_FILE,
         (arch_content.rstrip() + "\n\n" if arch_content else "") + archive_block,
     )
     logger.info("任务归档：%d 条已完成任务移入 tasks_archive.md", len(archived))

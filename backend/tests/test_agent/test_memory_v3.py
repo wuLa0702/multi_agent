@@ -13,8 +13,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.agent import main_agent, memory_store
-from src.agent.memory_store import (
+from src.agent import main_agent
+from src.agent.memory import store as memory_store
+from src.agent.memory.store import (
     TASKS_ARCHIVE_KEEP,
     archive_completed_tasks,
     extract_memory_typed,
