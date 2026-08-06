@@ -34,6 +34,7 @@ from src.agent.main_agent import (
 from src.core import db as core_db
 from src.core.config import settings
 from src.core.errors import RetryableError
+from src.core.constants import PAGINATION_LIMIT_MAX
 from src.core.model_registry import get_registry
 from src.schemas.events import (
     DoneEvent,
@@ -176,7 +177,7 @@ async def _prepare_new_messages(
         asyncio.create_task(_generate_title_in_background(session_id, req.message or ""))
 
     # 2. 组历史（含本条 user 消息）→ LangChain 格式
-    history = await repo.list_messages(conn, session_id, limit=200)
+    history = await repo.list_messages(conn, session_id, limit=PAGINATION_LIMIT_MAX)
     lc_messages = _history_to_langchain(history)
 
     # 2.5 代理模式注入（P1 先浅后深：仅请求级 SystemMessage）
