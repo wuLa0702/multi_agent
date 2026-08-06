@@ -442,7 +442,8 @@ function handleEvent(
       // 设计 §8.1 发现 4（P0）：流结束以库为准静默重拉，替换本地 id=null 流，
       // 避免刷新重进会话时重复渲染；失败静默降级保留本地流。
       const sid = get().sessionId;
-      if (sid) void refreshMessages(sid, set, get);
+      // mock 模式：mock 流消息未落库，跳过"以库为准"重拉（否则拉真实后端空结果会清空消息）
+      if (sid && !MOCK_ENABLED) void refreshMessages(sid, set, get);
       break;
     }
 
