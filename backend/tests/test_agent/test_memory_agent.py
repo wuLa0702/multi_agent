@@ -175,3 +175,74 @@ async def test_write_store_no_store_degrades(mocker) -> None:
 def test_memory_agent_switch_default_on() -> None:
     """默认开关：memory_agent_enabled=True（学习 demo 主诉求）。"""
     assert settings.memory_agent_enabled is True
+
+
+# ── P1：search_memory 类型感知查重 + read_memory_file backend 接入 ──
+
+@pytest.mark.asyncio
+async def test_search_memory_typed_results(mocker) -> None:
+    """P1：查重返回含类型条目（[user_profile] 格式）——子代理去重协议。"""
+    store = SimpleNamespace(
+        asearch=mocker.AsyncMock(
+            side_effect=[
+                [SimpleNamespace(value={"content": "用户喜欢中文"})],   # user_profile
+                [SimpleNamespace(value={"content": "deepagents 是框架"})],  # facts
+            ]
+        )
+    )
+    mocker.patch("src.agent.main_agent.get_store", return_value=store)
+
+    result = await memory_agent.search_memory("中文")
+
+    assert "[user_profile] 用户喜欢中文" in result, "含类型前缀"
+    assert "无匹配" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_memory_file_backend(mocker) -> None:
+    """P1：读记忆文件经 backend（aread /memories/）——辅助抽取真实可用。"""
+    fake_backend = SimpleNamespace(
+        aread=mocker.AsyncMock(return_value={"content": "# 任务\n- [ ] 进行中"})
+    )
+    mocker.patch("src.core.backend.create_backend", return_value=fake_backend)
+
+    result = await memory_agent.read_memory_file("tasks.md")
+
+    assert "进行中" in result, "读到文件内容"
+    fake_backend.aread.assert_called_once_with("/memories/tasks.md"), "虚拟路径"
+
+
+@pytest.mark.asyncio
+async def test_read_memory_file_rejects_escape(mocker) -> None:
+    """P1：路径逃逸拒绝（00-security）。"""
+    mocker.patch("src.core.backend.create_backend")
+    assert "路径不合法" in await memory_agent.read_memory_file("../x.md")
+    assert "路径不合法" in await memory_agent.read_memory_file("/etc/passwd")
+
+
+# ── P2：send_notification 降级真实化（本地通知文件）──
+
+@pytest.mark.asyncio
+async def test_send_notification_writes_local_file(mocker, tmp_path) -> None:
+    """P2：通知落 data/notifications.log（可审计可查）。"""
+    mocker.patch("src.core.paths.get_app_dir", return_value=tmp_path)
+
+    result = await memory_agent.send_notification("重要记忆已写入")
+
+    assert "已记录到本地通知文件" in result
+    content = (tmp_path / "notifications.log").read_text(encoding="utf-8")
+    assert "重要记忆已写入" in content, "通知内容落盘"
+
+
+# ── P3：质量评估 ──
+
+def test_score_memory_quality_dimensions() -> None:
+    """P3：评分维度（信息量/类型/唯一性）。"""
+    assert memory_agent.score_memory_quality("短", "facts") < 3, "过短低质"
+    long_fact = "用户偏好：中文回复，技术栈 Python/React，喜欢简洁风格（2026 年确认）"
+    assert memory_agent.score_memory_quality(long_fact, "user_profile") >= 3, "长+数字高质"
+    # 唯一性：重复条目多 → 扣分
+    score_base = memory_agent.score_memory_quality("事实内容含数字 2026", "facts")
+    score_dup = memory_agent.score_memory_quality("事实内容含数字 2026", "facts", duplicates=3)
+    assert score_dup < score_base, "重复条目扣分"
+    assert 1 <= memory_agent.score_memory_quality("x", "facts", duplicates=9) <= 5, "分数限幅"

@@ -11,6 +11,7 @@ CompiledSubAgent 预编译——独立 StateBackend（隔离实践）+ 专属工
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 
 from deepagents import FilesystemPermission, create_deep_agent
 from deepagents.backends import StateBackend
@@ -40,13 +41,16 @@ def _fingerprint(session_id: str, user_message: str, assistant_text: str) -> str
 
 
 async def search_memory(keyword: str) -> str:
-    """查历史记忆（去重用，只读）——P0 关键词检索，P1 语义查重。
+    """查历史记忆（去重用，只读）——P1 类型感知查重（v2.0 补齐）。
+
+    返回含类型的匹配条目（"[user_profile] 内容"格式）——子代理据
+    "已存在相似内容"跳过写入，与 write_store 幂等衔接成完整去重协议。
 
     Args:
         keyword: 检索关键词
 
     Returns:
-        匹配的记忆内容列表摘要（无 → "无匹配"）
+        匹配的记忆条目（含类型）列表；无 → "无匹配"
     """
     from src.agent.main_agent import get_store
 
@@ -55,29 +59,35 @@ async def search_memory(keyword: str) -> str:
         return "记忆库未初始化（降级：跳过查重）"
     try:
         matched: list[str] = []
-        for namespace in MEMORY_NAMESPACES.values():
+        for mem_type, namespace in MEMORY_NAMESPACES.items():
             items = await store.asearch(namespace, limit=50)
             for item in items:
                 content = item.value.get("content", "")
                 if keyword and keyword in content:
-                    matched.append(content)
+                    matched.append(f"[{mem_type}] {content}")
         return "\n".join(matched) if matched else "无匹配"
     except Exception:  # noqa: BLE001 —— 记忆检索旁路能力，失败不阻断
         return "记忆检索失败（跳过查重）"
 
 
 async def read_memory_file(path: str) -> str:
-    """读记忆文件（辅助抽取，只读 /memories/）——P0 桩（日志占位）。
+    """读记忆文件（辅助抽取，只读 /memories/）——P1 backend 接入（v2.0）。
 
     Args:
-        path: /memories/ 下文件（禁 ../ 与绝对路径）
+        path: /memories/ 下文件相对名（禁 ../ 与绝对路径）
 
     Returns:
-        文件内容（P0 未接 backend → 提示降级）
+        文件内容；校验失败 → 提示
     """
     if path.startswith("/") or ".." in path.split("/"):
         return "记忆文件路径不合法（仅 /memories/ 相对路径）。"
-    return "读取记忆文件：P1 接入 backend 后可用（当前跳过）。"
+    from src.core.backend import create_backend
+
+    try:
+        result = await create_backend("default").aread(f"/memories/{path}")
+        return (result or {}).get("content", "") if isinstance(result, dict) else str(result)
+    except Exception:  # noqa: BLE001 —— 文件读失败降级
+        return f"读取 {path} 失败（文件可能不存在）。"
 
 
 async def write_store(memory_type: str, fact: str) -> str:
@@ -126,15 +136,27 @@ async def write_wiki(page: str, content: str) -> str:
 
 
 async def send_notification(message: str) -> str:
-    """发通知（可选）——P2 接真实通道，先日志占位。
+    """发通知——P2 降级真实化（v2.0）：写入本地通知文件（可审计可查）。
+
+    无外部通知通道（邮件/IM 未接入）——落 `data/notifications.log`（UTF-8
+    追加）；外部通道接入时替换写入端（单点）。
 
     Args:
         message: 通知内容
 
     Returns:
-        通知结果（P2 前占位）
+        通知结果（"已记录到本地通知文件"）
     """
-    return f"send_notification：P2 接入真实通道（当前占位）：{message[:50]}"
+    from src.core.paths import get_app_dir
+
+    try:
+        log_file = get_app_dir() / "notifications.log"
+        line = f"[{datetime.now().astimezone().isoformat(timespec='seconds')}] {message}\n"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(line)
+        return "已记录到本地通知文件（data/notifications.log）。"
+    except OSError as exc:
+        return f"通知写入失败：{exc}"
 
 
 def build_memory_agent(model: BaseChatModel) -> dict:
@@ -163,3 +185,38 @@ def build_memory_agent(model: BaseChatModel) -> dict:
         "description": "后台记忆管理员（抽取/去重/分类/存储）——纯后台任务，不返回用户",
         "runnable": runnable,
     }
+
+
+# ── P3：质量评估（v2.0 设计 + 轻量实现，§6.5）──
+
+def score_memory_quality(fact: str, memory_type: str, *, duplicates: int = 0) -> int:
+    """记忆质量评分（1-5）：信息量 / 类型适配 / 唯一性。
+
+    P3 轻量版（纯函数可单测）：低分（<3）→ 不写入或标注低质（审计）；
+    定期整理时优先裁剪低分。模型质量评估（LLM 打分）标注后续。
+
+    Args:
+        fact: 记忆事实
+        memory_type: user_profile / facts
+        duplicates: 查重发现的相似条目数
+
+    Returns:
+        1-5 分（<3 = 低质）
+    """
+    score = 1
+    # 信息量：长度（5-50 字为佳）+ 实体密度（含数字/专名加分）
+    length = len(fact)
+    if length >= 8:
+        score += 1
+    if length >= 15:
+        score += 1
+    import re
+
+    if re.search(r"[0-9]", fact) or re.search(r"[A-Z]{2,}", fact):
+        score += 1   # 数字/专名 = 信息量信号
+    # 类型适配：facts 客观事实 +1（画像已含用户信号）
+    if memory_type == "facts":
+        score += 1
+    # 唯一性：重复条目多 → 扣分
+    score -= min(duplicates, 2)
+    return max(1, min(5, score))
