@@ -37,6 +37,7 @@ export default function ContextUsage() {
       }
       return;
     }
+    if (storeUsed > 0) return; // store 有值（SSE done 携带）优先，API 仅真实模式兜底
     void api
       .getContextUsage(sessionId)
       .then((r) => {
