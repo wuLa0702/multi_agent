@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     interpreter_ptc: str = "internet_search"
 
     # ── 人在回路 / Rubric（2026-08-06 设计：docs/decisions/方案-人在回路与Rubric评分-详细设计-v1.md）──
-    # HITL 审批：True = 沙箱/文件/技能等副作用工具执行前人类审批（按风险分级，见 agent/hitl.py）。
+    # HITL 审批：True = 沙箱/文件/技能等副作用工具执行前人类审批（按风险分级，见 agent/hitl/hitl.py）。
     # 需 checkpointer（已接）；默认关，业务接入时开。
     hitl_enabled: bool = False
     # Rubric 自评：True = 挂载 RubricMiddleware（LLM-as-judge 按 rubric 迭代）。

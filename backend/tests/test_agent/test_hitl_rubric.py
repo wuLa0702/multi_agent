@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.hitl import HITL_INTERRUPT_ON, build_hitl_interrupt_on
-from src.agent.rubrics import RUBRIC_TEMPLATES, build_rubric_middleware
+from src.agent.hitl.hitl import HITL_INTERRUPT_ON, build_hitl_interrupt_on
+from src.agent.rubrics.rubrics import RUBRIC_TEMPLATES, build_rubric_middleware
 
 
 class TestHitlConfig:
@@ -62,12 +62,12 @@ class TestRubricMiddlewareBuild:
 
     def test_disabled_returns_empty(self, monkeypatch) -> None:
         """rubric_enabled=False → 空列表（不挂载 RubricMiddleware）。"""
-        monkeypatch.setattr("src.agent.rubrics.settings.rubric_enabled", False)
+        monkeypatch.setattr("src.agent.rubrics.rubrics.settings.rubric_enabled", False)
         assert build_rubric_middleware() == []
 
     def test_enabled_returns_middleware(self, monkeypatch, mocker) -> None:
         """rubric_enabled=True → [RubricMiddleware]，grader 传实例（不实调 API）。"""
-        monkeypatch.setattr("src.agent.rubrics.settings.rubric_enabled", True)
+        monkeypatch.setattr("src.agent.rubrics.rubrics.settings.rubric_enabled", True)
         fake_model = object()
         # rubrics.py 函数内延迟 import（防循环依赖）→ patch 源头模块
         mocker.patch("src.llm.adapter.get_chat_model", return_value=fake_model)

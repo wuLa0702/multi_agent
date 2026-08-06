@@ -38,11 +38,11 @@ from langchain.agents.middleware import wrap_model_call
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
-from src.agent.hitl import build_hitl_interrupt_on
+from src.agent.hitl.hitl import build_hitl_interrupt_on
 from src.agent.middlewares.interpreter import build_interpreter_middleware
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.middlewares.tool_audit import ToolAuditMiddleware
-from src.agent.rubrics import build_rubric_middleware
+from src.agent.rubrics.rubrics import build_rubric_middleware
 from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
 from src.core.backend import create_backend
@@ -291,7 +291,7 @@ def _build_agent(thread_id: str):
         tools=internal_tools + mcp_tools,
         middleware=middleware,
         # HITL 审批（P1，2026-08-06 设计 §5.1）：hitl_enabled 门控——沙箱/文件/
-        # 技能等副作用工具执行前人类审批（按风险分级，见 agent/hitl.py）；
+        # 技能等副作用工具执行前人类审批（按风险分级，见 agent/hitl/hitl.py）；
         # checkpointer 已接（硬前置）；审批恢复链路待 P0-V2 验证后接 chat.py
         interrupt_on=build_hitl_interrupt_on(settings.hitl_enabled),
         context_schema=ChatContext,
