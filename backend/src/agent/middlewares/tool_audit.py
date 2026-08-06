@@ -27,6 +27,7 @@ audit_logger = logging.getLogger("audit")
 _SENSITIVE_TOOLS = {
     "run_code_in_sandbox", "write_file", "edit_file", "delete", "upload_files",
     "run_command_in_sandbox", "upload_workspace_file", "download_sandbox_file",
+    "run_skill_script",  # 技能脚本执行（记 skill_name/script_name 参数）
 }
 # 参数截断上限（防审计行无限膨胀；密钥纪律：超长即截断）
 _MAX_ARGS_LEN = 300

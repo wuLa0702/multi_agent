@@ -282,3 +282,12 @@ def test_audit_json_flat_fields(tmp_path, audit_records) -> None:
     assert rec["op"] == "write"
     assert rec["path"] == "/f.txt"
     assert rec["decision"] == "allow"
+
+
+def test_static_skills_default_path_is_builtin(monkeypatch) -> None:
+    """Skill 体系方案 B：默认路径 → backend/assets/skills/builtin/（非项目根 skill-resources）。"""
+    monkeypatch.delenv("SKILL_RESOURCES_DIR", raising=False)  # 不设环境变量 → 走默认
+    d = get_static_skills_dir()
+    assert str(d).endswith(("backend" + os.sep + "assets" + os.sep + "skills" + os.sep + "builtin")), \
+        f"默认路径应为 backend/assets/skills/builtin，实际 {d}"
+    assert (d / "README.md").exists()

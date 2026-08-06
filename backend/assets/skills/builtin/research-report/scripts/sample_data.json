@@ -1,0 +1,8 @@
+{
+  "title": "多 Agent 系统技术调研",
+  "sections": [
+    {"heading": "背景", "points": ["deepagents 与 LangGraph 的演进关系", "多 Agent 协作模式现状"]},
+    {"heading": "发现", "points": ["事件流式 v3 投影机制", "子代理隔离策略对比"]},
+    {"heading": "建议", "points": ["执行层走沙箱隔离", "审批链路接入 interrupt"]}
+  ]
+}

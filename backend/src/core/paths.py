@@ -110,15 +110,23 @@ def get_exports_dir() -> Path:
 def get_static_skills_dir() -> Path:
     """内置静态技能目录（v2.0 /skills/static/ 路由，Agent 只读）。
 
-    SKILL_RESOURCES_DIR 环境变量优先（不硬编码目录层级）；缺省项目根
-    skill-resources/；不存在时自动初始化 README 模板（启动自检容错）。
+    SKILL_RESOURCES_DIR 环境变量优先（兼容旧配置，零破坏）；缺省
+    backend/assets/skills/builtin/（2026-08-05 Skill 体系方案 B：资产层入
+    backend，命名 builtin 表达内置；原项目根 skill-resources/ 迁入）；
+    不存在时自动初始化 README 模板（启动自检容错）。
     """
     env = os.getenv("SKILL_RESOURCES_DIR")
-    base = Path(env) if env else Path(__file__).resolve().parents[3] / "skill-resources"
+    base = (
+        Path(env)
+        if env
+        else Path(__file__).resolve().parents[2] / "assets" / "skills" / "builtin"
+        # parents[2] = backend（本文件在 backend/src/core/ 下：parents[0]=src/core,
+        # parents[1]=src, parents[2]=backend）——测试断言默认路径，防层级回归
+    )
     base.mkdir(parents=True, exist_ok=True)
     if not (base / "README.md").exists():
         (base / "README.md").write_text(
-            "# skill-resources\n\n内置静态技能目录（Agent 只读）。", encoding="utf-8"
+            "# builtin skills\n\n内置静态技能目录（Agent 只读）。", encoding="utf-8"
         )
     return base
 

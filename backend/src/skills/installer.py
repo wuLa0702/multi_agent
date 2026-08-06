@@ -258,3 +258,40 @@ async def toggle_skill(conn: aiosqlite.Connection, skill_id: int, is_active: boo
         await repo.update_mcp_server_active(conn, int(record.install_path), is_active)
     logger.info("Skill 状态切换：%s → %s（id=%s）", record.name, is_active, skill_id)
     return True
+
+
+def install_skill_directory(
+    conn, name: str, files: dict[str, str], *, source: str = "market"
+) -> str:
+    """安装完整技能目录（多文件，Skill 体系方案 §4.1/P1）。
+
+    Args:
+        conn: SQLite 连接（install 记录落库）
+        name: 技能名
+        files: {相对路径: 内容}——{"SKILL.md": ..., "scripts/build_report.py": ...}
+        source: 来源标记（market / builtin）
+
+    Returns:
+        安装记录 install_path（技能目录路径）
+
+    Raises:
+        FileExistsError: 技能已存在（先卸载）
+        ValueError: 路径逃逸 / 技能目录校验失败
+    """
+    from src.skills.templates import validate_skill_dir
+
+    target = get_skill_md_dir() / name
+    if target.exists():
+        raise FileExistsError(f"技能已存在：{name}——先卸载再安装")
+    for rel_path, content in files.items():
+        # 路径校验：禁 ../ 与绝对路径（00-security 硬约束）
+        parts = rel_path.replace("\\", "/").split("/")
+        if rel_path.startswith("/") or any(p == ".." for p in parts):
+            raise ValueError(f"技能文件路径不合法：{rel_path}")
+        file_path = target / rel_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+    problems = validate_skill_dir(target)
+    if problems:
+        raise ValueError(f"技能目录校验失败：{problems}")
+    return str(target)
