@@ -41,7 +41,7 @@ from langchain_core.messages import BaseMessage
 from src.agent.middlewares.interpreter import build_interpreter_middleware
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.middlewares.tool_audit import ToolAuditMiddleware
-from src.agent.prompts import MEMORY_GUIDANCE_V3
+from src.agent.prompts import DEFAULT_SYSTEM_PROMPT, MEMORY_GUIDANCE_V3
 from src.agent.subagents.loader import load_subagents
 from src.core.backend import create_backend
 from src.core.config import settings
@@ -64,19 +64,6 @@ from src.mcp.tools.skill_tool import run_skill_script
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SYSTEM_PROMPT = """你是一名资深研究员，负责开展深入调研，并输出一份精炼的研究报告。
-
-你有搜索子代理（search_agent）可委派联网搜索任务，获取最新资料后再撰写报告。
-
-## `search_agent`
-
-将搜索请求交给它，它会返回结构化搜索结果（标题/链接/摘要）。
-
-## `run_code_in_sandbox`
-
-在隔离沙箱中执行 Python 代码并返回输出（适合跑测试/验证脚本，不影响本地环境）。
-"""
-
 
 @dataclass
 class ChatContext:
@@ -94,25 +81,6 @@ class ChatContext:
     model_id: int | None = None
     mode: str = "default"
     session_id: str | None = None
-
-
-# 代理模式提示词注入（2026-08-04 P1：先浅后深——只改指令不改编排）
-_MODE_INSTRUCTIONS: dict[str, str] = {
-    "plan": (
-        "\n\n## 规划模式\n"
-        "开始执行前，先拆解任务为清晰的步骤清单（可用 write_todos），"
-        "然后按步骤逐一执行并汇报进度。"
-    ),
-    "agent": (
-        "\n\n## 代理模式\n"
-        "自主完成多步骤任务：识别目标 → 规划执行路径 → 调用所需工具 → "
-        "检查结果质量 → 输出最终结论。尽量少打扰用户，一次完成。"
-    ),
-    "auto": (
-        "\n\n## 自动模式\n"
-        "根据任务复杂程度自行选择策略：简单任务直接回答，复杂任务先规划再执行。"
-    ),
-}
 
 
 @wrap_model_call

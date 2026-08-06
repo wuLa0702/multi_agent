@@ -181,9 +181,9 @@ async def _prepare_new_messages(
 
     # 2.5 代理模式注入（P1 先浅后深：仅请求级 SystemMessage）
     if req.mode != "default":
-        from src.agent.main_agent import _MODE_INSTRUCTIONS
+        from src.agent.prompts import MODE_INSTRUCTIONS
 
-        instruction = _MODE_INSTRUCTIONS.get(req.mode)
+        instruction = MODE_INSTRUCTIONS.get(req.mode)
         if instruction:
             lc_messages = [SystemMessage(content=instruction), *lc_messages]
 
