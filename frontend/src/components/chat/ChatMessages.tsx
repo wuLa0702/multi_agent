@@ -9,6 +9,7 @@ import { useChatStore } from "@/lib/stores/chatStore";
 import MessageList from "./MessageList";
 import OverviewRuler from "./OverviewRuler";
 import EmptyChat from "./EmptyChat";
+import ScrollToBottom from "./ScrollToBottom";
 
 export default function ChatMessages() {
   const messages = useChatStore((s) => s.messages);
@@ -18,7 +19,7 @@ export default function ChatMessages() {
   const isEmpty = messages.length === 0 && streamStatus === "idle";
 
   return (
-    <div ref={scrollRef} className="chat-scroll min-h-0 flex-1 overflow-y-auto">
+    <div ref={scrollRef} className="chat-scroll relative min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex min-h-full w-full" style={{ maxWidth: "var(--chat-max-width)", padding: "0 var(--chat-padding-x)" }}>
         <div className="flex min-w-0 flex-1 flex-col">
           {isEmpty ? <EmptyChat /> : <MessageList />}
@@ -28,6 +29,8 @@ export default function ChatMessages() {
           <OverviewRuler scrollRef={scrollRef} />
         )}
       </div>
+      {/* 一键回到最新（前端功能规划 §4.1 补充功能 1：脱离底部 500px 显示） */}
+      {!isEmpty && <ScrollToBottom scrollRef={scrollRef} totalCount={messages.length} />}
     </div>
   );
 }
