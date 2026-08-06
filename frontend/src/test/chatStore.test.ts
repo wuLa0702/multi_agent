@@ -410,3 +410,30 @@ describe("审批流程（HITL，v4.0 §2.1）", () => {
     expect(st.notices.some((n) => n.text.includes("已失效"))).toBe(true);
   });
 });
+
+describe("任务规划（todos，v5.0 §2.3）", () => {
+  it("todos 事件 → 全量替换 + 空态隐藏", async () => {
+    useChatStore.setState({ todos: [] });
+    await fireEvent({
+      type: "todos",
+      items: [
+        { id: "1", title: "需求分析", status: "completed" },
+        { id: "2", title: "方案设计", status: "in_progress" },
+        { id: "3", title: "代码实现", status: "pending" },
+      ],
+    } as SSEEvent);
+    const todos = useChatStore.getState().todos;
+    expect(todos).toHaveLength(3);
+    expect(todos[1]).toMatchObject({ title: "方案设计", status: "in_progress" });
+    // 后续全量替换（进度推进）
+    await fireEvent({
+      type: "todos",
+      items: [
+        { id: "1", title: "需求分析", status: "completed" },
+        { id: "2", title: "方案设计", status: "completed" },
+        { id: "3", title: "代码实现", status: "in_progress" },
+      ],
+    } as SSEEvent);
+    expect(useChatStore.getState().todos.filter((t) => t.status === "completed")).toHaveLength(2);
+  });
+});

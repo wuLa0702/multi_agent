@@ -11,6 +11,7 @@ import { useChatStore } from "@/lib/stores/chatStore";
 import SessionList from "@/components/history/SessionList";
 import ChatHeader, { exportChatAsMd } from "@/components/chat/ChatHeader";
 import ChatMessages from "@/components/chat/ChatMessages";
+import TodoPanel from "@/components/todo/TodoPanel";
 import ChatInput from "@/components/chat/ChatInput";
 import AgentPanel from "@/components/agent/AgentPanel";
 import PageHeader from "@/components/common/PageHeader";
@@ -104,6 +105,8 @@ export default function ChatPage() {
           onClearChat={() => clearChat()}
         />
 
+        {/* 任务规划模式顶部面板（v5.0 §2.3：todos 非空时固定顶部） */}
+        <TodoPanel />
         <ChatMessages />
 
         {/* 悬浮输入框（v3 §3.2：圆角卡片 + 阴影 + 底部留白 + 宽度对齐消息区） */}

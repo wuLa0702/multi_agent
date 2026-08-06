@@ -258,6 +258,18 @@ export interface SummarizeEvent {
   keep_from_message_id: number | null;
 }
 
+export interface TodoItem {
+  id: string;
+  title: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+export interface TodosEvent {
+  type: "todos";
+  /** 全量替换（v5.0 §2.3；后端 TodoListMiddleware 推送形态联调时校准） */
+  items: TodoItem[];
+}
+
 export interface DoneEvent {
   type: "done";
   run_id: string;

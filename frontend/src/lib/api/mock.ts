@@ -81,6 +81,23 @@ export async function streamChatMock(
     await sleep(200);
     cb.onEvent(e);
   }
+  // 任务规划（v5.0 §2.3 mock）：5 步计划逐步完成 → 顶部 Todo 面板
+  const todoBase = Date.now();
+  const todoTitles = ["需求分析", "方案设计", "代码实现", "测试验证", "部署上线"];
+  const mkTodos = (doneCount: number, activeIdx: number): SSEEvent => ({
+    type: "todos",
+    items: todoTitles.map((title, i) => ({
+      id: `${todoBase}-${i}`,
+      title,
+      status: i < doneCount ? "completed" : i === activeIdx ? "in_progress" : "pending",
+    })),
+  } as SSEEvent);
+  cb.onEvent(mkTodos(0, 0));
+  for (let d = 1; d <= 3; d++) {
+    if (signal.aborted) return;
+    await sleep(400);
+    cb.onEvent(mkTodos(d, d));
+  }
   if (signal.aborted) return;
   await sleep(300);
   // 高危操作 → 触发审批（挂起，等待用户决策；resume 走上方恢复流）

@@ -16,6 +16,7 @@ import { api, ApiError } from "@/lib/api/client";
 import { streamChat } from "@/lib/api/sse";
 import { streamChatMock, MOCK_ENABLED } from "@/lib/api/mock";
 import type {
+  TodoItem,
   ApproveEvent,
   Message,
   ProviderInfo,
@@ -55,6 +56,8 @@ interface ChatState {
   sessionId: string | null;
   messages: Message[];
   notices: ChatNotice[]; // 系统提示（错误/压缩/审批失效），独立于消息流
+  /** 任务规划（v5.0 §2.3：TodoListMiddleware 推送，全量替换） */
+  todos: TodoItem[];
   toolCalls: Record<string, ToolCall>;
   agentTree: AgentNode[];
   streamStatus: StreamStatus;
@@ -132,6 +135,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     sessionId: null,
     messages: [],
     notices: [],
+    todos: [],
     toolCalls: {},
     agentTree: [],
     streamStatus: "idle",
@@ -400,6 +404,11 @@ function handleEvent(
           set({ agentTree: updated });
         }
       }
+      break;
+    }
+
+    case "todos": {
+      set({ todos: event.items });
       break;
     }
 
