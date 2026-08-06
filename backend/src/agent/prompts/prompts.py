@@ -106,3 +106,34 @@ MEMORY_AGENT_PROMPT = """你是记忆管理员，负责把对话中的长期记�
 - 单条事实 ≤50 字，第三人称
 - 绝不访问用户数据/其他文件（你的工具集已最小化）
 """
+
+
+# ── 上下文工程开发计划 §7.1（#7 分层组装）──
+
+# 分层常量（v2 计划 §4.2）：核心 > 可选 > 动态（裁剪优先级；裁剪逻辑 P2）
+PROMPT_LAYERS = {
+    "core": ["DEFAULT_SYSTEM_PROMPT"],              # 核心层：角色（必选）
+    "optional": ["MEMORY_GUIDANCE_V3", "MODE_INSTRUCTIONS"],  # 可选层：按需注入
+    "dynamic": ["memory_injection"],                # 动态层：记忆注入（chat.py）
+}
+
+
+def build_system_prompt(*, mode: str = "default") -> str:
+    """分层组装 system prompt（核心 + 可选按需 + 动态由 chat 注入）。
+
+    P1 只做分层组装（v2.0 澄清）——裁剪逻辑放 P2（需精确 token 计算与
+    触发时机，与自定义压缩器一起做）。
+
+    Args:
+        mode: 代理模式（plan/agent/auto → 追加可选层模式指令）
+
+    Returns:
+        组装后的 system prompt 字符串
+    """
+    from src.agent.prompts import DEFAULT_SYSTEM_PROMPT, MEMORY_GUIDANCE_V3, MODE_INSTRUCTIONS
+
+    parts = [DEFAULT_SYSTEM_PROMPT, MEMORY_GUIDANCE_V3]
+    instruction = MODE_INSTRUCTIONS.get(mode)
+    if instruction:
+        parts.append(instruction)
+    return "\n".join(parts)

@@ -49,6 +49,11 @@ class DoneEvent(SSEEvent):
         default=None,
         description="上下文累计用量（历史估算 + 本轮实际 token，2026-08-04 P2）",
     )
+    context_warning: bool = Field(
+        default=False,
+        description="用量告警（#4，2026-08-05）：context_used > 80% 窗口时 True——"
+        "告知用户'为什么回答变模糊了'（与 summarizer 互补：压缩=自动兜底，告警=告知原因）",
+    )
     context_total: int = Field(
         default=128_000,
         description="上下文上限（模型窗口，2026-08-04 P2）",

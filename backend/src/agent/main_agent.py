@@ -41,7 +41,7 @@ from langchain_core.messages import BaseMessage
 from src.agent.middlewares.interpreter import build_interpreter_middleware
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.middlewares.tool_audit import ToolAuditMiddleware
-from src.agent.prompts import DEFAULT_SYSTEM_PROMPT, MEMORY_GUIDANCE_V3
+from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
 from src.core.backend import create_backend
 from src.core.config import settings
@@ -81,6 +81,7 @@ class ChatContext:
     model_id: int | None = None
     mode: str = "default"
     session_id: str | None = None
+    context_profile: str = "standard"   # #9 窗口场景（small/standard/large——先场景后映射模型，与模型选择解耦）
 
 
 @wrap_model_call
@@ -279,7 +280,7 @@ def _build_agent(thread_id: str):
     middleware += build_interpreter_middleware()
     return create_deep_agent(
         model=model,
-        system_prompt=DEFAULT_SYSTEM_PROMPT + MEMORY_GUIDANCE_V3,  # 指引统一在 src.agent.prompts
+        system_prompt=build_system_prompt(),  # 分层组装（核心+可选；动态记忆由 chat 注入）
         # P2 子代理隔离：SUBAGENT_ISOLATION=True 时 loader 用同一 model 预编译子代理
         subagents=load_subagents(model=model if settings.subagent_isolation else None),
         tools=internal_tools + mcp_tools,
