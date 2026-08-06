@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.core.config import settings
-from src.mcp.tools import skill_tool
+from src.agent.tools import skill_tool
 from src.skills.templates import create_skill_from_template, validate_skill_dir
 
 

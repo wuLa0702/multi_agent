@@ -1,6 +1,6 @@
 """MCP Server：把项目内部工具暴露为标准 MCP 端点（外部 Agent 可接入）。
 
-- 工具同源：包装 src/mcp/tools/ 的实现（registry 是工具真相源）
+- 工具同源：包装 src/agent/tools/ 的实现（registry 是工具真相源）
 - 挂载：main.py `app.mount("/mcp", mcp.http_app())`，共享 FastAPI 端口
 - 消费方：外部 MCP Client（Claude Desktop / 其他 agent 系统 / 本项目自身
   也可用 langchain_mcp_adapters 连自己验证闭环）
@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from src.mcp.tools.sandbox_tool import run_code_in_sandbox as _run_code_in_sandbox
-from src.mcp.tools.search import internet_search as _internet_search
+from src.agent.tools.sandbox_tool import run_code_in_sandbox as _run_code_in_sandbox
+from src.agent.tools.search import internet_search as _internet_search
 
 mcp = FastMCP("multi-agent")
 

@@ -1,6 +1,6 @@
 """工具分类注册表（蓝图 §4：mcp/registry.py）。
 
-业务工具定义在 mcp/tools/ 按域分包；本模块提供 工具名 → 实现函数
+业务工具定义在 agent/tools/ 按域分包；本模块提供 工具名 → 实现函数
 的映射，两个消费方：
 - agent 层挂载（build_agent 的 tools）
 - 子代理 YAML 加载器查表（subagents/*.yaml 的 tools 字段）
@@ -11,14 +11,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from src.mcp.tools.sandbox_tool import (
+from src.agent.tools.sandbox_tool import (
     download_sandbox_file,
     run_code_in_sandbox,
     run_command_in_sandbox,
     upload_workspace_file,
 )
-from src.mcp.tools.search import internet_search
-from src.mcp.tools.skill_tool import run_skill_script
+from src.agent.tools.search import internet_search
+from src.agent.tools.skill_tool import run_skill_script
 
 TOOL_REGISTRY: dict[str, Callable[..., str]] = {
     "internet_search": internet_search,

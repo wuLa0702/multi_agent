@@ -16,7 +16,7 @@ from langchain_core.runnables import RunnableConfig
 
 from src.core.config import settings
 from src.core.paths import get_skill_md_dir
-from src.mcp.tools.sandbox_tool import (
+from src.agent.tools.sandbox_tool import (
     _thread_id_from,
     sandbox_adapter,
     sandbox_pool,

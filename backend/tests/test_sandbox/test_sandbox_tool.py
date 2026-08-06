@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.core.config import settings
-from src.mcp.tools import sandbox_tool
+from src.agent.tools import sandbox_tool
 from src.sandbox.pool import SandboxFullError
 
 

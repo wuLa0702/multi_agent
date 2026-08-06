@@ -1,7 +1,7 @@
 """主 Agent：deepagents 对话编排（搜索子代理 + OpenSandbox 沙箱工具）。
 
 能力布局（蓝图 §4，与 agent_demo.py 同源）：
-- 业务工具定义：src/mcp/tools/ 按域分包（search.py 搜索域 / sandbox_tool.py 沙箱域），
+- 业务工具定义：src/agent/tools/ 按域分包（search.py 搜索域 / sandbox_tool.py 沙箱域），
   经 src/mcp/registry.py 注册表暴露
 - 声明式子代理：src/agent/subagents/*.yaml（loader.py 解析，tools 名查 registry）
 
@@ -56,13 +56,13 @@ from src.core.paths import (
 from src.core.permissions import build_main_permissions
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
-from src.mcp.tools.sandbox_tool import (
+from src.agent.tools.sandbox_tool import (
     download_sandbox_file,
     run_code_in_sandbox,
     run_command_in_sandbox,
     upload_workspace_file,
 )
-from src.mcp.tools.skill_tool import run_skill_script
+from src.agent.tools.skill_tool import run_skill_script
 
 logger = logging.getLogger(__name__)
 

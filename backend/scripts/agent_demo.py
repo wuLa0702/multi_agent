@@ -1,7 +1,7 @@
 """deepagents 快速 Demo（项目标准版）：配置全部来自配置中心（.env.dev → src.core.config）。
 
 结构（与生产 main_agent 同源，蓝图 §4）：
-- 业务工具：src/mcp/tools/ 按域分包（search.py 搜索 / sandbox_tool.py 沙箱），
+- 业务工具：src/agent/tools/ 按域分包（search.py 搜索 / sandbox_tool.py 沙箱），
   注册进 src/mcp/registry.py——新增工具 = 注册表登记
 - 声明式子代理：src/agent/subagents/*.yaml（loader.py 解析，tools 名查 registry）
 - main()：先模拟调用一次 OpenSandbox（create → 写文件 → 执行 → 销毁，链路验证），
@@ -33,7 +33,7 @@ from src.agent.main_agent import DEFAULT_SYSTEM_PROMPT
 from src.agent.subagents.loader import load_subagents
 from src.core.config import settings
 from src.llm.adapter import get_chat_model
-from src.mcp.tools.sandbox_tool import run_code_in_sandbox
+from src.agent.tools.sandbox_tool import run_code_in_sandbox
 from src.sandbox.adapter import OpenSandboxAdapter
 
 # ── LangSmith 链路追踪 ──
@@ -44,7 +44,7 @@ os.environ.setdefault("LANGCHAIN_API_KEY", settings.langchain_api_key)
 os.environ.setdefault("LANGCHAIN_PROJECT", settings.langchain_project)
 
 # 沙箱适配器（惰性：import 不创建沙箱，调用时才连本地 docker / 云端）——
-# 步骤 1 模拟调用用；agent 工具走 mcp/tools/sandbox_tool.py 的 run_code_in_sandbox
+# 步骤 1 模拟调用用；agent 工具走 agent/tools/sandbox_tool.py 的 run_code_in_sandbox
 sandbox_adapter = OpenSandboxAdapter()
 
 
