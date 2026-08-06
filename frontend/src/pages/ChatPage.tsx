@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { MessageSquare, Plus } from "lucide-react";
 import { useSessionStore } from "@/lib/stores/sessionStore";
 import { useChatStore } from "@/lib/stores/chatStore";
+import { useUiModeStore } from "@/lib/stores/uiModeStore";
 import SessionList from "@/components/history/SessionList";
 import ChatHeader, { exportChatAsMd } from "@/components/chat/ChatHeader";
 import ChatMessages from "@/components/chat/ChatMessages";
@@ -32,6 +33,19 @@ export default function ChatPage() {
 
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const resumePromptShownRef = useRef(false);
+  const autoUpgrade = useUiModeStore((s) => s.autoUpgrade);
+
+  // 模式自动检测（v5.0 §3.1/§3.2）：subagent 事件 → 子代理模式；todos → 任务规划；防抖 500ms 单向升级
+  const subagentCount = useChatStore((s) => s.agentTree.length);
+  const todoCount = useChatStore((s) => s.todos.length);
+  useEffect(() => {
+    if (subagentCount === 0 && todoCount === 0) return;
+    const t = setTimeout(() => {
+      if (todoCount > 0) autoUpgrade("todo");
+      else autoUpgrade("subagent");
+    }, 500);
+    return () => clearTimeout(t);
+  }, [subagentCount, todoCount, autoUpgrade]);
 
   useEffect(() => {
     void loadList().catch(() => undefined);

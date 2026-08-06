@@ -8,6 +8,7 @@ import { useState } from "react";
 import { Search, Download, MoreHorizontal, Check, X, Bot } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import PageHeader from "@/components/common/PageHeader";
+import ModeSwitcher from "@/components/common/ModeSwitcher";
 import { showConfirm } from "@/components/ui/confirm-dialog";
 
 interface Props {
@@ -47,6 +48,8 @@ export default function ChatHeader({
       }}
       right={
         <>
+          {/* 视图模式切换（v5.0 §3.3：手动入口，优先级最高） */}
+          <ModeSwitcher />
           <HeaderBtn label="搜索对话内容" onClick={onSearch}>
             <Search className="size-4" />
           </HeaderBtn>
