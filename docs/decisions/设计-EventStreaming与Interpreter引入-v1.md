@@ -23,7 +23,7 @@
 > - 官方 event-streaming：https://docs.langchain.com/oss/python/deepagents/event-streaming（v3 typed-projection，beta）
 > - 官方 interpreters：https://docs.langchain.com/oss/python/deepagents/interpreters（QuickJS，beta）
 > - SSE 契约 v3：`docs/方案/后端接口对接文档`（事件类型定稿：token/tool_call/approve/summarize/subagent/done/error）
-> - 沙箱能力计划：`docs/decisions/方案-沙箱能力开发计划-v1.md`（执行层，本方案安全边界复用）
+> - 沙箱能力计划：`docs/decisions/计划-沙箱能力开发-v1.md`（执行层，本方案安全边界复用）
 
 ---
 

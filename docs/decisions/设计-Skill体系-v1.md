@@ -22,7 +22,7 @@
 > **关联文档**：
 > - 官方 skills：https://docs.langchain.com/oss/python/deepagents/skills（Agent Skills 规范）
 > - 设计 v3：`docs/decisions/CompositeBackend文件存储-设计-v3.md`（/skills/static/ 路由）
-> - 沙箱能力：`docs/decisions/方案-沙箱能力开发计划-v1.md`（技能 scripts/ 执行闭环）
+> - 沙箱能力：`docs/decisions/计划-沙箱能力开发-v1.md`（技能 scripts/ 执行闭环）
 > - 文档规范：`docs/文档规范.md`（v4：设计方案必含核心代码）
 
 ---

@@ -6,7 +6,7 @@
 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
-> | v3.0 | 2026-08-04 | §2.8 新增**双层权限章节**（上层 FilesystemPermission 声明式规则 + 下层 PolicyBackend 拦截钩子 + 逃逸面边界 + audit JSONL 审计）；§2.6 升级**子代理隔离两阶段**（P1 子代理权限覆盖整体替换父级 + P2 CompiledSubAgent 预编译绑独立 StateBackend，原生支持已核实）；§2.1 路由全部经 PolicyBackend 策略包装；§2.2 ReadOnlyBackend 统一进策略层（类保留兼容）；§2.3 核心代码升级（策略模板 + PolicyBackend + 开关）；§2.5 测试补下层拦截/开关矩阵用例；§3.1 自检清单更新；§3.2 后续更新。依据评审稿 `docs/decisions/方案-CompositeBackend深化改造-v1.md` |
+> | v3.0 | 2026-08-04 | §2.8 新增**双层权限章节**（上层 FilesystemPermission 声明式规则 + 下层 PolicyBackend 拦截钩子 + 逃逸面边界 + audit JSONL 审计）；§2.6 升级**子代理隔离两阶段**（P1 子代理权限覆盖整体替换父级 + P2 CompiledSubAgent 预编译绑独立 StateBackend，原生支持已核实）；§2.1 路由全部经 PolicyBackend 策略包装；§2.2 ReadOnlyBackend 统一进策略层（类保留兼容）；§2.3 核心代码升级（策略模板 + PolicyBackend + 开关）；§2.5 测试补下层拦截/开关矩阵用例；§3.1 自检清单更新；§3.2 后续更新。依据评审稿 `docs/decisions/设计-CompositeBackend深化改造-v1.md` |
 > | v2.0 | 2026-08-04 | 吸收评审 10 项：§2.1 废弃全局单例改**会话级 Backend + Agent 缓存**（硬缺陷 1）；§2.2 新增 **ReadOnlyBackend 只读强制**（硬缺陷 2）；§2.3 核心代码 v2（create_backend(thread_id) 工厂 + settings 开关 + 路径环境变量化 + 自动初始化）；§2.4 生命周期 + **临时文件清理**（隐患 1）+ **USE_MEMORY_WORKSPACE 双模式**（隐患 3）；§2.5 测试含**并发隔离**用例；§2.6 **子 Agent 隔离限制**标注与演进（隐患 2）；§2.7 细节优化 5 项（StoreBackend 对比/路径环境变量/日志埋点/并发/初始化） |
 > | v1.2 | 2026-08-04 | §2.1 补「与现有目录映射核对表」（5 路由逐一核对无冲突）+「tools（代码）vs skills（文件）边界」澄清 +「skill_md 共写语义」标注（SkillMarket 写入 / Agent 只读约定） |
 > | v1.1 | 2026-08-04 | §2.1 多路由组合（4 类：记忆/内置技能/市场技能/导出）+ 沙盒澄清表 + 参考配置对照表；§2.2 完整核心代码；§2.3 多路由测试 |
@@ -18,7 +18,7 @@
 > - §3 总：自检清单与后续
 >
 > **关联文档**：
-> - 深化改造评审稿：`docs/decisions/方案-CompositeBackend深化改造-v1.md`（§6 完整代码 / §7 验收测试 / §8 优先级）
+> - 深化改造评审稿：`docs/decisions/设计-CompositeBackend深化改造-v1.md`（§6 完整代码 / §7 验收测试 / §8 优先级）
 > - 持久化计划：`docs/decisions/持久化能力开发计划-Checkpointer与Store-v1.md`（§B.0 / §B.1 / §B.2）
 > - 架构：`docs/架构/多agent项目-架构目录-v1.md`（§2 目录树 / §2.1 能力落地位置对照）
 > - 路径：`docs/方案/后端基础架构-v1.md`（路径自适应）
@@ -37,7 +37,7 @@
 ② 只读路由仅文档约定无代码强制（安全漏洞）；
 ③ 磁盘持久化引入临时文件堆积、子 Agent 污染、demo 兼容问题。
 
-**v3.0 深化背景**（依据评审稿 `方案-CompositeBackend深化改造-v1.md`）：v2.0 已实施落地，
+**v3.0 深化背景**（依据评审稿 `设计-CompositeBackend深化改造-v1.md`）：v2.0 已实施落地，
 但安全闭环未闭合——上层 deepagents 官方 Permissions 声明式规则未挂载（技能只读仅有
 backend 层代码拦截，无 agent 工具层 deny / 无高危写入 interrupt 人工审批 / 无子代理独立
 权限覆盖）；下层无 Backend Policy Hooks（MCP 自定义工具、沙箱 shell 逃逸面无拦截无统一

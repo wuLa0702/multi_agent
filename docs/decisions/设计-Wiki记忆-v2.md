@@ -22,7 +22,7 @@
 > - 附录：待确认问题清单
 
 > **关联文档**：
-> - 本地方案家族：`docs/decisions/方案-记忆能力开发-v3.md`（本地文件 + Store 记忆——降级方案的兜底实现）
+> - 本地方案家族：`docs/decisions/设计-记忆能力开发-v3.md`（本地文件 + Store 记忆——降级方案的兜底实现）
 > - 架构真相源：`docs/架构/多agent项目-架构目录-v1.md`（依赖单向：api → agent → memory）
 > - 配置中心：`backend/src/core/config.py`（BaseSettings + .env 切换）
 > - 文档规范：`docs/文档规范.md`
@@ -530,4 +530,4 @@ async def favorites_health() -> dict:
 - [ ] 本地收藏索引落 SQLite 还是文件（v3 记忆布局并行确认）
 
 **A-3 与 v3 本地方案的关系**：
-- [ ] LocalBackend 复用 v3 `decisions.md`/`tasks.md` 格式（降级时人工可读）——写入权限/格式与 v3 方案对齐，落地时核对 `方案-记忆能力开发-v3.md`
+- [ ] LocalBackend 复用 v3 `decisions.md`/`tasks.md` 格式（降级时人工可读）——写入权限/格式与 v3 方案对齐，落地时核对 `设计-记忆能力开发-v3.md`

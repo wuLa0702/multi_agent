@@ -23,7 +23,7 @@
 
 > **关联文档**：
 > - 官方文档：`https://docs.langchain.com/oss/python/deepagents/profiles`（2026-08-04 快照）
-> - 模型选择机制：`docs/decisions/方案-上下文工程开发计划-v2.md`（#9 窗口场景与模型选择解耦）
+> - 模型选择机制：`docs/decisions/计划-上下文工程开发-v2.md`（#9 窗口场景与模型选择解耦）
 > - 接线点源码：`backend/src/agent/main_agent.py`（_build_agent / _configurable_model）、`backend/src/llm/adapter.py`（_build_chat_model）、`backend/src/core/model_registry.py`
 > - 架构蓝图：`docs/架构/多agent项目-架构目录-v1.md`
 > - 文档规范：`docs/文档规范.md`（v4：设计方案必含核心代码）
