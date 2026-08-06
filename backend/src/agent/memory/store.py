@@ -192,16 +192,26 @@ async def save_typed_memory(store: BaseStore, memory_type: str, fact: str) -> No
 
 
 async def load_recent_memories_v3(
-    store: BaseStore, limit: int = MEMORY_INJECT_LIMIT
+    store: BaseStore,
+    limit: int = MEMORY_INJECT_LIMIT,
+    *,
+    window_ratio: float = 0.1,
+    window_tokens: int = 128_000,
 ) -> list[str]:
-    """取最近 N 条记忆（类型化 namespace 合并 + 旧 global 兼容，注入用）。
+    """取最近记忆（上下文工程 #2 升级：画像优先 + 时间衰减 + 窗口 ≤10% 裁剪）。
+
+    排序：画像优先（priority 0）→ 同优先级内时间衰减（ts 新→旧）；
+    裁剪：注入 token 估算 ≤ window_ratio × window_tokens（v2 澄清：简单估算，
+    精确放 P2）。
 
     Args:
         store: langgraph store
-        limit: 注入条数上限
+        limit: 基础条数上限
+        window_ratio: 注入占上下文比例上限（0.1 = 10%）
+        window_tokens: 上下文窗口大小（默认 128k）
 
     Returns:
-        记忆内容列表（新→旧，画像优先排序）
+        记忆内容列表（画像优先、新→旧、窗口裁剪后）
     """
     if store is None:
         return []
@@ -213,13 +223,40 @@ async def load_recent_memories_v3(
         logger.exception("记忆检索失败（跳过注入）")
         return []
     merged = (
-        [(item.value.get("content", ""), 0) for item in profile if item.value]
-        + [(item.value.get("content", ""), 1) for item in facts if item.value]
-        + [(item.value.get("content", ""), 2) for item in legacy if item.value]
+        [(item.value.get("content", ""), 0, item.value.get("ts", 0)) for item in profile if item.value]
+        + [(item.value.get("content", ""), 1, item.value.get("ts", 0)) for item in facts if item.value]
+        + [(item.value.get("content", ""), 2, item.value.get("ts", 0)) for item in legacy if item.value]
     )
-    # 画像优先（优先级 0），其余按序；截断 limit
-    merged.sort(key=lambda x: x[1])
-    return [content for content, _ in merged[:limit]]
+    # 画像优先 → 同优先级内时间衰减（新在前）
+    merged.sort(key=lambda x: (x[1], -x[2]))
+    # 窗口裁剪：估算 token ≤ 比例上限（按序累计，超限截断）
+    budget = int(window_ratio * window_tokens)
+    result: list[str] = []
+    used = 0
+    for content, _, _ in merged:
+        used += _estimate_tokens(content)
+        if used > budget:
+            break
+        result.append(content)
+    return result[:limit]
+
+
+def _estimate_tokens(text: str) -> int:
+    """简单 token 估算（v2 澄清：学习 demo 够用，精确放 P2）。
+
+    规则：中文字符数 / 2 + 英文/数字字符数 / 4（粗估）。
+
+    Args:
+        text: 待估算文本
+
+    Returns:
+        估算 token 数
+    """
+    import re
+
+    cjk = len(re.findall(r"[一-鿿]", text))
+    other = len(text) - cjk
+    return cjk // 2 + other // 4
 
 
 async def archive_completed_tasks(
