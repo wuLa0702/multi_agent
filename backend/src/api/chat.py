@@ -349,16 +349,33 @@ async def _event_stream(
             Message(session_id=session_id, role="assistant", content=assistant_text),
         )
 
-        # 长期记忆后台写入（v3 类型化：LLM 抽取 {type, fact} + 任务归档检查；
-        # done 前触发不等待——2026-08-04 优化）
+        # 长期记忆后台写入（done 前触发不等待——2026-08-04 优化）
         if not is_resume and assistant_text:
-            # v3.1：turn_count = 历史消息轮次（user+assistant 成对）——短对话跳过抽取
-            asyncio.create_task(
-                _save_memory_in_background(
-                    req.message or "", assistant_text,
-                    turn_count=len(lc_messages) // 2,
+            if settings.memory_agent_enabled:
+                # memory_agent 子代理（2026-08-05 记忆抽取子代理方案）：
+                # 入队后台队列（监控/日志/并发限制/指纹幂等）——多步+工具抽取
+                from src.agent.memory.agent import _fingerprint
+                from src.agent.memory.queue import MemoryTask, memory_task_queue
+
+                memory_task_queue.enqueue(
+                    MemoryTask(
+                        session_id=session_id,
+                        user_message=req.message or "",
+                        assistant_text=assistant_text,
+                        fingerprint=_fingerprint(
+                            session_id, req.message or "", assistant_text
+                        ),
+                    )
                 )
-            )
+            else:
+                # 降级路径：现状单次 LLM 抽取（extract_memory_typed 保留）
+                # v3.1：turn_count = 历史消息轮次（user+assistant 成对）——短对话跳过
+                asyncio.create_task(
+                    _save_memory_in_background(
+                        req.message or "", assistant_text,
+                        turn_count=len(lc_messages) // 2,
+                    )
+                )
 
         # done 事件（流内异常时不发）；context_used 查库（TokenUsageMiddleware
         # 在 token 流结束时已落库，此处取最新值带给前端 store 同步）
