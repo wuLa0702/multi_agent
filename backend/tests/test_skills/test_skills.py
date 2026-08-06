@@ -175,3 +175,21 @@ def test_run_skill_script_no_url(script_env, monkeypatch) -> None:
     """sandbox_url 空 → 降级提示。"""
     monkeypatch.setattr(settings, "sandbox_url", "")
     assert "沙箱不可用" in skill_tool.run_skill_script("research-report", "build_report.py")
+
+
+# ── 上下文工程第一批-P0：#3 技能拆分约定核对（入口 ≤2KB）──
+
+def test_builtin_skills_entry_within_2kb() -> None:
+    """#3 核对：所有内置技能 SKILL.md 入口 ≤2KB（渐进披露约定——深水区在 references/）。"""
+    from src.core.paths import get_static_skills_dir
+
+    builtin = get_static_skills_dir()
+    skill_dirs = [d for d in builtin.iterdir() if d.is_dir()]
+    assert skill_dirs, "builtin 下应有技能目录"
+    for skill_dir in skill_dirs:
+        entry = skill_dir / "SKILL.md"
+        assert entry.exists(), f"{skill_dir.name} 缺 SKILL.md"
+        size = entry.stat().st_size
+        assert size <= 2048, (
+            f"{skill_dir.name}/SKILL.md 入口 {size}B > 2KB——需拆概览+分文件（深水区下沉 references/）"
+        )

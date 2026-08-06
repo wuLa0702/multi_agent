@@ -167,6 +167,11 @@ class Settings(BaseSettings):
     # 抽取专用模型（小模型省钱；空=主模型兜底——用户拍板 2026-08-05）
     memory_agent_model: str = ""
 
+    # ── 上下文工程（2026-08-05 开发计划 v2）──
+    # 工具结果驱逐阈值（默认对齐官方 20000；⚠️ P1 只观察不盲调——
+    # create_deep_agent 无直接参数，P2 自定义中间件时才真正生效）
+    context_tool_evict_limit: int = 20000
+
     @property
     def is_prod(self) -> bool:
         """是否生产环境。"""
