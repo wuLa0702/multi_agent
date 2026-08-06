@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api/client";
 import { useChatStore } from "@/lib/stores/chatStore";
+import { setHitlEnabledMock } from "@/lib/api/mock";
 import { useSkillStore } from "@/lib/stores/skillStore";
 import { useTheme } from "@/hooks/useTheme";
 import InstalledSkillRow from "@/components/skills/InstalledSkillRow";
@@ -54,6 +55,7 @@ const SYSTEM_SWITCHES: SwitchDef[] = [
   { key: "log_report", label: "前端日志上报", desc: "将前端错误批量上报到后端 logs/frontend.log", value: false },
   { key: "auto_update", label: "Skill 自动更新", desc: "市场技能有新版本时自动升级", value: false },
   { key: "stream_accel", label: "流式渲染加速", desc: "逐字渲染 vs 分块渲染（大模型长文更流畅）", value: true },
+  { key: "hitl_enabled", label: "人工审批（HITL）", desc: "高风险操作（运行代码/修改文件/技能脚本）需人工确认后执行（高危三决策 / 中危两决策）；关闭则自动执行", value: false },
 ];
 
 export default function SettingsPage() {
@@ -100,9 +102,10 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 开关变更 → 后端持久化 */
+  /** 开关变更 → 后端持久化（mock 模式同步 localStorage 供 mock 流读取） */
   const handleSwitchChange = (key: string, value: boolean) => {
     setSwitches((prev) => ({ ...prev, [key]: value }));
+    if (key === "hitl_enabled") setHitlEnabledMock(value);
     void api.putSettings({ [key]: String(value) }).catch(() => showToast("配置保存失败", "error"));
     showToast(value ? "已开启" : "已关闭", "success");
   };

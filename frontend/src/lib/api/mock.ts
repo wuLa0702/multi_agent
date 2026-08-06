@@ -14,6 +14,15 @@ export const MOCK_ENABLED = true;
 /** 与 streamChat 对齐的回调集合（复用 sse.ts 的 StreamCallbacks 类型） */
 import type { StreamCallbacks } from "./sse";
 
+/** mock HITL 开关（localStorage 持久化；SettingsPage 开关联动，默认开便于测试） */
+const HITL_MOCK_KEY = "multi-agent.mock.hitlEnabled";
+export function isHitlEnabledMock(): boolean {
+  return localStorage.getItem(HITL_MOCK_KEY) !== "false";
+}
+export function setHitlEnabledMock(enabled: boolean): void {
+  localStorage.setItem(HITL_MOCK_KEY, String(enabled));
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** mock 审批事件（高危：任意代码执行，三决策） */
@@ -64,7 +73,7 @@ export async function streamChatMock(
       await sleep(300);
       cb.onEvent({ type: "token", text: t } as SSEEvent);
     }
-    cb.onEvent({ type: "done", run_id: req.resume_run_id, session_id: req.session_id ?? "mock", duration_ms: 1200 } as SSEEvent);
+    cb.onEvent({ type: "done", run_id: req.resume_run_id, session_id: req.session_id ?? "mock", duration_ms: 1200, context_used: 8600, context_total: 128_000 } as SSEEvent);
     cb.onEnd();
     return;
   }
@@ -100,6 +109,13 @@ export async function streamChatMock(
   }
   if (signal.aborted) return;
   await sleep(300);
-  // 高危操作 → 触发审批（挂起，等待用户决策；resume 走上方恢复流）
-  cb.onEvent(mockApproveEvent());
+  if (isHitlEnabledMock()) {
+    // 高危操作 → 触发审批（挂起，等待用户决策；resume 走上方恢复流）
+    cb.onEvent(mockApproveEvent());
+  } else {
+    // HITL 关闭：直接完成（带上下文用量，v4.0 §3.2）
+    cb.onEvent({ type: "token", text: "（HITL 已关闭，高风险操作自动执行）" } as SSEEvent);
+    cb.onEvent({ type: "done", run_id: "mock-run-new", session_id: req.session_id ?? "mock", duration_ms: 900, context_used: 5200, context_total: 128_000 } as SSEEvent);
+    cb.onEnd();
+  }
 }
