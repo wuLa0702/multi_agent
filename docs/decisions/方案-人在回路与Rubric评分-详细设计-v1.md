@@ -5,6 +5,7 @@
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v1.1 | 2026-08-06 | §2 官方能力梳理 / §3 项目现状对接点：**重构为图表化呈现**（§2.1/§2.4 全流程 ASCII 图 + §2.2/§2.5 配置与决策表 + §3.1 就绪度总览表 + §3.2 差距→动作流程图；子节 2.1-2.8 合并重组为 2.1-2.5），文字大幅精简；结论与设计决策不变 |
 > | v1 | 2026-08-06 | 初版：基于官方两页文档（human-in-the-loop + rubric，2026-08-04 快照）与 deepagents 0.7.1 源码核对的预研设计——§0 预研结论（HITL 基建就绪可预先开发 / Rubric 有国产模型结构化输出风险需 P0 验证）；§2 官方能力梳理（HITL 决策类型/条件中断/恢复/文件权限 interrupt + Rubric 配置/verdicts/事件）；§3 项目现状对接点（checkpointer/resume_run_id/approve 事件已就绪清单）；§4 预想场景映射（代码评审/报告生成/来源真实性 × HITL/Rubric 分工）；§5 设计决策（D1-D8：审批分级配置/审批 API/事件协议/Rubric 模板库）；§6 权衡与 P0 验证计划（Rubric grader response_format 死穴 + astream_events interrupt 恢复形态）；§7 完整核心代码（HITL 接线 + Rubric 挂载 + 模板库）；§8 测试设计；§9 验收与风险 |
 
 > **目录**：
@@ -27,7 +28,7 @@
 
 ---
 
-## 0. 结论：预研结论 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+## 0. 结论：预研结论 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 > **核心理解（co-creator 定调）**：**人类决定"能不能做"，AI 打分决定"做得好不好"**——
 > HITL 是执行权闸门（工具副作用前人类审批），Rubric 是质量闸门（交付前 LLM-as-judge 自评迭代）。
@@ -68,92 +69,106 @@
 
 ---
 
-## 2. 分：官方能力梳理
+## 2. 分：官方能力梳理 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1.1</span>
 
-### 2.1 HITL：interrupt_on 配置 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+> 一句话概括：**HITL 管"能不能做"（执行前人类审批），Rubric 管"做得好不好"（交付前 AI 自评迭代）**。
 
-- `interrupt_on` 参数：工具名 → 配置（`True` 默认四决策 / `False` 不审批 / `InterruptOnConfig` 自定义）
-- 设置后自动挂载 `HumanInTheLoopMiddleware`；中断未返回结果时 `PatchToolCallsMiddleware` 自动修复消息历史
-- **Checkpointer 是硬前置**（中断 → 恢复需持久化状态）；恢复必须用**同一 thread_id**
-- 条件中断：`InterruptOnConfig(when=predicate)`——按 ToolCallRequest 参数决定是否中断（如只审工作区外路径写操作）；需 langchain>=1.3.3
-
-### 2.2 HITL：四种决策类型 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
-
-| 决策 | 语义 | 用途 |
-|------|------|------|
-| ✅ `approve` | 原参数执行 | 批准动作 |
-| ✏️ `edit` | 改参数后执行（edited_action 含 name+args） | 修改收件人/路径等 |
-| ❌ `reject` | 跳过执行 + 反馈给 agent（message 决定 agent 下一步） | 拒绝 + 指示（"不要重试，改为归档"） |
-| 💬 `respond` | 人类消息直接作为工具结果（跳过执行） | 只用于 ask_user 类工具，**不可用于副作用工具**（会被模型当成功结果） |
-
-- **多工具批量中断**：同轮多个待审工具合并为一次 interrupt（action_requests 数组），决策**按顺序一一对应**
-- reject 的 message 是质量关键：明确"放弃 / 追问 / 换更安全方案"
-
-### 2.3 HITL：中断处理与恢复 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 2.1 HITL 全流程 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1.1</span>
 
 ```
+用户请求 → agent 调用工具
+              │
+              ├─ 命中 interrupt_on？ ── 否 ──→ 正常执行 → 完成
+              │        │
+              │        └─ 是 ──→ ⏸ 中断暂停（状态入 checkpointer）
+              │                    ↓
+              │             人类决策（approve / edit / reject / respond）
+              │                    ↓
+              │       Command(resume=decisions) 恢复（同一 thread_id）→ 继续
+```
+
+### 2.2 配置与决策类型 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1.1</span>
+
+| 配置项 | 说明 |
+|--------|------|
+| `interrupt_on = {工具: True / False / InterruptOnConfig}` | True=四决策全开；False=不审；配置=自定义决策集 |
+| 自动挂载 | 配置即挂 HumanInTheLoopMiddleware + PatchToolCallsMiddleware（中断时自动修复消息历史） |
+| 硬前置 | **必须 checkpointer**；恢复必须**同一 thread_id** |
+| 条件中断 | `InterruptOnConfig(when=谓词)`：按工具参数决定是否中断（如只审工作区外写操作） |
+| 批量审批 | 同轮多工具合并一次中断，决策**按序一一对应** |
+| 文件权限 | permissions 规则 `mode="interrupt"`（≥0.6.8）：写/编辑命中路径即中断，与 interrupt_on 合并审批——比 interrupt_on 更声明式，项目权限模板可直接扩展 |
+| 子代理 | 可有独立 interrupt_on（覆盖主 agent）；工具内也可 `interrupt()` 直接暂停 |
+
+| 决策 | 含义 | 用途 |
+|------|------|------|
+| ✅ `approve` | 原样执行 | 批准 |
+| ✏️ `edit` | 改参数后执行 | 改收件人/路径等 |
+| ❌ `reject` | 跳过 + 反馈 message | 拒绝并指示（别重试/换方案）——message 是质量关键 |
+| 💬 `respond` | 人类消息当工具结果 | 仅 ask_user 类工具；**勿用于副作用工具**（会被模型当成功结果） |
+
+### 2.3 中断处理（官方代码浓缩） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1.1</span>
+
+```python
 result = agent.invoke(..., config=config, version="v2")
 if result.interrupts:
-    interrupt_value = result.interrupts[0].value
-    action_requests = interrupt_value["action_requests"]      # 待审动作
-    review_configs = interrupt_value["review_configs"]        # 各工具允许决策
-    decisions = [{"type": "reject", "message": "..."}]        # 按序一一对应
+    v = result.interrupts[0].value
+    action_requests = v["action_requests"]   # 待审动作（可多个）
+    review_configs  = v["review_configs"]    # 各工具允许的决策
+    decisions = [{"type": "reject", "message": "..."}]  # 按序一一对应
     result = agent.invoke(Command(resume={"decisions": decisions}), config=config)
 ```
 
-### 2.4 HITL：子代理与文件权限 interrupt <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 2.4 Rubric 全流程 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1.1</span>
 
-- 子代理可有**独立 interrupt_on**（覆盖主 agent 配置）；子代理触发中断处理方式相同
-- 工具内可 `interrupt()` 直接暂停（如 request_approval 工具）
-- **文件权限 interrupt（deepagents>=0.6.8，本机 0.7.1 ✓）**：permissions 规则 `mode="interrupt"`——写/编辑命中规则路径即触发同一套中断（如 `/secrets/**`），与 interrupt_on 合并为一次审批。**比 interrupt_on 更声明式，项目权限模板可直接扩展**
+```
+agent 输出 ──→ LLM-as-judge grader 按 rubric 打分
+                  ├─ ✅ satisfied → 交付（结束）
+                  ├─ 🔁 needs_revision → 逐条反馈注入 → agent 重跑（≤ max_iterations）
+                  ├─ ⛔ max_iterations_reached → 结束（仍不达标）
+                  ├─ ❌ failed → 结束（rubric 格式非法）
+                  └─ 💥 grader_error → 结束（grader 异常）
+```
 
-### 2.5 HITL：最佳实践 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 2.5 Rubric 配置与观测 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1.1</span>
 
-- 按风险分级配置（高危全决策 / 中危 approve+reject / 低危不审批）
-- 恢复必须同一 thread_id；决策顺序与 action_requests 一一对应
-- edit 要保守（大改可能让模型重评估反复执行）
+| 参数 | 必填 | 默认 | 说明 |
+|------|------|------|------|
+| `model` | ✅ | — | grader 模型（通常比工作模型便宜） |
+| `max_iterations` | — | 3 | 自评迭代上限 |
+| `system_prompt` / `tools` | — | 内置 / 无 | 自定义评分指令 / grader 证据收集工具 |
+| `on_evaluation` | — | 无 | 每次评分回调（invoke/stream 通用观测途径，本项目 P1 用） |
 
-### 2.6 Rubric：RubricMiddleware 配置 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
-
-- **beta 功能（deepagents>=0.6.5，本机 0.7.1 ✓）**，API 可能变
-- 配置参数：`model`（必填，grader 用模型——通常比工作模型便宜）/ `system_prompt`（自定义评分指令）/ `tools`（grader 证据收集工具：跑测试、读文件）/ `max_iterations`（默认 3）/ `on_evaluation`（每次评分回调，含 RubricEvaluation dict）
-- 调用时传 `rubric` 字符串（换行 checklist）启动自评循环；**不传 rubric 中间件不运行**
-
-### 2.7 Rubric：verdicts 与事件 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
-
-| Verdict | 含义 | 回环？ |
-|---------|------|--------|
-| `satisfied` | 全部标准通过 | 否（终止） |
-| `needs_revision` | 至少一条不通过，反馈注入 agent 重跑 | 是 |
-| `max_iterations_reached` | 达迭代上限仍不达标 | 否 |
-| `failed` | rubric 格式非法/无法评估 | 否 |
-| `grader_error` | grader 自身异常（超时/凭据/结构化响应损坏） | 否 |
-
-- `RubricEvaluation`：grading_run_id / iteration / result / explanation / criteria（逐条 {name, passed, gap}）
-- 事件：v3 `stream.custom` 的 `rubric_evaluation_start/end`（需 CustomTransformer）；**`on_evaluation` 回调是 invoke/stream 通用的观测途径**（本项目 P1 选它，规避 v3 迁移）
-- 跨调用持久化：同一 thread_id + checkpointer → rubric 跨 invoke 保持（中断后恢复同 loop）
-
-### 2.8 Rubric：0.7.1 源码核对（关键风险） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
-
-- `RubricMiddleware` 已导出 ✓；grader 经 `create_agent(..., response_format=GraderResponse)` 构建——**走结构化输出**，且有 `_StructuredOutputStrategy` 自动探测（ToolStrategy vs ProviderStrategy）
-- ⚠️ **这正是国产模型死穴**（差距分析 §7.4 实证：response_format 三态全挂）→ grader 在 deepseek/豆包/智谱上极可能 `grader_error`。**必须 P0 验证（§6.1）**
+- 触发：调用时传 `rubric` 字符串（换行 checklist）；**不传不运行**；同一 thread_id + checkpointer → rubric 跨调用保持
+- 事件（P2 用）：v3 `stream.custom` 的 `rubric_evaluation_start/end`（需 CustomTransformer）
+- ⚠️ **0.7.1 源码核对（关键风险）**：grader 内部 `response_format=GraderResponse` 结构化输出 + 策略自动探测 → **国产模型死穴**（§6.1 P0 验证，不验证直接开发大概率全 `grader_error`）
 
 ---
 
-## 3. 分：项目现状对接点
+## 3. 分：项目现状对接点 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1.1</span>
 
-| 基建 | 现状 | 与本文档关系 |
+### 3.1 就绪度总览 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1.1</span>
+
+| 基建 | 状态 | 与本文档关系 |
 |------|------|-------------|
-| Checkpointer（AsyncSqliteSaver） | ✅ 已接（lifespan 管理，main_agent.init_checkpointer） | HITL 硬前置 ✓ |
-| resume 恢复（resume_run_id + checkpoint_id） | ✅ 已接（chat.py：resume 必须带 session_id；RESUME_NOT_FOUND 兜底；message 与 resume_run_id 互斥） | 审批恢复的通道 ✓（缺 decisions 参数） |
-| approve 事件类型 | ⚠️ 协议已定义（10-api.md：token/tool_call/approve/...），events.py 注释"后续阶段按契约补齐" | **本次实现** |
-| 权限模板（build_main_permissions / build_subagent_permissions） | ✅ 已接（主 agent + 子代理，P0 声明式规则） | 扩展 `mode="interrupt"` 规则（§5.1） |
-| 沙箱工具集（run_code_in_sandbox 等） | ✅ 已挂载 | 高危工具审批对象（§5.1） |
-| ChatContext / ChatRequest 模型 | ✅ 已接 | 扩展 rubric 透传（§5.4） |
-| SSE 事件流（astream_events v2） | ✅ 主链路 | HITL interrupt 检测点（§5.3，⚠️ V2 验证） |
-| 结构化输出在国产模型 | ❌ 实证不可用（§7.4 上轮） | Rubric 可行性风险（§6.1） |
+| Checkpointer（AsyncSqliteSaver） | ✅ 已接 | HITL 硬前置 ✓ |
+| resume 恢复（resume_run_id + checkpoint_id） | ✅ 已接 | 审批恢复通道 ✓（缺 decisions 参数） |
+| approve 事件类型 | ⚠️ 协议已定义、未实现 | **本次实现** |
+| 权限模板（主/子代理） | ✅ 已接 | 扩展 `mode="interrupt"` 规则 |
+| 沙箱工具集 | ✅ 已挂载 | 高危审批对象 |
+| SSE 事件流（astream_events v2） | ✅ 主链路 | interrupt 检测点（⚠️ V2 验证） |
+| 结构化输出（国产模型） | ❌ 实证不可用 | Rubric 可行性风险（⚠️ V1 验证） |
 
-**差距清单**：① interrupt_on 配置 ② 审批决策 API（decisions 参数）③ approve 事件实现 ④ RubricMiddleware 挂载 + rubric 透传 + 模板库 ⑤ 两个 P0 验证。
+### 3.2 差距 → 动作 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1.1</span>
+
+```
+已就绪：checkpointer → resume → approve 事件类型 → 权限模板 → 沙箱工具集
+              │
+差什么：① interrupt_on 配置        ② 审批决策 API（decisions 参数）
+        ③ approve 事件实现         ④ Rubric 挂载 + 透传 + 模板库
+        ⑤ P0 验证 ×2（V1 国产模型 grader / V2 流式中断恢复形态）
+              │
+动作：HITL 直接补 ①②③（P1）     Rubric 先过 V1 验证再补 ④（P1 或降级 P2）
+```
 
 ---
 
@@ -173,7 +188,7 @@ if result.interrupts:
 
 ## 5. 分：设计决策
 
-### 5.1 D1：HITL 审批分级配置（interrupt_on + 权限 interrupt 双轨） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 5.1 D1：HITL 审批分级配置（interrupt_on + 权限 interrupt 双轨） <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 - **interrupt_on 按工具风险分级**（代码常量，`src/agent/hitl.py`）：
 
@@ -188,26 +203,26 @@ if result.interrupts:
 - **权限 interrupt 双轨**：`build_main_permissions` 模板加 `mode="interrupt"` 规则（如 `/secrets/**` 写）——命中即与 interrupt_on 合并审批（声明式，覆盖配置文件路径）
 - 配置开关：`settings.hitl_enabled`（默认 False，预先开发完默认关，业务接入时开）
 
-### 5.2 D2：审批决策 API（复用 /v1/chat/stream） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 5.2 D2：审批决策 API（复用 /v1/chat/stream） <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 - `ChatRequest` 扩展 `decisions: list[Decision] | None`（Pydantic 模型：type: approve/edit/reject/respond + message + edited_action）
 - 语义：`resume_run_id` 模式 + `decisions` → **审批恢复**（中断点继续）；`resume_run_id` 无 decisions → 既有断点续聊
 - 校验：decisions 非空时必须有 resume_run_id；decision type 非法 → 400
 - 映射：`Command(resume={"decisions": [...]})` 作为输入传给 astream_events（⚠️ V2 验证：astream_events 接受 Command input 的形态）
 
-### 5.3 D3：approve 事件实现 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 5.3 D3：approve 事件实现 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 - 事件类型沿用协议（`approve`），payload 补齐：`action_requests`（name/args）+ `review_configs`（allowed_decisions）+ `interrupt_id`（前端恢复时回传）
 - 检测点：astream_events 的 interrupt 事件（langgraph 提供 on_interrupt 类事件；⚠️ V2 验证具体形态）→ 转换 approve SSE 事件并**终止本次流**（等人类决策）
 - 前端（P2）据 approve 事件渲染审批卡片 → 用户决策 → 带 decisions 重新 POST
 
-### 5.4 D4/D5：Rubric 挂载与透传 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 5.4 D4/D5：Rubric 挂载与透传 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 - `settings.rubric_enabled` 门控（默认 False）+ `RubricMiddleware(model=get_chat_model(), max_iterations=3)` 构建期挂载（会话缓存 agent 单例，与其它中间件同栈）
 - grader model **必须传实例**（国产模型 base_url，同 P1-1 教训）；grader 证据工具 P1 不挂（无安全白名单），P2 评估
 - `ChatRequest.rubric: str | None` → 透传 input state `{"messages": ..., "rubric": ...}`；不传不触发
 
-### 5.5 D6/D7：Rubric 事件与模板库 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 5.5 D6/D7：Rubric 事件与模板库 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 - P1 观测：`on_evaluation` 回调 → 日志 + 响应 done 事件携带 rubric 摘要（verdict/iteration/criteria）；P2 再上完整 SSE（规避 v3 stream.custom 迁移）
 - **预置模板库** `src/agent/rubrics.py`（纯文本 checklist，可组合）：
@@ -216,7 +231,7 @@ if result.interrupts:
   - `source_veracity`：**防 AI 乱说话**——每条断言必须有可核验来源、禁止未验证推断、区分事实与推测
 - 业务接入 = 选模板（可覆盖/扩展）+ 挂证据工具
 
-### 5.6 D8：不做清单 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 5.6 D8：不做清单 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 - ❌ 前端审批卡片 UI（P2，事件契约先定）
 - ❌ Rubric SSE 流式事件（P2）
@@ -228,7 +243,7 @@ if result.interrupts:
 
 ## 6. 分：权衡与 P0 验证计划
 
-### 6.1 V1（必做）：RubricMiddleware 在国产模型的可行性 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 6.1 V1（必做）：RubricMiddleware 在国产模型的可行性 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 **风险同源**（差距分析 §7.4 实证）：RubricMiddleware 的 grader 用 `response_format=GraderResponse` 结构化输出 + 策略自动探测——国产模型（deepseek/豆包/智谱）response_format 三态全挂。**若不验证直接开发，rubric 大概率全部 `grader_error`**（官方 verdict 表里专门列了这个失败态）。
 
@@ -239,12 +254,12 @@ if result.interrupts:
 4. 若失败，看 rubric.py 的 `_StructuredOutputStrategy` 探测是否留了降级口（源码 302-435 行逻辑）
 5. 结论决定：Rubric P1 开发 or 降级为 P2（等 OpenAI 系模型 or 官方修复）or 自研评分（并列执行体 LLM-as-judge，绕过 response_format——用 prompt 约束 + 解析，同降级方案 A 模式）
 
-### 6.2 V2（必做）：astream_events 下 interrupt 检测与 Command(resume) 恢复形态 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 6.2 V2（必做）：astream_events 下 interrupt 检测与 Command(resume) 恢复形态 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 - 官方示例全用 `agent.invoke` + `result.interrupts`；本项目主链路是 `astream_events`——中断在流中如何暴露（on_interrupt 事件？）、`Command(resume=...)` 能否作为 astream_events 输入，需最小 demo 实测（Fake 模型不出工具调用 → 需真实模型或构造中断路径）
 - 失败预案：审批恢复改用 `agent.astream(Command(resume=...), config, stream_mode="messages")` 或 invoke 分支（流式降级为一次性返回）
 
-### 6.3 权衡总结 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 6.3 权衡总结 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 | 能力 | 价值 | 成本/风险 | 结论 |
 |------|------|-----------|------|
@@ -258,7 +273,7 @@ if result.interrupts:
 
 > ⚠️ 参考形态（评审通过后落地）；按 01-coding-style：函数 ≤80 行、类型注解、docstring。
 
-### 7.1 `backend/src/agent/hitl.py`（HITL 配置，全量） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 7.1 `backend/src/agent/hitl.py`（HITL 配置，全量） <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 ```python
 """HITL 审批配置（人在回路设计 §5.1）：按工具风险分级的 interrupt_on。
@@ -304,7 +319,7 @@ def build_hitl_interrupt_on(enabled: bool) -> dict[str, bool | InterruptOnConfig
     return HITL_INTERRUPT_ON if enabled else None
 ```
 
-### 7.2 main_agent 接线（HITL + Rubric 增量） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 7.2 main_agent 接线（HITL + Rubric 增量） <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 ```python
 # main_agent.py _build_agent 内增量（设计 §5.1/§5.4）：
@@ -392,7 +407,7 @@ def _log_evaluation(ev: dict) -> None:
     )
 ```
 
-### 7.3 chat.py 审批 API 增量（设计 §5.2/§5.3） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 7.3 chat.py 审批 API 增量（设计 §5.2/§5.3） <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 ```python
 # schemas/message.py（或 chat 请求模型）增量：
@@ -418,7 +433,7 @@ class ReviewDecision(BaseModel):
     # 流内 interrupt 检测（⚠️ V2 验证）：检测到中断 → 发 approve 事件 → 结束本次流
 ```
 
-### 7.4 调用链说明 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 7.4 调用链说明 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 ```
 【HITL 审批流】
@@ -457,7 +472,7 @@ class ReviewDecision(BaseModel):
 
 ## 9. 总：验收清单与风险自检
 
-### 9.1 验收清单 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 9.1 验收清单 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 - [ ] **P0-V1**：Rubric 国产模型验证脚本出结论（通过 → rubric_verified=True / 不通过 → Rubric 降级 P2 或自研）
 - [ ] **P0-V2**：astream_events 中断检测 + Command(resume) 恢复形态实测出结论
@@ -465,7 +480,7 @@ class ReviewDecision(BaseModel):
 - [ ] `pytest backend/tests` 全绿（新增 §8 用例 1-9）
 - [ ] 浏览器实测（业务接入时）：沙箱工具触发审批卡片 → 决策 → 恢复
 
-### 9.2 风险自检 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 9.2 风险自检 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
 
 | 风险 | 等级 | 缓解 |
 |------|------|------|
