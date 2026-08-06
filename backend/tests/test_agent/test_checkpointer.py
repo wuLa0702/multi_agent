@@ -12,6 +12,9 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+
+from src.core.paths import CHECKPOINTER_DB_FILE, STORE_DB_FILE
+
 from langgraph.checkpoint.base import CheckpointTuple
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -20,7 +23,7 @@ def _make_saver(db_path) -> SqliteSaver:
     """建同步 SqliteSaver（直接构造自管连接；不用 from_conn_string——
     @contextmanager 退出即关连接，不适合持久的 saver）。"""
     # db_path 是目录（tmp_path）时拼 checkpoints.db；已是文件路径直接用
-    db_file = db_path / "checkpoints.db" if db_path.is_dir() else db_path
+    db_file = db_path / CHECKPOINTER_DB_FILE if db_path.is_dir() else db_path
     conn = sqlite3.connect(str(db_file), check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     saver = SqliteSaver(conn)
@@ -54,7 +57,7 @@ def _put_checkpoint(saver: SqliteSaver, thread_id: str, value: str) -> str:
 
 def test_checkpoint_persists_across_saver_reload(tmp_path) -> None:
     """持久化：写入 → 重建 saver（模拟重启进程）→ checkpoint 仍可读。"""
-    db = tmp_path / "checkpoints.db"
+    db = tmp_path / CHECKPOINTER_DB_FILE
 
     # 第一次"进程"：写入
     saver1 = _make_saver(db)

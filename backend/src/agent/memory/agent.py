@@ -160,10 +160,10 @@ async def send_notification(message: str) -> str:
     Returns:
         通知结果（"已记录到本地通知文件"）
     """
-    from src.core.paths import get_app_dir
+    from src.core.paths import get_notifications_log
 
     try:
-        log_file = get_app_dir() / "notifications.log"
+        log_file = get_notifications_log()
         line = f"[{datetime.now().astimezone().isoformat(timespec='seconds')}] {message}\n"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(line)

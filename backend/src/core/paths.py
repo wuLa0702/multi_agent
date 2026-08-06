@@ -137,6 +137,24 @@ def get_uploads_dir() -> Path:
     return base
 
 
+# ── 数据库文件名（集中维护——main_agent 测试注入场景/tests 断言拼同名文件）──
+# 2026-08-06 结构优化：文件名散落 main_agent + 3 个测试文件，统一收敛常量，
+# 文件名改名只改本处（文件名联动纪律，见计划-后端结构优化实施 T4）。
+
+CHECKPOINTER_DB_FILE = "checkpoints.db"
+STORE_DB_FILE = "store.db"
+
+
+def get_notifications_log() -> Path:
+    """本地通知日志文件：data/notifications.log（memory_agent 通知落盘）。"""
+    return get_app_dir() / "notifications.log"
+
+
+def get_frontend_log_path() -> Path:
+    """前端日志上报落盘文件：logs/frontend.log（api/settings.py 日志上报）。"""
+    return get_log_dir() / "frontend.log"
+
+
 # ── 记忆文件虚拟路径（/memories/ 路由——集中维护，禁止散落硬编码）──
 # 2026-08-05 结构重构：main_agent MEMORY_SOURCES / 归档函数原硬编码虚拟路径，
 # 统一收敛本模块，用函数获取（路径唯一维护点）。

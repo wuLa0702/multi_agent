@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from src.core import db as core_db
 from src.core.logging import setup_logging
-from src.core.paths import get_log_dir
+from src.core.paths import get_frontend_log_path
 from src.db import settings_repository as settings_repo
 
 router = APIRouter(tags=["settings"])
@@ -86,7 +86,7 @@ async def post_frontend_logs(req: LogsRequest) -> dict[str, object]:
     if not req.entries:
         return {"status": "ok", "written": 0}
 
-    log_file = get_log_dir() / "frontend.log"
+    log_file = get_frontend_log_path()
     lines: list[str] = []
     for e in req.entries:
         # 单行 JSON，避免多行日志破坏可读性

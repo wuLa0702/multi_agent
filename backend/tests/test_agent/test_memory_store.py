@@ -10,6 +10,9 @@
 from __future__ import annotations
 
 import pytest
+
+from src.core.paths import CHECKPOINTER_DB_FILE, STORE_DB_FILE
+
 from langgraph.store.sqlite import SqliteStore
 
 
@@ -18,7 +21,7 @@ async def _make_store(db_path) -> SqliteStore:
     import aiosqlite
     from langgraph.store.sqlite.aio import AsyncSqliteStore
 
-    db_file = db_path / "store.db" if db_path.is_dir() else db_path
+    db_file = db_path / STORE_DB_FILE if db_path.is_dir() else db_path
     # isolation_level=None：autocommit 连接（AsyncSqliteStore 内部管理事务）
     conn = await aiosqlite.connect(str(db_file), isolation_level=None)
     await conn.execute("PRAGMA journal_mode=WAL")
@@ -33,7 +36,7 @@ async def test_memory_persists_across_store_reload(tmp_path) -> None:
     from src.agent.memory.store import load_recent_memories, save_conversation_memory
 
     # 用独立子目录：autouse fixture 的 store 占用了 tmp_path 根（避免 DB 锁冲突）
-    db = tmp_path / "mem" / "store.db"
+    db = tmp_path / "mem" / STORE_DB_FILE
     db.parent.mkdir()
     store1 = await _make_store(db)
     await save_conversation_memory(store1, "用户叫小明，喜欢 Python 编程" * 10)
@@ -51,7 +54,7 @@ async def test_memory_noise_threshold(tmp_path) -> None:
     from src.agent.memory.store import MEMORY_MIN_LEN, load_recent_memories, save_conversation_memory
 
     # 独立子目录（避免与 autouse fixture 的 store 锁冲突）
-    db = tmp_path / "mem2" / "store.db"
+    db = tmp_path / "mem2" / STORE_DB_FILE
     db.parent.mkdir()
     store = await _make_store(db)
 

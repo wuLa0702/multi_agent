@@ -52,6 +52,8 @@ from src.core.paths import (
     get_memory_sources,
     get_skill_md_dir,
     get_store_path,
+    CHECKPOINTER_DB_FILE,
+    STORE_DB_FILE,
 )
 from src.core.permissions import build_main_permissions
 from src.llm.adapter import get_chat_model
@@ -151,7 +153,7 @@ async def init_checkpointer(db_path=None) -> None:
     # 正确判断：is_dir()（仅存在的目录为 True，如测试传 tmp_path）。
     target = db_path if db_path is not None else get_checkpointer_path()
     if db_path is not None and db_path.is_dir():
-        target = db_path / "checkpoints.db"
+        target = db_path / CHECKPOINTER_DB_FILE
     conn = await aiosqlite.connect(str(target))
     await conn.execute("PRAGMA journal_mode=WAL")
     await conn.execute("PRAGMA busy_timeout=5000")
@@ -195,7 +197,7 @@ async def init_store(db_path=None) -> None:
 
     target = db_path if db_path is not None else get_store_path()
     if db_path is not None and db_path.is_dir():  # 传目录（tmp_path）→ 拼 store.db
-        target = db_path / "store.db"
+        target = db_path / STORE_DB_FILE
     # isolation_level=None：autocommit 连接——AsyncSqliteStore 内部自行管理事务，
     # 默认 isolation 会触发 "cannot start a transaction within a transaction"
     conn = await aiosqlite.connect(str(target), isolation_level=None)

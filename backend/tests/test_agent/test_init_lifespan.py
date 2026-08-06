@@ -15,6 +15,9 @@ from pathlib import Path
 
 import pytest
 
+from src.core.paths import CHECKPOINTER_DB_FILE, STORE_DB_FILE
+
+
 
 async def _reset() -> None:
     """复位全局 store/checkpointer（与 conftest autouse 清理兼容，幂等）。"""
@@ -45,7 +48,7 @@ async def test_init_store_no_arg_uses_prod_paths(tmp_path: Path, monkeypatch) ->
     await main_agent.init_store()  # 无参 = main.py lifespan 同款调用
 
     assert main_agent._store is not None
-    assert (fake_dir / "store.db").exists()
+    assert (fake_dir / STORE_DB_FILE).exists()
     await _teardown()
 
 
@@ -62,7 +65,7 @@ async def test_init_checkpointer_no_arg_uses_prod_paths(tmp_path: Path, monkeypa
     await main_agent.init_checkpointer()  # 无参 = main.py lifespan 同款调用
 
     assert main_agent._checkpointer is not None
-    assert (fake_dir / "checkpoints.db").exists()
+    assert (fake_dir / CHECKPOINTER_DB_FILE).exists()
     await _teardown()
 
 
@@ -75,7 +78,7 @@ async def test_init_store_dir_arg_appends_filename(tmp_path: Path) -> None:
     await main_agent.init_store(db_path=tmp_path)
 
     assert main_agent._store is not None
-    assert (tmp_path / "store.db").exists()
+    assert (tmp_path / STORE_DB_FILE).exists()
     await _teardown()
 
 
@@ -88,7 +91,7 @@ async def test_init_checkpointer_dir_arg_appends_filename(tmp_path: Path) -> Non
     await main_agent.init_checkpointer(db_path=tmp_path)
 
     assert main_agent._checkpointer is not None
-    assert (tmp_path / "checkpoints.db").exists()
+    assert (tmp_path / CHECKPOINTER_DB_FILE).exists()
     await _teardown()
 
 
@@ -110,7 +113,7 @@ async def test_init_store_file_arg_used_directly(tmp_path: Path) -> None:
 
     assert main_agent._store is not None
     assert target.exists()
-    assert not (sub / "store.db").exists()  # 不得在父目录另拼文件名
+    assert not (sub / STORE_DB_FILE).exists()  # 不得在父目录另拼文件名
     await _teardown()
 
 
