@@ -390,6 +390,10 @@ async def _event_stream(
                 session_id=session_id,
                 duration_ms=duration_ms,
                 context_used=row["context_used"] if row else None,
+                # #4 用量告警（2026-08-05）：>80% 窗口 → 前端提示"为什么变模糊"
+                context_warning=(
+                    row["context_used"] > 0.8 * 128_000 if row and row["context_used"] else False
+                ),
             ).model_dump_json()
         }
     finally:
