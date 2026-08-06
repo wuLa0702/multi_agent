@@ -163,13 +163,17 @@ async def extract_memory_typed(
     return {"type": memory_type, "fact": fact[:MEMORY_MAX_LEN]}
 
 
-async def save_typed_memory(store: BaseStore, memory_type: str, fact: str) -> None:
-    """类型化写入（对应 namespace，v3 §8.3）。
+async def save_typed_memory(
+    store: BaseStore, memory_type: str, fact: str, *, related: str = ""
+) -> None:
+    """类型化写入（对应 namespace，v3 §8.3；related 为 P3 轻量关联链，v2.1 补齐）。
 
     Args:
         store: langgraph store（lifespan 初始化的 SqliteStore）
         memory_type: user_profile / facts（白名单校验）
         fact: 抽取的一句话事实
+        related: 关联的既有记忆内容摘要（P3 轻量关联链——同 namespace
+            内 related 引用，非真图谱）
 
     Raises:
         ValueError: 未知类型（白名单外）
@@ -183,12 +187,12 @@ async def save_typed_memory(store: BaseStore, memory_type: str, fact: str) -> No
         logger.debug("记忆跳过：事实过短（%d 字 < 阈值 %d）", len(fact), MEMORY_MIN_LEN)
         return
     key = f"mem-{int(time.time() * 1000)}"
-    await store.aput(
-        namespace,
-        key,
-        {"content": fact[:MEMORY_MAX_LEN], "ts": int(time.time())},
-    )
-    logger.info("记忆写入（%s）：%s（%d 字）", memory_type, key, len(fact))
+    value: dict = {"content": fact[:MEMORY_MAX_LEN], "ts": int(time.time())}
+    if related:
+        value["related"] = related[:100]   # 轻量关联链（P3，v2.1 补齐）
+    await store.aput(namespace, key, value)
+    logger.info("记忆写入（%s）：%s（%d 字%s）", memory_type, key, len(fact),
+                f"，关联：{related[:20]}" if related else "")
 
 
 async def load_recent_memories_v3(

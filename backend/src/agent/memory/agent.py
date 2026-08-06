@@ -11,6 +11,7 @@ CompiledSubAgent 预编译——独立 StateBackend（隔离实践）+ 专属工
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime
 
 from deepagents import FilesystemPermission, create_deep_agent
@@ -19,6 +20,9 @@ from langchain_core.language_models import BaseChatModel
 
 from src.agent.memory.store import MEMORY_NAMESPACES, save_typed_memory
 from src.agent.prompts import MEMORY_AGENT_PROMPT
+
+logger = logging.getLogger(__name__)
+audit_logger = logging.getLogger("audit")
 
 # 工具集最小化（挂载层面单一约束，v1.1 诚实表述）：只挂记忆工具
 _MEMORY_TOOLS = ("search_memory", "read_memory_file", "write_store",
@@ -90,8 +94,8 @@ async def read_memory_file(path: str) -> str:
         return f"读取 {path} 失败（文件可能不存在）。"
 
 
-async def write_store(memory_type: str, fact: str) -> str:
-    """写 Store（幂等：内容哈希查重，已存在跳过）。
+async def write_store(memory_type: str, fact: str, related: str = "") -> str:
+    """写 Store（幂等 + P3 轻量关联链 + 质量审计——只审计不拦截）。
 
     依赖注入方案 B：get_store() 动态取——编译时不注入 store 实例，
     运行时解析保证工具始终可用。
@@ -99,6 +103,7 @@ async def write_store(memory_type: str, fact: str) -> str:
     Args:
         memory_type: user_profile / facts（白名单）
         fact: 抽取事实
+        related: 关联的既有记忆内容摘要（P3 轻量关联链，v2.1 接入）
 
     Returns:
         写入结果描述（"已写入" / "已存在，跳过" / "记忆库未初始化"）
@@ -113,13 +118,21 @@ async def write_store(memory_type: str, fact: str) -> str:
         return "记忆库未初始化（降级：跳过写入）"
     if memory_type not in MEMORY_NAMESPACES:
         raise ValueError(f"未知记忆类型：{memory_type}")
-    # 幂等：内容精确查重（P1 search_memory 补语义查重）
+    # 幂等：内容精确查重（P1 search_memory 语义查重在前，此处兜底）
     items = await store.asearch(MEMORY_NAMESPACES[memory_type], limit=50)
     for item in items:
         if item.value.get("content") == fact:
             return "已存在，跳过（幂等）"
-    await save_typed_memory(store, memory_type, fact)
-    return f"已写入 {memory_type}"
+    # P3 质量评估：只审计不拦截（v2.1 定位）——低分也写，审计标注供整理参考
+    quality = score_memory_quality(fact, memory_type)
+    if quality < 3:
+        audit_logger.info(
+            "memory_agent 低质记忆审计 type=%s quality=%d fact=%s",
+            memory_type, quality, fact[:80],
+        )
+    await save_typed_memory(store, memory_type, fact, related=related)
+    suffix = f"，关联：{related[:20]}" if related else ""
+    return f"已写入 {memory_type}{suffix}"
 
 
 async def write_wiki(page: str, content: str) -> str:

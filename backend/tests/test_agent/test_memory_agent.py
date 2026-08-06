@@ -246,3 +246,39 @@ def test_score_memory_quality_dimensions() -> None:
     score_dup = memory_agent.score_memory_quality("事实内容含数字 2026", "facts", duplicates=3)
     assert score_dup < score_base, "重复条目扣分"
     assert 1 <= memory_agent.score_memory_quality("x", "facts", duplicates=9) <= 5, "分数限幅"
+
+
+# ── v2.1 计划补齐：P3 关联链 + 质量审计接入 ──
+
+@pytest.mark.asyncio
+async def test_write_store_with_related(mocker) -> None:
+    """P3：write_store 带 related → 条目存 related 字段（轻量关联链）。"""
+    store = SimpleNamespace(
+        asearch=mocker.AsyncMock(return_value=[]),
+        aput=mocker.AsyncMock(),
+    )
+    mocker.patch("src.agent.main_agent.get_store", return_value=store)
+    mocker.patch("src.agent.memory.agent.save_typed_memory", new=mocker.AsyncMock())
+
+    result = await memory_agent.write_store("facts", "新事实内容", related="旧画像摘要")
+
+    assert "已写入 facts" in result and "旧画像摘要" in result, "返回含关联"
+    memory_agent.save_typed_memory.assert_called_once()
+    args = memory_agent.save_typed_memory.call_args
+    assert args.kwargs.get("related") == "旧画像摘要", "related 透传落条目"
+
+
+@pytest.mark.asyncio
+async def test_write_store_low_quality_audits_not_blocks(mocker, audit_records) -> None:
+    """P3：低质记忆只审计不拦截——照常写入 + audit 标注（v2.1 定位）。"""
+    store = SimpleNamespace(
+        asearch=mocker.AsyncMock(return_value=[]),
+        aput=mocker.AsyncMock(),
+    )
+    mocker.patch("src.agent.main_agent.get_store", return_value=store)
+    mocker.patch("src.agent.memory.agent.save_typed_memory", new=mocker.AsyncMock())
+
+    result = await memory_agent.write_store("facts", "短")   # 低质（<3）
+
+    assert "已写入 facts" in result, "低分也写（不拦截）"
+    assert any("低质记忆审计" in r.getMessage() for r in audit_records), "审计标注"
