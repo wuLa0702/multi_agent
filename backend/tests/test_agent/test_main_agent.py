@@ -24,6 +24,8 @@ def _reset_agent():
 def test_get_agent_session_cache(mocker) -> None:
     """会话级缓存：同会话复用；不同会话独立编译图（v2.0 会话隔离）。"""
     mocker.patch("src.agent.main_agent.get_chat_model", return_value=object())
+    # P1-1：真实 YAML 带 model 字段需模型注册表——本测试聚焦缓存，不解析真实子代理
+    mocker.patch("src.agent.main_agent.load_subagents", return_value=[])
     # side_effect 每次返回新对象——不同会话的编译图必须是不同实例
     mock_create = mocker.patch(
         "src.agent.main_agent.create_deep_agent",
@@ -105,6 +107,7 @@ async def test_configurable_model_default_model_id(mocker) -> None:
 def test_agent_cache_lru_eviction(mocker) -> None:
     """T4：缓存超限逐出最久未用会话（只逐内存图，不删磁盘）。"""
     mocker.patch("src.agent.main_agent.get_chat_model", return_value=object())
+    mocker.patch("src.agent.main_agent.load_subagents", return_value=[])  # P1-1：不解析真实 YAML
     mocker.patch("src.agent.main_agent.create_deep_agent", side_effect=lambda *a, **k: object())
 
     for i in range(main_agent._AGENT_CACHE_MAX + 5):
@@ -118,6 +121,7 @@ def test_agent_cache_lru_eviction(mocker) -> None:
 def test_agent_cache_lru_refresh(mocker) -> None:
     """T4：命中刷新（pop 后放回）——重新访问过的会话不被逐出。"""
     mocker.patch("src.agent.main_agent.get_chat_model", return_value=object())
+    mocker.patch("src.agent.main_agent.load_subagents", return_value=[])  # P1-1：不解析真实 YAML
     mocker.patch("src.agent.main_agent.create_deep_agent", side_effect=lambda *a, **k: object())
 
     main_agent.get_agent("t0")

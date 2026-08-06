@@ -129,6 +129,7 @@ def test_agent_builds_with_store(mocker, tmp_path) -> None:
     from src.agent import main_agent
 
     mocker.patch("src.agent.main_agent.get_chat_model", return_value=object())
+    mocker.patch("src.agent.main_agent.load_subagents", return_value=[])  # P1-1：不解析真实 YAML
     mock_create = mocker.patch("src.agent.main_agent.create_deep_agent", return_value=object())
 
     import asyncio

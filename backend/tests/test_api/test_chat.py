@@ -191,6 +191,7 @@ async def test_chat_stream_with_model_id(
         return fake_deep_agent_model
 
     mocker.patch("src.agent.main_agent.get_chat_model", side_effect=_fake_get_chat_model)
+    mocker.patch("src.agent.main_agent.load_subagents", return_value=[])  # P1-1：本测试聚焦 model_id 路由
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         status, body = await _post_stream(client, {"message": "hi", "model_id": target_id})

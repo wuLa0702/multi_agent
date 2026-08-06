@@ -4,12 +4,17 @@
 - tools 字段：名字符串 → 经 mcp.registry 查表映射为实际函数
 - permissions 字段（P1）：YAML 显式声明优先；缺省走 core.permissions 模板；
   模板无 → 不注入键（继承父级规则，graph.py:663 spec.get("permissions", permissions)）
+- model 字段（P1-1，2026-08-06）：按任务选模型——YAML 声明 model_name，
+  经 DB 模型注册表反查 model_id 构造 ChatOpenAI 实例（国产模型需自定义
+  base_url，必须传实例而非 `provider:model` 字符串，见差距分析 §5.1）
 - P2（SUBAGENT_ISOLATION=True）：预编译 CompiledSubAgent——每个子代理独立
   StateBackend（内存临时），文件永不落主会话工作区；编译需 model 参数
-- 非法 YAML / 缺必填字段 / 未知工具名：fail fast 抛异常
+  （P1-1 叠加：YAML 声明了 model 的子代理用各自模型编译，否则用传入 model）
+- 非法 YAML / 缺必填字段 / 未知工具名 / 未知模型：fail fast 抛异常
   （配置错误尽早暴露，不让 agent 带病启动）
 
 设计文档：docs/decisions/方案-CompositeBackend深化改造-v1.md §3.5 / §4.2 / §6.5
+差距分析：docs/学习/子代理-官方能力对比与差距分析-v1.md §5.1 / §7.1
 """
 
 from __future__ import annotations
@@ -23,7 +28,9 @@ from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
 from langchain_core.language_models import BaseChatModel
 
 from src.core.config import settings
+from src.core.model_registry import get_registry
 from src.core.permissions import build_subagent_permissions
+from src.llm.adapter import get_chat_model
 from src.mcp.registry import get_tool
 
 SUBAGENTS_DIR = Path(__file__).resolve().parent
@@ -57,11 +64,41 @@ def load_subagents(
     return [_compile_isolated(spec, model) for spec in specs]
 
 
+def _resolve_model(model_name: str | None):
+    """YAML model 声明 → ChatOpenAI 实例（DB 模型注册表真相源）。
+
+    ⚠️ 必须传实例而非 `provider:model` 字符串——国产模型需自定义 base_url，
+    deepagents 内部 init_chat_model 拼不出（差距分析 §5.1 风险 2）。
+
+    Args:
+        model_name: DB models 表的 model_name；None → 返回 None（继承主 agent）
+
+    Returns:
+        构造好的 ChatOpenAI 实例；model_name 为 None 时返回 None
+
+    Raises:
+        ValueError: model_name 在 DB 注册表中不存在（fail fast，不带病启动）
+    """
+    if model_name is None:
+        return None
+    registry = get_registry()
+    for provider in registry.list_providers():
+        for info in provider.models:
+            cfg = registry.get_model(info.id)
+            if cfg is not None and cfg.model_name == model_name:
+                return get_chat_model(cfg.id)
+    raise ValueError(
+        f"子代理声明了未知模型 model_name={model_name}（DB 无此模型，"
+        f"请先 GET /v1/providers 查询可用模型）"
+    )
+
+
 def _parse_subagent_yaml(yaml_file: Path) -> SubAgent:
-    """解析单个 YAML 文件为 SubAgent 声明（含 permissions 透传）。
+    """解析单个 YAML 文件为 SubAgent 声明（含 permissions / model 透传）。
 
     Raises:
         yaml.YAMLError / KeyError: 同 load_subagents
+        ValueError: model 声明的 model_name 不在 DB 注册表
     """
     data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -72,6 +109,10 @@ def _parse_subagent_yaml(yaml_file: Path) -> SubAgent:
         "system_prompt": data["system_prompt"],
         "tools": [get_tool(name) for name in data.get("tools", [])],
     }
+    # P1-1（2026-08-06）：按任务选模型——构建期绑定，模型族固定分工语义；
+    # 未声明 → 不注入键（继承主 agent 模型）
+    if "model" in data:
+        spec["model"] = _resolve_model(data["model"])
     # P1 子代理权限（整体替换父级，graph.py:663 语义）：
     # YAML 显式声明优先；缺省走模板；模板无 → 不注入键（继承父级）
     if "permissions" in data:
@@ -101,14 +142,16 @@ def _compile_isolated(spec: SubAgent, model: BaseChatModel) -> CompiledSubAgent:
     子代理文件存自身 graph state，主会话工作区零污染；断点 resume 随主 state 恢复。
 
     Args:
-        spec: 解析后的 SubAgent 声明
-        model: 编译用模型（编译时绑定；子代理不随 _configurable_model 运行时切换）
+        spec: 解析后的 SubAgent 声明（P1-1：YAML 声明了 model 时优先用各自模型）
+        model: 兜底编译用模型（编译时绑定；子代理不随 _configurable_model
+            运行时切换——构建期绑定语义，见差距分析 §5.1）
 
     Returns:
         CompiledSubAgent 声明（deepagents "runnable" 分支按原样使用）
     """
+    subagent_model = spec.get("model") or model  # P1-1：YAML 声明的 model 优先
     runnable = create_deep_agent(
-        model=model,
+        model=subagent_model,
         name=spec["name"],
         system_prompt=spec["system_prompt"],
         tools=spec["tools"],

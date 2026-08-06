@@ -115,6 +115,8 @@ def mock_chat_llm(mocker, fake_deep_agent_model: FakeDeepAgentModel) -> FakeDeep
     patch 它即全链路 mock（含单例构建兜底模型）。
     """
     mocker.patch("src.agent.main_agent.get_chat_model", return_value=fake_deep_agent_model)
+    # P1-1：真实 YAML 带 model 字段需模型注册表——chat 测试聚焦 SSE 事件，不解析真实子代理
+    mocker.patch("src.agent.main_agent.load_subagents", return_value=[])
     return fake_deep_agent_model
 
 

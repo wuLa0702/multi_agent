@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from src.agent.subagents import loader
 from src.agent.subagents.loader import _parse_subagent_yaml, load_subagents
 
 
@@ -109,8 +110,84 @@ system_prompt: B 代理。
         specs = load_subagents(tmp_path)
         assert [s["name"] for s in specs] == ["a", "b"]  # 文件名排序，顺序稳定
 
-    def test_load_project_subagents(self) -> None:
-        """真实项目目录：search_agent.yaml 加载成功（tools 映射到 internet_search）。"""
+    async def test_load_project_subagents(self, monkeypatch, seeded_registry) -> None:
+        """真实项目目录：search_agent.yaml 加载成功（tools 映射 + model 字段经 DB 解析）。"""
+        from langchain_openai import ChatOpenAI
+
+        monkeypatch.setattr(
+            loader,
+            "get_chat_model",
+            lambda model_id: ChatOpenAI(model="deepseek-v4-flash", api_key="x", base_url="https://x"),
+        )
         specs = load_subagents()
         assert [s["name"] for s in specs] == ["search_agent"]
         assert specs[0]["tools"][0].__name__ == "internet_search"
+        assert specs[0]["model"].model == "deepseek-v4-flash"
+
+
+class TestSubagentModelField:
+    """P1-1：YAML model 字段（按任务选模型，构建期绑定）。"""
+
+    async def test_model_field_resolves_via_db(
+        self, monkeypatch, seeded_registry, tmp_path: Path
+    ) -> None:
+        """声明 model → 按 model_name 反查 DB → get_chat_model(model_id) 构造实例。"""
+        from langchain_openai import ChatOpenAI
+
+        captured: dict[str, int | None] = {"model_id": None}
+        monkeypatch.setattr(
+            loader,
+            "get_chat_model",
+            lambda model_id: captured.__setitem__("model_id", model_id)
+            or ChatOpenAI(model="deepseek-v4-flash", api_key="x", base_url="https://x"),
+        )
+        yaml_file = _write_yaml(
+            tmp_path,
+            """name: searcher
+description: 搜索子代理
+system_prompt: 你负责搜索。
+model: deepseek-v4-flash
+""",
+        )
+        spec = _parse_subagent_yaml(yaml_file)
+
+        # 经 DB 反查得到 deepseek-v4-flash 的模型配置
+        assert captured["model_id"] is not None
+        cfg = seeded_registry.get_model(captured["model_id"])
+        assert cfg is not None and cfg.model_name == "deepseek-v4-flash"
+        # spec 携带构造好的模型实例
+        assert isinstance(spec["model"], ChatOpenAI)
+        assert spec["model"].model == "deepseek-v4-flash"
+
+    async def test_unknown_model_name_fails_fast(
+        self, monkeypatch, seeded_registry, tmp_path: Path
+    ) -> None:
+        """声明 DB 中不存在的 model_name → ValueError（fail fast，不构造模型）。"""
+        calls: list = []
+        monkeypatch.setattr(loader, "get_chat_model", lambda model_id: calls.append(model_id))
+        yaml_file = _write_yaml(
+            tmp_path,
+            """name: searcher
+description: 搜索子代理
+system_prompt: 你负责搜索。
+model: ghost-model
+""",
+        )
+        with pytest.raises(ValueError, match="ghost-model"):
+            _parse_subagent_yaml(yaml_file)
+        assert calls == []  # 未到达构造步骤
+
+    async def test_no_model_field_inherits_main(
+        self, monkeypatch, seeded_registry, tmp_path: Path
+    ) -> None:
+        """未声明 model → spec 不含 model 键（继承主 agent 模型）。"""
+        monkeypatch.setattr(loader, "get_chat_model", lambda model_id: None)
+        yaml_file = _write_yaml(
+            tmp_path,
+            """name: talker
+description: 纯对话
+system_prompt: 你好。
+""",
+        )
+        spec = _parse_subagent_yaml(yaml_file)
+        assert "model" not in spec

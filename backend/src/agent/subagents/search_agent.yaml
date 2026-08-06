@@ -9,6 +9,10 @@ system_prompt: |-
   调用 internet_search 工具搜索，返回结构化结果（标题/链接/摘要）。
 tools:
   - internet_search
+# 子代理模型（P1-1，2026-08-06）：按任务选模型——搜索用便宜模型，主 agent 用旗舰；
+# 构建期绑定（子代理不随 _configurable_model 运行时切换），改模型需 rebuild_agent。
+# 详见 docs/学习/子代理-官方能力对比与差距分析-v1.md §5.1
+model: deepseek-v4-flash
 # 子代理权限（P1，2026-08-04）：整体替换父级规则——搜索子代理无文件需求，写全拒绝。
 # 与 core/permissions.build_subagent_permissions 模板一致；显式声明便于可读与 P2 直接生效。
 permissions:
