@@ -108,6 +108,15 @@ class Settings(BaseSettings):
     # PTC 白名单（逗号分隔；🔴 只允许只读工具——PTC 调用绕 interrupt_on 审批）
     interpreter_ptc: str = "internet_search"
 
+    # ── 人在回路 / Rubric（2026-08-06 设计：docs/decisions/方案-人在回路与Rubric评分-详细设计-v1.md）──
+    # HITL 审批：True = 沙箱/文件/技能等副作用工具执行前人类审批（按风险分级，见 agent/hitl.py）。
+    # 需 checkpointer（已接）；默认关，业务接入时开。
+    hitl_enabled: bool = False
+    # Rubric 自评：True = 挂载 RubricMiddleware（LLM-as-judge 按 rubric 迭代）。
+    # ⚠️ P0-V1 验证（设计 §6.1：grader response_format 国产模型风险）通过前保持 False——
+    # 验证是开发动作，通过后直接开本开关，无"验证过"中间态（v1.2 评审修正）。
+    rubric_enabled: bool = False
+
     # ── 记忆/存储 ──
     redis_url: str = "redis://localhost:6379/0"
     db_path: str = "./data/wiki.db"

@@ -38,9 +38,11 @@ from langchain.agents.middleware import wrap_model_call
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
+from src.agent.hitl import build_hitl_interrupt_on
 from src.agent.middlewares.interpreter import build_interpreter_middleware
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.middlewares.tool_audit import ToolAuditMiddleware
+from src.agent.rubrics import build_rubric_middleware
 from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
 from src.core.backend import create_backend
@@ -278,6 +280,9 @@ def _build_agent(thread_id: str):
     # main_agent 只做编排，不内嵌中间件构建细节（顺序保持 ToolAudit 在前，
     # 本函数返回追加在后——eval 先经审计链）
     middleware += build_interpreter_middleware()
+    # Rubric 自评（P1，2026-08-06 设计 §5.4）：rubric_enabled 门控构建——
+    # 同解释器模式：main_agent 只编排，构建细节在 rubrics.py
+    middleware += build_rubric_middleware()
     return create_deep_agent(
         model=model,
         system_prompt=build_system_prompt(),  # 分层组装（核心+可选；动态记忆由 chat 注入）
@@ -285,6 +290,10 @@ def _build_agent(thread_id: str):
         subagents=load_subagents(model=model if settings.subagent_isolation else None),
         tools=internal_tools + mcp_tools,
         middleware=middleware,
+        # HITL 审批（P1，2026-08-06 设计 §5.1）：hitl_enabled 门控——沙箱/文件/
+        # 技能等副作用工具执行前人类审批（按风险分级，见 agent/hitl.py）；
+        # checkpointer 已接（硬前置）；审批恢复链路待 P0-V2 验证后接 chat.py
+        interrupt_on=build_hitl_interrupt_on(settings.hitl_enabled),
         context_schema=ChatContext,
         # SKILL.md 渐进式加载：走 backend 虚拟路径 /skills/market/
         # （v2.0：SkillsMiddleware 经 backend 读文件，虚拟路径路由到
