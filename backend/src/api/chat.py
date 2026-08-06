@@ -139,7 +139,7 @@ async def _resolve_session(conn, req: ChatStreamRequest) -> str:
     Raises:
         HTTPException(404): 指定会话不存在（SESSION_NOT_FOUND）
     """
-    from src.db import repository as repo
+    from src.db import session_repo as repo
 
     session_id = req.session_id or str(uuid.uuid4())
     if req.session_id is None:
@@ -239,7 +239,7 @@ async def _generate_title_in_background(session_id: str, first_message: str) -> 
 
     conn = await core_db.get_connection()
     try:
-        from src.db import repository as repo
+        from src.db import session_repo as repo
 
         await repo.update_session_title(conn, session_id, title)
     finally:
@@ -289,7 +289,7 @@ async def _event_stream(
     """
     conn = await core_db.get_connection()
     try:
-        from src.db import repository as repo
+        from src.db import session_repo as repo
 
         is_resume = bool(req.resume_run_id)
 

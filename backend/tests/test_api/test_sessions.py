@@ -13,7 +13,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.api.main import app
 from src.core import db as core_db
-from src.db import repository as repo
+from src.db import session_repo as repo
 from src.schemas.message import Message
 
 
