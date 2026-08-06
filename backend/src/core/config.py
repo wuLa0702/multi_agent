@@ -161,6 +161,12 @@ class Settings(BaseSettings):
     # 子代理隔离：False(默认) = P1 权限覆盖（原生）；True = P2 编译子代理独立内存 backend
     subagent_isolation: bool = False
 
+    # ── 记忆抽取子代理（2026-08-05 记忆抽取子代理方案）──
+    # True=子代理后台抽取（队列+多步+工具）；False=回退单次 LLM 抽取
+    memory_agent_enabled: bool = True
+    # 抽取专用模型（小模型省钱；空=主模型兜底——用户拍板 2026-08-05）
+    memory_agent_model: str = ""
+
     @property
     def is_prod(self) -> bool:
         """是否生产环境。"""

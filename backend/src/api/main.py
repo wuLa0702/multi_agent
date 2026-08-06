@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -37,6 +38,12 @@ from src.agent.main_agent import (
     init_checkpointer,
     init_store,
 )
+from src.agent.memory.queue import (
+    _WORKER_COUNT,
+    memory_task_queue,
+)
+from src.agent.memory.agent import build_memory_agent
+from src.llm.adapter import get_chat_model
 from src.core.logging import setup_logging
 from src.core.model_registry import get_registry
 from src.core.redis import close_redis, get_redis
@@ -49,6 +56,56 @@ setup_logging()
 
 # FastMCP http_app 实例（middleware 转发 + lifespan 执行共用同一个）
 _mcp_http_app = mcp_server.http_app()
+
+# 记忆抽取队列 worker 任务句柄（lifespan 管理）
+_memory_workers: list[asyncio.Task] = []
+
+
+async def _memory_consumer(task) -> str:
+    """队列消费：ainvoke memory_agent（工具内部 get_store() 运行时解析，方案 B）。
+
+    Args:
+        task: MemoryTask（对话历史 + session_id）
+
+    Returns:
+        抽取结果摘要（供队列 audit 记录）
+    """
+    from src.core.config import settings
+
+    # 模型策略（用户拍板 2026-08-05）：memory_agent_model 空 → 主模型兜底
+    agent = build_memory_agent(get_chat_model(model_id=None))
+    result = await agent["runnable"].ainvoke(
+        {
+            "messages": [
+                {"role": "user", "content": task.user_message},
+                {"role": "assistant", "content": task.assistant_text},
+            ]
+        }
+    )
+    return str(result)[:200]
+
+
+async def start_memory_queue() -> None:
+    """启动记忆队列（lifespan 启动调用）：create_task × _WORKER_COUNT 多 worker。
+
+    ⚠️ 不能 await run_worker（常驻循环会阻塞启动）——create_task 后台运行。
+    """
+    for _ in range(_WORKER_COUNT):
+        _memory_workers.append(
+            asyncio.create_task(memory_task_queue.run_worker(_memory_consumer))
+        )
+
+
+async def stop_memory_queue() -> None:
+    """关闭记忆队列（lifespan 关闭调用）：先 join 再 cancel（优雅停止）。
+
+    用户拍板（2026-08-05）：接受关闭时丢弃未处理任务（demo 个人版——
+    记忆旁路、幂等去重保证下轮不重复写）。
+    """
+    await memory_task_queue._queue.join()   # 等当前处理中的任务完成
+    for worker in _memory_workers:
+        worker.cancel()
+    _memory_workers.clear()
 
 
 @asynccontextmanager
@@ -63,6 +120,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await init_checkpointer()
     await init_store()
 
+    # 记忆抽取队列（memory_agent 后台任务）：多 worker 并发常驻
+    # （方案 §7.6：启动 create_task ×N 不 await；关闭先 join 再 cancel）
+    await start_memory_queue()
+
     # FastMCP 要求：父 ASGI 应用执行其 lifespan（初始化 session manager task group）
     async with _mcp_http_app.lifespan(_):
         # 模型注册表 + MCP 客户端：seed + 加载（失败不阻断——降级为仅内部工具）
@@ -76,6 +137,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await conn.close()
 
         yield
+    await stop_memory_queue()
     await close_store()
     await close_checkpointer()
     await close_redis()
