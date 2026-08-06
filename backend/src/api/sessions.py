@@ -7,7 +7,7 @@
 - 错误统一 ErrorResponse（契约 §3.3），404 用 SESSION_NOT_FOUND（契约 §7）
 - DELETE 联动（v3.0）：缓存失效 + 工作区清理（api → agent 单向，不反向）
 
-依赖单向：api → {agent, core/db, db/repository}，不反向。
+依赖单向：api → {agent, core/db, db/session_repo}，不反向。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from src.agent import main_agent
 from src.core import db as core_db
 from src.core.backend import cleanup_workspace
-from src.db import repository as repo
+from src.db import session_repo as repo
 from src.sandbox.pool import sandbox_pool
 from src.schemas.message import Message
 from src.schemas.session import Session

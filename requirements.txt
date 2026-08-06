@@ -30,6 +30,8 @@ aiosqlite>=0.20
 pydantic>=2.8
 pydantic-settings>=2.4
 httpx>=0.27
-langsmith>=0.1
-python-dotenv>=1.0
 pyyaml>=6.0
+
+# 已移除（2026-08-05 最小集审计）：
+# - langsmith：src 无直接 import（tracing 配置由 langchain 传递依赖提供）
+# - python-dotenv：src 无直接 import（pydantic-settings 传递依赖处理 .env）

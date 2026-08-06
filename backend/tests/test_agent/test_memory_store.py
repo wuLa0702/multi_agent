@@ -30,7 +30,7 @@ async def _make_store(db_path) -> SqliteStore:
 @pytest.mark.asyncio
 async def test_memory_persists_across_store_reload(tmp_path) -> None:
     """持久化：写入 → 重建 store（模拟重启）→ 记忆仍可检索。"""
-    from src.agent.memory_store import load_recent_memories, save_conversation_memory
+    from src.agent.memory.store import load_recent_memories, save_conversation_memory
 
     # 用独立子目录：autouse fixture 的 store 占用了 tmp_path 根（避免 DB 锁冲突）
     db = tmp_path / "mem" / "store.db"
@@ -48,7 +48,7 @@ async def test_memory_persists_across_store_reload(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_memory_noise_threshold(tmp_path) -> None:
     """噪音阈值：过短回复不写入（闲聊过滤）。"""
-    from src.agent.memory_store import MEMORY_MIN_LEN, load_recent_memories, save_conversation_memory
+    from src.agent.memory.store import MEMORY_MIN_LEN, load_recent_memories, save_conversation_memory
 
     # 独立子目录（避免与 autouse fixture 的 store 锁冲突）
     db = tmp_path / "mem2" / "store.db"
@@ -65,7 +65,7 @@ async def test_memory_noise_threshold(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_memory_store_none_graceful() -> None:
     """边界：store 为 None（未初始化/降级）→ 读写静默跳过。"""
-    from src.agent.memory_store import load_recent_memories, save_conversation_memory
+    from src.agent.memory.store import load_recent_memories, save_conversation_memory
 
     await save_conversation_memory(None, "用户叫小明，喜欢 Python" * 10)  # 不抛
     assert await load_recent_memories(None) == []
@@ -89,7 +89,7 @@ class _FakeLLM:
 @pytest.mark.asyncio
 async def test_extract_memory_fact_valuable() -> None:
     """抽取：有价值对话（用户事实）→ 返回抽取的事实。"""
-    from src.agent.memory_store import extract_memory_fact
+    from src.agent.memory.store import extract_memory_fact
 
     from src.llm.adapter import LLMAdapter
 
@@ -103,7 +103,7 @@ async def test_extract_memory_fact_valuable() -> None:
 @pytest.mark.asyncio
 async def test_extract_memory_fact_no_value() -> None:
     """抽取：无价值对话（普通问答）→ 返回 None（不写入）。"""
-    from src.agent.memory_store import extract_memory_fact
+    from src.agent.memory.store import extract_memory_fact
 
     from src.llm.adapter import LLMAdapter
 
@@ -115,7 +115,7 @@ async def test_extract_memory_fact_no_value() -> None:
 @pytest.mark.asyncio
 async def test_extract_memory_fact_llm_error() -> None:
     """抽取：LLM 异常 → 降级 None（记忆是旁路能力，不阻断对话）。"""
-    from src.agent.memory_store import extract_memory_fact
+    from src.agent.memory.store import extract_memory_fact
 
     from src.llm.adapter import LLMAdapter
 

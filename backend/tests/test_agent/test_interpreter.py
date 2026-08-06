@@ -10,7 +10,7 @@ import types
 
 import pytest
 
-from src.agent.main_agent import _parse_ptc_whitelist
+from src.agent.middlewares.interpreter import _parse_ptc_whitelist
 from src.core.config import settings
 
 

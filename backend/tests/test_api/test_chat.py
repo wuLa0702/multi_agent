@@ -33,8 +33,8 @@ def no_background_llm(mocker):
     模块级（仅本文件）：test_memory_store.py 直接调 extract_memory_fact
     （adapter 显式注入），conftest 全局 autouse 会破坏它。
     """
-    mocker.patch("src.agent.assistant_tasks.generate_title", return_value=None)
-    mocker.patch("src.agent.memory_store.extract_memory_fact", return_value=None)
+    mocker.patch("src.agent.tasks.assistant.generate_title", return_value=None)
+    mocker.patch("src.agent.memory.store.extract_memory_fact", return_value=None)
 
 
 def parse_sse(text: str) -> list[dict]:
@@ -87,7 +87,7 @@ async def test_chat_stream_normal_flow(mock_chat_llm, tmp_db_path) -> None:
 async def test_chat_stream_persists_messages(mock_chat_llm, tmp_db_path) -> None:
     """落库：user 消息 + assistant 全文各一条，会话更新。"""
     from src.core import db as core_db
-    from src.db import repository as repo
+    from src.db import session_repo as repo
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         _, body = await _post_stream(client, {"message": "你好"})
@@ -109,7 +109,7 @@ async def test_chat_stream_persists_messages(mock_chat_llm, tmp_db_path) -> None
 async def test_chat_stream_auto_create_session(mock_chat_llm, tmp_db_path) -> None:
     """session_id=None → 自动建会话（start 事件带新 id）。"""
     from src.core import db as core_db
-    from src.db import repository as repo
+    from src.db import session_repo as repo
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         _, body = await _post_stream(client, {"message": "第一条"})

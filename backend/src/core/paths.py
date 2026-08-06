@@ -135,3 +135,25 @@ def get_uploads_dir() -> Path:
     base = get_app_dir() / "uploads"
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+
+# ── 记忆文件虚拟路径（/memories/ 路由——集中维护，禁止散落硬编码）──
+# 2026-08-05 结构重构：main_agent MEMORY_SOURCES / 归档函数原硬编码虚拟路径，
+# 统一收敛本模块，用函数获取（路径唯一维护点）。
+
+MEMORY_AGENTS_FILE = "/memories/AGENTS.md"
+MEMORY_TASKS_FILE = "/memories/tasks.md"
+MEMORY_DECISIONS_FILE = "/memories/decisions.md"
+MEMORY_TASKS_ARCHIVE_FILE = "/memories/tasks_archive.md"
+
+
+def get_memory_sources() -> list[str]:
+    """记忆注入源（MemoryMiddleware sources）。
+
+    记忆体系 v3 决策：AGENTS.md 单文件全量注入（官方 MemoryMiddleware，
+    零自建）；tasks/decisions 为分类承载文件（agent 按需读），不进注入。
+
+    Returns:
+        虚拟路径列表（/memories/ 路由语义，非磁盘路径）
+    """
+    return [MEMORY_AGENTS_FILE]
