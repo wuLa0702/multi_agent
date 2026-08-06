@@ -6,6 +6,7 @@
  * - 业务调用方 catch ApiError 按 code 分支处理（见错误码表契约 §7）
  */
 
+import { MOCK_ENABLED } from "./mock";
 import type {
   ApproveRequest,
   DeleteResponse,
@@ -106,6 +107,10 @@ export const api = {
 
   /** POST /v1/chat/approve — 审批决策（202 即返，恢复走新 SSE 流） */
   approve(req: ApproveRequest): Promise<{ status: string; accepted: boolean }> {
+    // 自 mock 假数据测试（前端开发计划 §1）：mock 模式审批直接成功，resume 走 mock 流
+    if (MOCK_ENABLED) {
+      return Promise.resolve({ status: "ok", accepted: true });
+    }
     return request<{ status: string; accepted: boolean }>("/v1/chat/approve", {
       method: "POST",
       body: JSON.stringify(req),

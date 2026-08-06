@@ -4,7 +4,7 @@
  * Agent 面板替代抽屉：主区挤压不覆盖，可拖动宽度（v3 §3.5）。
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MessageSquare, Plus } from "lucide-react";
 import { useSessionStore } from "@/lib/stores/sessionStore";
 import { useChatStore } from "@/lib/stores/chatStore";
@@ -14,7 +14,6 @@ import ChatMessages from "@/components/chat/ChatMessages";
 import ChatInput from "@/components/chat/ChatInput";
 import AgentPanel from "@/components/agent/AgentPanel";
 import PageHeader from "@/components/common/PageHeader";
-import ApproveDialog from "@/components/agent/ApproveDialog";
 import { showToast } from "@/components/shared/Toast";
 import { showConfirm } from "@/components/ui/confirm-dialog";
 
@@ -31,12 +30,15 @@ export default function ChatPage() {
   const messages = useChatStore((s) => s.messages);
 
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
+  const resumePromptShownRef = useRef(false);
 
   useEffect(() => {
     void loadList().catch(() => undefined);
     void loadProviders();
 
-    // 审批断点恢复
+    // 审批断点恢复（StrictMode 双渲染 guard：只弹一次确认）
+    if (resumePromptShownRef.current) return;
+    resumePromptShownRef.current = true;
     const runId = useChatStore.getState().pendingRunId;
     if (runId) {
       void showConfirm("检测到上次有一个待审批操作，是否恢复执行？", {
@@ -116,7 +118,6 @@ export default function ChatPage() {
       {/* 第四栏：Agent 详情面板（v3 §3.5，可开关可拖动） */}
       <AgentPanel open={agentPanelOpen} onClose={() => setAgentPanelOpen(false)} />
 
-      <ApproveDialog />
     </div>
   );
 }

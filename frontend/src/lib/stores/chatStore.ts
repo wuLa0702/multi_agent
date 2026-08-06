@@ -14,6 +14,7 @@
 import { create, type StoreApi } from "zustand";
 import { api, ApiError } from "@/lib/api/client";
 import { streamChat } from "@/lib/api/sse";
+import { streamChatMock, MOCK_ENABLED } from "@/lib/api/mock";
 import type {
   ApproveEvent,
   Message,
@@ -58,6 +59,8 @@ interface ChatState {
   agentTree: AgentNode[];
   streamStatus: StreamStatus;
   pendingApproval: ApproveEvent | null;
+  /** 审批历史（已批准/已拒绝折叠单行，v4.0 §2.1.7） */
+  approvalHistory: { tool_name: string; action: "approve" | "reject" | "edit"; ts: string }[];
   pendingRunId: string | null; // localStorage 镜像（刷新恢复用）
   providers: ProviderInfo[]; // 模型下拉数据源（GET /v1/providers）
   selectedModelId: number | null; // 用户选择；null = 默认模型
@@ -99,16 +102,16 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     set({ streamStatus: "connecting" });
 
-    void streamChat(req, {
-      onEvent: (event) => handleEvent(set, get, event),
-      onHttpError: (status, body) => {
+    const callbacks = {
+      onEvent: (event: Parameters<typeof streamChat>[1]["onEvent"]) => handleEvent(set, get, event),
+      onHttpError: (status: number, body: { detail?: string; error?: string; code?: string }) => {
         pushNotice({
           kind: "error",
           text: `请求失败（HTTP ${status}）：${body.detail || body.error} [${body.code}]`,
         });
         set({ streamStatus: "idle" });
       },
-      onNetworkError: (err) => {
+      onNetworkError: (err: Error) => {
         pushNotice({ kind: "error", text: `连接中断：${err.message}（可重试）` });
         set({ streamStatus: "idle" });
       },
@@ -116,7 +119,13 @@ export const useChatStore = create<ChatState>((set, get) => {
         // done / error 事件已置 idle；这里兜底（网络正常读完但无 done）
         set((s) => (s.streamStatus === "idle" ? s : { streamStatus: "idle" }));
       },
-    }, controller.signal);
+    };
+    // 自 mock 假数据测试（前端开发计划 §1）：MOCK_ENABLED=true 走 mock 流，联调改 false
+    if (MOCK_ENABLED) {
+      void streamChatMock(req, callbacks, controller.signal);
+    } else {
+      void streamChat(req, callbacks, controller.signal);
+    }
   };
 
   return {
@@ -127,6 +136,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     agentTree: [],
     streamStatus: "idle",
     pendingApproval: null,
+    approvalHistory: [],
     pendingRunId: localStorage.getItem(PENDING_RUN_KEY),
     providers: [],
     selectedModelId: null,
@@ -218,6 +228,13 @@ export const useChatStore = create<ChatState>((set, get) => {
       await submitApproval(pendingApproval, "reject", resume, note);
     },
 
+    /** 编辑参数后批准（高危三决策，v4.0 §2.1.6）：携带修改后的 arguments */
+    async approveWithEdit(edited: Record<string, unknown>) {
+      const { pendingApproval, resume } = get();
+      if (!pendingApproval) return;
+      await submitApproval(pendingApproval, "edit", resume, undefined, edited);
+    },
+
     cancel() {
       abortRef?.abort();
       set({ streamStatus: "idle" });
@@ -282,18 +299,31 @@ async function refreshMessages(
   }
 }
 
-/** 审批提交（approve / reject 共用）：202 后 resume 恢复执行 */
+/** 审批提交（approve / reject / edit 共用）：202 后 resume 恢复执行 */
 async function submitApproval(
   approval: ApproveEvent,
-  action: "approve" | "reject",
+  action: "approve" | "reject" | "edit",
   resume: (runId: string) => Promise<void>,
   note?: string,
+  edited?: Record<string, unknown>,
 ): Promise<void> {
   const pushNotice = (n: ChatNotice) =>
     useChatStore.setState((s) => ({ notices: [...s.notices, n] }));
 
   try {
-    await api.approve({ run_id: approval.run_id, action, note: note ?? null });
+    await api.approve({
+      run_id: approval.run_id,
+      action,
+      note: note ?? null,
+      edited_arguments: action === "edit" ? (edited ?? null) : null,
+    });
+    // 审批历史（v4.0 §2.1.7 折叠单行）
+    useChatStore.setState((s) => ({
+      approvalHistory: [
+        ...s.approvalHistory,
+        { tool_name: approval.tool_name, action, ts: new Date().toISOString() },
+      ],
+    }));
     await resume(approval.run_id);
   } catch (err) {
     if (err instanceof ApiError) {

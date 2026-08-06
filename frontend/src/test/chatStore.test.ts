@@ -5,6 +5,7 @@
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { useChatStore } from "@/lib/stores/chatStore";
+import { ApiError } from "@/lib/api/client";
 import type { SSEEvent } from "@/lib/api/types";
 
 // mock 外部依赖：streamChat 捕获回调；api 全 mock
@@ -24,6 +25,12 @@ const { streamChatMock, apiMock } = vi.hoisted(() => ({
 
 vi.mock("@/lib/api/sse", () => ({
   streamChat: (...args: unknown[]) => streamChatMock(...args),
+}));
+
+// 测试环境关闭 mock 流（chatStore 走 streamChat，由上方 vi.fn 捕获）
+vi.mock("@/lib/api/mock", () => ({
+  MOCK_ENABLED: false,
+  streamChatMock: vi.fn(),
 }));
 
 vi.mock("@/lib/api/client", () => ({
@@ -86,6 +93,7 @@ beforeEach(async () => {
     streamStatus: "idle",
     pendingApproval: null,
     pendingRunId: null,
+    approvalHistory: [],
   });
   streamChatMock.mockImplementation((_req, cb) => {
     capturedCallbacks = cb;
@@ -179,7 +187,7 @@ describe("审批流程", () => {
 
     await useChatStore.getState().approve();
 
-    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "r1", action: "approve", note: null });
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "r1", action: "approve", note: null, edited_arguments: null });
     const resumeReq = streamChatMock.mock.calls.at(-1)![0];
     expect(resumeReq).toMatchObject({ resume_run_id: "r1" });
   });
@@ -190,7 +198,7 @@ describe("审批流程", () => {
 
     await useChatStore.getState().reject("理由");
 
-    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "r1", action: "reject", note: "理由" });
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "r1", action: "reject", note: "理由", edited_arguments: null });
   });
 
   it("审批失效（RUN_NOT_FOUND）→ 清理状态 + 提示", async () => {
@@ -344,5 +352,61 @@ describe("done 后静默重拉（设计 §8.1 发现 4 / §8.4 未决项 3：以
     const s = useChatStore.getState();
     expect(s.sessionId).toBe("s2");
     expect(s.messages[0].id).toBe(9); // 仍是 s2，未被 s1 覆盖
+  });
+});
+
+
+describe("审批流程（HITL，v4.0 §2.1）", () => {
+  const approveEvent: SSEEvent = {
+    type: "approve",
+    run_id: "run-1",
+    call_id: "call-1",
+    tool_name: "run_code_in_sandbox",
+    arguments: { code: "print(1)" },
+    message: "沙箱执行任意代码",
+  };
+
+  it("approve 事件 → pendingApproval + awaiting_approval", async () => {
+    await fireEvent(approveEvent);
+    const st = useChatStore.getState();
+    expect(st.pendingApproval).toMatchObject({ run_id: "run-1", tool_name: "run_code_in_sandbox" });
+    expect(st.streamStatus).toBe("awaiting_approval");
+  });
+
+  it("approve() → 调 API + 历史 + resume 新流", async () => {
+    apiMock.approve.mockResolvedValue({ status: "ok", accepted: true });
+    await fireEvent(approveEvent);
+    await useChatStore.getState().approve();
+
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "run-1", action: "approve", note: null, edited_arguments: null });
+    expect(useChatStore.getState().approvalHistory).toEqual([{ tool_name: "run_code_in_sandbox", action: "approve", ts: expect.any(String) }]);
+    const req = streamChatMock.mock.calls.at(-1)![0];
+    expect(req).toMatchObject({ resume_run_id: "run-1" });
+    expect(useChatStore.getState().pendingApproval).toBeNull();
+  });
+
+  it("reject(note) → 携带拒绝理由", async () => {
+    apiMock.approve.mockResolvedValue({ status: "ok", accepted: true });
+    await fireEvent(approveEvent);
+    await useChatStore.getState().reject("参数有风险");
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "run-1", action: "reject", note: "参数有风险", edited_arguments: null });
+    expect(useChatStore.getState().approvalHistory.at(-1)?.action).toBe("reject");
+  });
+
+  it("approveWithEdit → action=edit + edited_arguments", async () => {
+    apiMock.approve.mockResolvedValue({ status: "ok", accepted: true });
+    await fireEvent(approveEvent);
+    await useChatStore.getState().approveWithEdit({ code: "print(2)" });
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "run-1", action: "edit", note: null, edited_arguments: { code: "print(2)" } });
+  });
+
+  it("RUN_NOT_FOUND → 审批失效清理", async () => {
+    apiMock.approve.mockRejectedValue(new ApiError(404, { code: "RUN_NOT_FOUND", detail: "x", error: "x" }));
+    await fireEvent(approveEvent);
+    await useChatStore.getState().approve();
+    const st = useChatStore.getState();
+    expect(st.pendingApproval).toBeNull();
+    expect(st.streamStatus).toBe("idle");
+    expect(st.notices.some((n) => n.text.includes("已失效"))).toBe(true);
   });
 });

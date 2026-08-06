@@ -184,8 +184,9 @@ export interface ChatStreamRequest {
 
 export interface ApproveRequest {
   run_id: string;
-  action: "approve" | "reject";
+  action: "approve" | "reject" | "edit"; // edit = 编辑参数后批准（高危三决策，v4.0 §2.1.6）
   note?: string | null;
+  edited_arguments?: Record<string, unknown> | null; // edit 时携带修改后的参数
 }
 
 export interface SessionUpdateRequest {
