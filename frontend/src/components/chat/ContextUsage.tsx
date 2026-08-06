@@ -13,14 +13,28 @@ import { api } from "@/lib/api/client";
 export default function ContextUsage() {
   const sessionId = useChatStore((s) => s.sessionId);
   const streamStatus = useChatStore((s) => s.streamStatus);
-  const [used, setUsed] = useState(0);
-  const [total, setTotal] = useState(0);
+  // 优先 store（SSE done 事件携带，v4.0 §3.2：mock 模式数据源）；API 查表仅真实模式覆盖
+  const storeUsed = useChatStore((s) => s.contextUsed);
+  const storeTotal = useChatStore((s) => s.contextTotal);
+  const [used, setUsed] = useState(storeUsed);
+  const [total, setTotal] = useState(storeTotal);
 
-  // 会话切换 / 流结束（done）后查表
+  // done 后同步 store 值（SSE 事件更新先于 API）
+  useEffect(() => {
+    if (storeUsed > 0) {
+      setUsed(storeUsed);
+      setTotal(storeTotal > 0 ? storeTotal : total);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeUsed, storeTotal]);
+
+  // 真实模式：会话切换 / 流结束后查表（mock 404 静默，保持 store 值）
   useEffect(() => {
     if (!sessionId) {
-      setUsed(0);
-      setTotal(0);
+      if (storeUsed === 0) {
+        setUsed(0);
+        setTotal(0);
+      }
       return;
     }
     void api
@@ -29,7 +43,7 @@ export default function ContextUsage() {
         setUsed(r.used);
         setTotal(r.total);
       })
-      .catch(() => undefined); // 查询失败静默（保持占位）
+      .catch(() => undefined); // 查询失败静默（保持占位/store 值）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, streamStatus]);
 
