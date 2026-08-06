@@ -40,7 +40,7 @@ export interface ToolCall {
 export interface AgentNode {
   key: string; // `${name}-${seq}`（契约 subagent 事件无 id，用 name+序号定位）
   name: string;
-  status: "running" | "done";
+  status: "running" | "done" | "waiting" | "error"; // v5.0 四态（waiting/error 预留）
   summary?: string | null;
 }
 

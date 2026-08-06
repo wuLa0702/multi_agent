@@ -10,6 +10,7 @@ import { useChatStore } from "@/lib/stores/chatStore";
 import type { Message } from "@/lib/api/types";
 import MessageBubble from "./MessageBubble";
 import ApprovalCard from "./ApprovalCard";
+import SubagentPanel from "./SubagentPanel";
 
 /** 历史里的 tool 角色消息 → 折叠块 */
 function ToolMessageBlock({ message }: { message: Message }) {
@@ -105,6 +106,8 @@ export default function MessageList() {
           </div>
         </div>
       )}
+      {/* 子代理模式内嵌面板（v5.0 §2.2：进度 + 可折叠卡片，agentTree 非空时显示） */}
+      <SubagentPanel />
       {/* 高风险审批卡片（前端功能规划 §4.2：pending 时插入对话流，含历史折叠行） */}
       <ApprovalCard />
     </div>
