@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     interpreter_enabled: bool = False
     # PTC 白名单（逗号分隔；🔴 只允许只读工具——PTC 调用绕 interrupt_on 审批）
     interpreter_ptc: str = "internet_search"
+    # Agent 图单次运行递归上限（2026-08-10 评估体系实证：研究任务多轮搜索
+    # 频繁撞默认 25 → 调 50；成本权衡：上限翻倍 = 循环失控时 LLM 调用上限翻倍，
+    # 需结合成本/用量告警使用；调小可降低单次成本上限）
+    agent_recursion_limit: int = 50
 
     # ── 人在回路 / Rubric（2026-08-06 设计：docs/decisions/方案-人在回路与Rubric评分-详细设计-v1.md）──
     # HITL 审批：True = 沙箱/文件/技能等副作用工具执行前人类审批（按风险分级，见 agent/hitl/hitl.py）。

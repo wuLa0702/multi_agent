@@ -388,7 +388,13 @@ async def stream_agent_events(
         if checkpoint_id:
             config["configurable"]["checkpoint_id"] = checkpoint_id
     # stream_subgraphs：子代理/子图事件（v3 subagents 投影的 v2 等价物）
-    config = {**(config or {}), "stream_subgraphs": True}
+    # recursion_limit：settings.agent_recursion_limit（2026-08-10 评估实证
+    # 默认 25 研究任务易撞限——见 测试报告-评估体系首跑）
+    config = {
+        **(config or {}),
+        "stream_subgraphs": True,
+        "recursion_limit": settings.agent_recursion_limit,
+    }
 
     seq = 0
     async with _stream_semaphore:  # 并发限流：SQLite 写锁缓解
