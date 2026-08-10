@@ -369,7 +369,10 @@ async def main() -> None:
         "--tasks", type=Path, default=DEFAULT_TASKS,
         help=f"任务集 JSONL（缺省: assets/eval/tasks.jsonl）",
     )
-    parser.add_argument("--concurrency", type=int, default=3, help="并发上限（防限流，默认 3）")
+    parser.add_argument(
+        "--concurrency", type=int, default=5,
+        help="并发上限（2026-08-10 评估实证：后端 Semaphore(10) 排队饱和，5 不浪费）",
+    )
     parser.add_argument("--api-base", default="http://127.0.0.1:8010")
     parser.add_argument("--judge-model-id", type=int, default=None, help="judge 模型 ID（缺省默认主模型）")
     args = parser.parse_args()

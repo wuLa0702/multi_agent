@@ -128,7 +128,9 @@ _checkpointer: AsyncSqliteSaver | None = None
 
 # 对话流并发限流（计划文档 C.1-2）：单机多浏览器并发对话同时断点落库
 # 会触发 SQLite 写锁，Semaphore 限制同时执行的流数量，超出排队。
-_stream_semaphore = asyncio.Semaphore(4)
+# 2026-08-10 拍板：硬编码 4 → settings.stream_concurrency（本地 .env.dev=10，
+# 云端 .env.prod=2，环境保存可调）
+_stream_semaphore = asyncio.Semaphore(settings.stream_concurrency)
 
 
 async def init_checkpointer(db_path=None) -> None:

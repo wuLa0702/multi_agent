@@ -129,11 +129,15 @@ def test_stream_config_builds_thread_id(mocker) -> None:
 
 
 def test_stream_semaphore_configured() -> None:
-    """并发限流：Semaphore 存在（C.1-2，SQLite 写锁缓解）。"""
+    """并发限流：Semaphore 存在且取 settings.stream_concurrency（C.1-2 + 2026-08-10 拍板）。
+
+    硬编码 4 → settings 字段（本地 .env.dev=10 / 云端 .env.prod=2，环境保存可调）。
+    """
     from src.agent import main_agent
+    from src.core.config import settings
 
     assert main_agent._stream_semaphore is not None
-    assert main_agent._stream_semaphore._value == 4
+    assert main_agent._stream_semaphore._value == settings.stream_concurrency
 
 
 def test_stream_config_without_session_no_thread_id(mocker) -> None:
