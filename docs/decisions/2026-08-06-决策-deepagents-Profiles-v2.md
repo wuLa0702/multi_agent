@@ -30,7 +30,7 @@
 
 ---
 
-## 0. 结论：经讨论无需开发 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+## 0. 结论：经讨论无需开发 🔴 v2
 
 > 🔴 **结论（2026-08-06 讨论拍板）**：本项目**不开发、不接入** deepagents Profiles。
 > 本文档保留为**决策记录 + 官方能力学习梳理**；设计章节（§5-§7）留档，供未来触发条件满足时复用。
@@ -49,7 +49,7 @@
 
 ---
 
-## 1. 总：背景、目标与范围 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+## 1. 总：背景、目标与范围 🔴 v2
 
 ### 1.1 背景
 
@@ -59,14 +59,14 @@
 
 本文档 = 官方能力完整梳理（§2）+ 对接现状（§3）+ 三个关键发现（§4）+ 落地设计（§5/§6）+ 可运行核心代码（§7）。
 
-### 1.2 目标 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+### 1.2 目标 🔴 v2
 
 1. 把官方 Profiles 文档翻译成"字段 × 语义 × 注意点"的完整梳理，不再每次查原文（学习价值，永久保留）
 2. 评估本项目是否适用——**结论：不适用，无需开发**（§0 / §4.4 / §10 完整论证）
 3. 留档一份"未来若需要可直接复用"的设计蓝图（§5-§7，触发条件见 §0 / §10.3）
 4. 明确边界：profile 是构建期静态调优，请求级差异仍走既有 ChatContext 机制
 
-### 1.3 范围 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+### 1.3 范围 🔴 v2
 
 | 在本文档内 | 不在本文档内 |
 |-----------|-------------|
@@ -81,7 +81,7 @@
 
 > 来源：官方 Profiles 文档。本地 deepagents 0.7.1 源码已核对 API 存在性与内置 profile 清单。
 
-### 2.1 两类 Profile <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 2.1 两类 Profile 🟠 v1
 
 | 维度 | HarnessProfile（主角） | ProviderProfile（本项目不用） |
 |------|------------------------|------------------------------|
@@ -90,7 +90,7 @@
 | 典型场景 | 某模型 prompt 风格 / 删工具 / 剥 middleware | 厂商集成的默认构造参数（temperature、header 注入） |
 | 官方定位 | "tune how the harness behaves for a particular model" | "narrower companion API……Most callers don't need them" |
 
-### 2.2 HarnessProfile 字段表（7 字段） <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 2.2 HarnessProfile 字段表（7 字段） 🟠 v1
 
 | 字段 | 类型 | 语义 | 注意点 |
 |------|------|------|--------|
@@ -104,7 +104,7 @@
 
 **prompt 组装顺序（关键，官方原文）**：调用方 `system_prompt=` **始终在最前**，`system_prompt_suffix` **始终在最后**——与选哪个模型无关。本项目 `build_system_prompt()` 传的是 `system_prompt=`，落在最前；profile 的 suffix 落在最后，两者互不干扰。
 
-### 2.3 注册 key 与解析 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 2.3 注册 key 与解析 🟠 v1
 
 - **key 两种粒度**：provider 级（`"openai"` → 该厂商全部模型）/ 模型级（`"openai:gpt-5.5"` → 仅该模型）
 - **解析时合并**：provider 级 + 模型级同时存在 → 逐字段合并，模型级未设字段继承 provider 级，设了则覆盖
@@ -116,7 +116,7 @@
 - **无通配符**：不存在"匹配所有 provider"的 key；想全局生效的调整应放在 `create_deep_agent` 调用点，不放 profile
 - 每个子代理会**用自己的模型**重跑一次 profile 解析
 
-### 2.4 合并语义表 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 2.4 合并语义表 🟠 v1
 
 | 字段 | 合并行为 |
 |------|----------|
@@ -129,13 +129,13 @@
 | `pre_init`（provider） | 链式：先已存在，后追加 |
 | `init_kwargs_factory`（provider） | 工厂链式，每次 resolve 时输出合并 |
 
-### 2.5 配置文件与插件 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 2.5 配置文件与插件 🟠 v1
 
 - **HarnessProfileConfig**：YAML/JSON 背书的声明式子集（prompt 文本、工具描述覆盖、excluded_tools/excluded_middleware、通用子代理编辑），持有 `to_dict` / `from_dict` / `from_harness_profile`；`register_harness_profile` 两类都收，无需手动转换
 - **序列化限制**：非空 `extra_middleware`、`__main__` 或函数作用域内声明的 middleware 类 → `from_harness_profile` 抛 ValueError；类形态 excluded_middleware 序列化为 public alias（有 `serialized_name`）或 `module:Class` ref
 - **插件分发**：`importlib.metadata` entry point（组名 `deepagents.harness_profiles` / `deepagents.provider_profiles`），目标为零参 callable；加载顺序 = 内置 → entry-point 插件 → 用户直接注册，全部走同一叠加语义
 
-### 2.6 内置 profile（0.7.1 实测） <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 2.6 内置 profile（0.7.1 实测） 🟠 v1
 
 - harness 级：anthropic opus-4.7 / sonnet-4.6 / haiku-4.5、openai codex、nvidia nemotron-3-ultra——**全是模型级 key**
 - provider 级：openai / openrouter / nvidia（模型构造 kwargs）
@@ -145,25 +145,25 @@
 
 ## 3. 分：项目现状对接点
 
-### 3.1 现有模型选择机制 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 3.1 现有模型选择机制 🟠 v1
 
 - 真相源 = SQLite `providers/models` 表（seed：deepseek-v4-flash / deepseek-v4-pro / doubao-seed-evolving / Doubao-Seed-2.0-Code / glm-4-plus），lifespan 时 `get_registry().load(conn)` 加载进内存缓存（`core/model_registry.py`）
 - `llm/adapter.py: get_chat_model(model_id)`：按 DB 模型 ID 构造 ChatOpenAI（base_url / api_key / model_name 全来自 DB 配置；temperature=0.7 / timeout=60s / max_retries=2 在 `_build_chat_model` 集中）
 - 运行期切换：`main_agent.py` 的 `_configurable_model` middleware（`@wrap_model_call`）每次模型调用按 `ChatContext.model_id` 换模型实例（`request.override(model=...)`），agent 图本身单例复用不重建
 
-### 3.2 现有组装点 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 3.2 现有组装点 🟠 v1
 
 `_build_agent(thread_id)`（main_agent.py:248）：`create_deep_agent(model=默认模型, system_prompt=build_system_prompt() 分层组装, subagents=YAML loader 同模型, middleware=[_configurable_model, TokenUsage, ToolAudit, interpreter…], tools=内部+外部 MCP, context_schema=ChatContext, checkpointer/store/memory/backend/permissions…)`。
 
-### 3.3 接线点 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 3.3 接线点 🟠 v1
 
 `api/main.py` lifespan：`get_registry().load(conn)` 成功之后（与 MCP client 同 try 块，失败不阻断降级）。Profiles 注册**必须**在 registry load 之后（存在性校验依赖注册表）。
 
 ---
 
-## 4. 分：关键设计发现（本设计成立的前提） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+## 4. 分：关键设计发现（本设计成立的前提） 🔴 v2
 
-### 4.1 ⚠️ ChatOpenAI 实例一律推导 provider="openai" <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 4.1 ⚠️ ChatOpenAI 实例一律推导 provider="openai" 🟠 v1
 
 0.7.1 源码 `_models.py` 核对：`get_model_provider()` 取 `model._get_ls_params()["ls_provider"]`，而 langchain-openai 的 ChatOpenAI 类**硬编码** ls_provider="openai"——与 base_url 指向谁无关。
 
@@ -173,20 +173,20 @@
 - DB 里的 provider slug（deepseek / ark / zhipu）**不能**用作 profile key——推导永远到不了这些 slug
 - 注册 provider 级 `"openai"` = 命中本项目**全部**模型（危险，禁止；也是本项目唯一能"全局生效"的 key——而全局调整官方建议放 create_deep_agent 调用点，见 §2.3）
 
-### 4.2 ⚠️ Profile 是构建期解析，运行期换模型不重解析 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 4.2 ⚠️ Profile 是构建期解析，运行期换模型不重解析 🟠 v1
 
 - HarnessProfile 在 `create_deep_agent` **构建期**解析（针对构建时传入的模型实例），影响的是 prompt 组装 / 工具可见性 / middleware 栈 / 子代理配置——全部是**构建期静态决定**
 - 本项目运行期换模型走 `_configurable_model` 的 `request.override(model=...)`，**不会触发 profile 重解析**
 - 结论：profile 生效对象 = **构建时传入的默认模型**；用户会话中途切模型，prompt/工具/middleware 仍是默认模型的 profile
 - 评估：与现状一致不倒退——现有 `build_system_prompt()` 也是静态组装，请求级差异（mode 代理模式）经 ChatContext 注入。若未来要"按模型换 profile"：会话重建（`rebuild_agent` 已有）或 ChatContext 扩展，列为 P2 演进（§6）
 
-### 4.3 ProviderProfile 不适用于本项目 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 4.3 ProviderProfile 不适用于本项目 🟠 v1
 
 - ProviderProfile 只在传 `provider:model` 字符串时生效；本项目永远传预配置实例（DB 驱动构造）
 - 模型构造参数已集中且唯一：`llm/adapter.py:_build_chat_model`（temperature/timeout/max_retries）——这正是 ProviderProfile 想管的东西，**本项目已有唯一真相源，不引入第二套**
 - `pre_init`（密钥校验）/ `init_kwargs_factory`（运行时派生 kwargs）的场景本项目由 adapter + registry 承担
 
-### 4.4 讨论澄清：格式误解与冲突定性（2026-08-06） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+### 4.4 讨论澄清：格式误解与冲突定性（2026-08-06） 🔴 v2
 
 **先澄清一个"伪冲突"——国内模型格式**：deepseek / 智谱 / 火山 ark 都提供 **OpenAI 兼容的 chat completions 接口**——这正是项目用 `ChatOpenAI` 一个类通吃三家（只换 base_url/api_key）的原因。"推导为 openai"是**协议层伪标识**（`_get_ls_params()` 类名硬编码，与 base_url 无关），不是把它们当成 OpenAI 模型。国产模型对 OpenAI 协议是**兼容子集**（如无 content-block 协议支持，main_agent 注释已提），但 profile 只调 prompt/工具/middleware，不走这些特性——**格式不是冲突**。
 
@@ -200,9 +200,9 @@
 
 ---
 
-## 5. 分：设计决策 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+## 5. 分：设计决策 🔴 v2
 
-### 5.1 决策总览 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+### 5.1 决策总览 🔴 v2
 
 | # | 决策 | 理由 |
 |---|------|------|
@@ -216,19 +216,19 @@
 | D7 | 不做 YAML 配置管理 / 插件 entry point | 项目配置真相源是 SQLite + 代码，第三套真相源违反"唯一真相源"精神；单项目无插件分发需求 |
 | D8 | profile 只管构建期静态调优；请求级差异（mode/模型）仍走 ChatContext + middleware | §4.2 边界；per-request profile 官方无此能力 |
 
-### 5.2 key 策略 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 5.2 key 策略 🟠 v1
 
 - key 格式：`openai:<model_name>`，`<model_name>` 与 DB models 表 `model_name` 字段一致（如 `openai:deepseek-v4-flash`）
 - 模型在 DB 中改名的联动：`_PROFILE_TABLE` 的 key 同步改（注册前存在性校验会告警漏改）
 - 同模型跨厂商重名（如 ark 与 deepseek 都有同名模型名）：key 冲突无法区分——本项目 seed 无重名，文档标注此限制
 
-### 5.3 注册模块与时机 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 5.3 注册模块与时机 🟠 v1
 
 - `src/agent/profiles.py` 暴露 `register_all_model_profiles() -> int`（新增注册数，幂等）
 - 调用点：`api/main.py` lifespan 内 `get_registry().load(conn)` 之后（同 try 块，失败不阻断——降级无 profile）
 - 状态：模块级 `_registered_keys` 集合去重；进程重启重新注册（无持久化，注册表本身是内存态，一致）
 
-### 5.4 HarnessProfile 字段落地映射 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+### 5.4 HarnessProfile 字段落地映射 🔴 v2
 
 | 字段 | 决策 | 用法 / 理由 |
 |------|------|-------------|
@@ -242,7 +242,7 @@
 
 > ⚠️ 注（2026-08-06 经讨论不落地）：上表 P0/P1/P2 标记**作废**，仅作未来落地参考；当前不实施任何字段。
 
-### 5.5 不做清单 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 5.5 不做清单 🟠 v1
 
 - ❌ ProviderProfile（§4.3）
 - ❌ HarnessProfileConfig YAML 管理（§5.1 D7）
@@ -252,7 +252,7 @@
 
 ---
 
-## 6. 分：边界与取舍 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+## 6. 分：边界与取舍 🔴 v2
 
 **两条调优轴线的分工**：
 
@@ -272,9 +272,9 @@
 
 ---
 
-## 7. 分：完整核心代码 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+## 7. 分：完整核心代码 🔴 v2
 
-### 7.1 `backend/src/agent/profiles.py`（全量，留档） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+### 7.1 `backend/src/agent/profiles.py`（全量，留档） 🔴 v2
 
 > ⚠️ 留档说明（2026-08-06 经讨论不落地）：以下代码**不写入仓库**，仅作未来复用参考；若 P2 子代理模型隔离落地，按 §7.2 接线即可启用。
 
@@ -373,7 +373,7 @@ def _model_exists(registry, key: str) -> bool:
     return False
 ```
 
-### 7.2 `backend/src/api/main.py` 接线（lifespan 内） <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 7.2 `backend/src/api/main.py` 接线（lifespan 内） 🟠 v1
 
 ```python
 # 文件顶部导入区追加：
@@ -388,7 +388,7 @@ from src.agent.profiles import register_all_model_profiles
             logging.exception("注册表/MCP 加载失败——运行时模型回落 .env，agent 仅用内部工具")
 ```
 
-### 7.3 `backend/tests/test_agent/test_profiles.py`（全量） <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 7.3 `backend/tests/test_agent/test_profiles.py`（全量） 🟠 v1
 
 ```python
 """Profiles 注册模块测试（设计文档 §7.3/§8）。
@@ -471,7 +471,7 @@ async def test_register_passes_harness_profile_fields(monkeypatch, seeded_regist
 
 > ⚠️ 前提核对：`seeded_registry` 的 tmp DB 走 `seed_defaults`，模型名与 §3.1 的 seed 一致（deepseek-v4-flash 等）；若 seed 数据变更，`_PROFILE_TABLE` 的 key 与 `test_register_passes_harness_profile_fields` 断言需同步。
 
-### 7.4 调用链说明 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+### 7.4 调用链说明 🟠 v1
 
 ```
 进程启动
@@ -492,7 +492,7 @@ async def test_register_passes_harness_profile_fields(monkeypatch, seeded_regist
 
 ---
 
-## 8. 分：测试设计 <span style="color:#fff;background-color:#ea8a1e;border-radius:4px;padding:1px 6px;font-size:0.8em">v1</span>
+## 8. 分：测试设计 🟠 v1
 
 | # | 用例 | 类别 | 断言 | 依赖 |
 |---|------|------|------|------|
@@ -506,9 +506,9 @@ async def test_register_passes_harness_profile_fields(monkeypatch, seeded_regist
 
 ---
 
-## 9. 总：验收清单与风险自检 <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+## 9. 总：验收清单与风险自检 🔴 v2
 
-### 9.1 验收清单（当前不执行：经讨论不落地，以下为"未来落地时"的执行清单） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+### 9.1 验收清单（当前不执行：经讨论不落地，以下为"未来落地时"的执行清单） 🔴 v2
 
 - [ ] `backend/src/agent/profiles.py` 落地，`_PROFILE_TABLE` 按模型族填写
 - [ ] main.py lifespan 接线，启动日志出现 Profiles 注册行
@@ -528,7 +528,7 @@ async def test_register_passes_harness_profile_fields(monkeypatch, seeded_regist
 
 ---
 
-## 10. 分：讨论纪要（2026-08-06，co-creator 问答全景） <span style="color:#fff;background-color:#e11d48;border-radius:4px;padding:1px 6px;font-size:0.8em">v2</span>
+## 10. 分：讨论纪要（2026-08-06，co-creator 问答全景） 🔴 v2
 
 > 决策记录惯例：保存"为什么当时不做"的完整上下文，供未来重新评估时读取。
 
