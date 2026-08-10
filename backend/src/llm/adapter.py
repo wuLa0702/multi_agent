@@ -49,7 +49,6 @@ def get_chat_model(model_id: int | None = None) -> ChatOpenAI:
             model_name=env_cfg["model"],
             base_url=env_cfg["base_url"],
             api_key=env_cfg["api_key"],
-            provider=settings.llm_provider,
         )
 
     api_key = _api_key_for(cfg.api_key_env)
