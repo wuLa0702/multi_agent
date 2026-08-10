@@ -216,6 +216,9 @@ def test_tasks_asset_exists() -> None:
     assert len(tasks) == 10
     assert all(t.get("id") and t.get("query") and t.get("difficulty") for t in tasks)
     assert all("来源编号" in t["query"] for t in tasks), "query 必须内置引用编号要求（A1 前提）"
+    assert all("以联网搜索" in t["query"] for t in tasks), (
+        "query 必须约束工具偏好（2026-08-10 跑偏修复：搜索为主，沙箱仅必要验证）"
+    )
 
 
 def test_citation_re_pattern_sanity() -> None:
