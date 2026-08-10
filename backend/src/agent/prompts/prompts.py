@@ -110,10 +110,26 @@ MEMORY_AGENT_PROMPT = """你是记忆管理员，负责把对话中的长期记�
 
 # ── 上下文工程开发计划 §7.1（#7 分层组装）──
 
+# 主 Agent 审核回路指引（P0-2，2026-08-10）：产出研报后委派 review_agent
+# 审核；不通过按问题清单修订重审（≤2 轮）；仍不通过带审核结论交付。
+# 设计：docs/decisions/2026-08-10-计划-审核子代理-v1.md §2
+REVIEW_GUIDANCE = """
+
+## 研报质量审核（P0-2）
+
+完成研报撰写后，必须委派 `review_agent` 审核（把完整报告作为任务内容）：
+
+1. 委派审核 → 收到"通过" → 直接交付
+2. 收到"不通过 + 问题清单" → **逐条修订报告** → 再次委派审核（第 2 轮）
+3. 第 2 轮仍"不通过" → 停止修订，交付终稿并附审核结论
+   （说明遗留问题，诚实呈现——不要无休止修订）
+"""
+
+
 # 分层常量（v2 计划 §4.2）：核心 > 可选 > 动态（裁剪优先级；裁剪逻辑 P2）
 PROMPT_LAYERS = {
     "core": ["DEFAULT_SYSTEM_PROMPT"],              # 核心层：角色（必选）
-    "optional": ["MEMORY_GUIDANCE_V3", "MODE_INSTRUCTIONS"],  # 可选层：按需注入
+    "optional": ["REVIEW_GUIDANCE", "MEMORY_GUIDANCE_V3", "MODE_INSTRUCTIONS"],  # 可选层：按需注入
     "dynamic": ["memory_injection"],                # 动态层：记忆注入（chat.py）
 }
 
@@ -123,6 +139,7 @@ def build_system_prompt(*, mode: str = "default") -> str:
 
     P1 只做分层组装（v2.0 澄清）——裁剪逻辑放 P2（需精确 token 计算与
     触发时机，与自定义压缩器一起做）。
+    P0-2（2026-08-10）：注入 REVIEW_GUIDANCE（审核回路指引）。
 
     Args:
         mode: 代理模式（plan/agent/auto → 追加可选层模式指令）
@@ -130,9 +147,14 @@ def build_system_prompt(*, mode: str = "default") -> str:
     Returns:
         组装后的 system prompt 字符串
     """
-    from src.agent.prompts import DEFAULT_SYSTEM_PROMPT, MEMORY_GUIDANCE_V3, MODE_INSTRUCTIONS
+    from src.agent.prompts import (
+        DEFAULT_SYSTEM_PROMPT,
+        MEMORY_GUIDANCE_V3,
+        MODE_INSTRUCTIONS,
+        REVIEW_GUIDANCE,
+    )
 
-    parts = [DEFAULT_SYSTEM_PROMPT, MEMORY_GUIDANCE_V3]
+    parts = [DEFAULT_SYSTEM_PROMPT, REVIEW_GUIDANCE, MEMORY_GUIDANCE_V3]
     instruction = MODE_INSTRUCTIONS.get(mode)
     if instruction:
         parts.append(instruction)

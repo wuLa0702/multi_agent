@@ -111,7 +111,12 @@ system_prompt: B 代理。
         assert [s["name"] for s in specs] == ["a", "b"]  # 文件名排序，顺序稳定
 
     async def test_load_project_subagents(self, monkeypatch, seeded_registry) -> None:
-        """真实项目目录：search_agent.yaml 加载成功（tools 映射 + model 字段经 DB 解析）。"""
+        """真实项目目录：子代理 YAML 全部加载（tools 映射 + model 字段经 DB 解析）。
+
+        2026-08-10 P0-2：新增 review_agent.yaml——断言更新为双子代理
+        （文件名排序：review_agent < search_agent），审核子代理单测见
+        tests/test_agent/test_review_agent.py。
+        """
         from langchain_openai import ChatOpenAI
 
         monkeypatch.setattr(
@@ -120,9 +125,9 @@ system_prompt: B 代理。
             lambda model_id: ChatOpenAI(model="deepseek-v4-flash", api_key="x", base_url="https://x"),
         )
         specs = load_subagents()
-        assert [s["name"] for s in specs] == ["search_agent"]
-        assert specs[0]["tools"][0].__name__ == "internet_search"
-        assert specs[0]["model"].model == "deepseek-v4-flash"
+        assert [s["name"] for s in specs] == ["review_agent", "search_agent"]
+        assert specs[1]["tools"][0].__name__ == "internet_search"
+        assert specs[1]["model"].model == "deepseek-v4-flash"
 
 
 class TestSubagentModelField:
