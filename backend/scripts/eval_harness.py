@@ -263,8 +263,11 @@ async def run_one_task(
                 if not report.strip():
                     raise RuntimeError("empty report")
                 # A1：引用编号合规率（sources = 文末提取的 URL 列表）
+                # ⚠️ 解包顺序：count 返回 (compliant, total)——2026-08-10
+                # 首跑曾写反（字段互换，task-005 出现 38/35 幻觉），回归测试见
+                # test_task_metrics_a1_assignment_order
                 sources = extract_sources(report)
-                metrics.citations_total, metrics.citations_compliant = (
+                metrics.citations_compliant, metrics.citations_total = (
                     count_compliant_citations(report, sources)
                 )
                 # A2：来源可达性抽查（前 SOURCE_SAMPLE_SIZE 条）

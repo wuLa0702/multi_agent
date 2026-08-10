@@ -221,3 +221,21 @@ def test_tasks_asset_exists() -> None:
 def test_citation_re_pattern_sanity() -> None:
     """引用正则覆盖中英文括号。"""
     assert CITATION_RE.findall("a[1]b【2】c") == ["1", "2"]
+
+
+def test_task_metrics_a1_assignment_order() -> None:
+    """回归：count_compliant_citations 解包赋值顺序（2026-08-10 字段互换事故）。
+
+    曾写反（citations_total 先收）导致 a1_ratio 可 >1（task-005 38/35 幻觉）；
+    若再写反，本用例 a1_ratio() 会断言失败。
+    """
+    from eval_harness import TaskMetrics
+
+    m = TaskMetrics(task_id="t")
+    # 模拟 run_one_task 的真实解包模式：(compliant, total) = count(...)
+    m.citations_compliant, m.citations_total = count_compliant_citations(
+        "a[1] b[2] c[3]", ["u1", "u2"]
+    )
+    assert m.citations_compliant == 2  # 合规 2 条（[1][2] 在范围内）
+    assert m.citations_total == 3  # 引用共 3 条
+    assert m.a1_ratio() == pytest.approx(2 / 3)
