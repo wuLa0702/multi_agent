@@ -27,7 +27,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 import threading
 from collections import OrderedDict
 from collections.abc import AsyncIterator
@@ -67,6 +69,60 @@ from src.agent.tools.sandbox_tool import (
 from src.agent.tools.skill_tool import run_skill_script
 
 logger = logging.getLogger(__name__)
+_trace_logger = logging.getLogger("trace")  # 推理层 trace（logging.py 配置 → logs/agent_trace.jsonl）
+
+
+def _format_trace_line(session_id: str | None, evt: dict) -> dict:
+    """构造推理层 trace 行（纯函数，可单测；摘要口径防密钥 + 防上下文膨胀）。
+
+    采集事件（2026-08-10 阶段一：定位 recursion 撞限根因）：
+    - on_chat_model_start：模型调用（首条消息摘要 + 条数）
+    - on_tool_start / on_tool_end：工具调用（名称 + 输入/输出摘要）
+    - on_chain_start（lc_agent_name）：子代理启停
+
+    Args:
+        session_id: 会话 ID（None → 省略）
+        evt: astream_events 事件 dict
+
+    Returns:
+        扁平 trace 行 dict（ts/event/name/summary/run_id/parent_ids）
+    """
+    event_type = evt.get("event", "")
+    data = evt.get("data", {}) or {}
+    name = evt.get("name", "")
+    if event_type == "on_chat_model_start":
+        messages = data.get("input") or []
+        first = messages[0] if messages else None
+        content = getattr(first, "content", None) or str(first)[:200]
+        summary = f"messages={len(messages)} first={_truncate(str(content), 200)}"
+    elif event_type == "on_tool_start":
+        summary = f"input={_truncate(str(data.get('input', '')), 200)}"
+    elif event_type == "on_tool_end":
+        summary = f"output={_truncate(str(data.get('output', '')), 200)}"
+    elif event_type == "on_chain_start" and evt.get("metadata", {}).get("lc_agent_name"):
+        summary = f"subagent_start={name}"
+    elif event_type == "on_chain_end" and evt.get("metadata", {}).get("lc_agent_name"):
+        summary = f"subagent_end={name}"
+    else:
+        return {}
+    line = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "event": event_type,
+        "name": name,
+        "summary": summary,
+        "run_id": evt.get("run_id", ""),
+        "parent_ids": evt.get("parent_ids") or [],
+    }
+    if session_id:
+        line["session_id"] = session_id
+    return line
+
+
+def _trace_event(session_id: str | None, evt: dict) -> None:
+    """推理层 trace 落盘（只记不拦；trace logger 未配置时静默跳过）。"""
+    line = _format_trace_line(session_id, evt)
+    if line:
+        _trace_logger.info(json.dumps(line, ensure_ascii=False, default=str))
 
 
 @dataclass
@@ -411,6 +467,7 @@ async def stream_agent_events(
                     seq += 1
                     yield {"type": "token", "text": text, "id": seq}
             elif event_type == "on_tool_start":
+                _trace_event(context.session_id if context else None, evt)  # 推理层 trace
                 seq += 1
                 yield {
                     "type": "tool_call",
@@ -421,6 +478,7 @@ async def stream_agent_events(
                     "id": seq,
                 }
             elif event_type == "on_tool_end":
+                _trace_event(context.session_id if context else None, evt)  # 推理层 trace
                 seq += 1
                 yield {
                     "type": "tool_call",
@@ -438,6 +496,7 @@ async def stream_agent_events(
                 # 子图链事件携带该 metadata 即子代理启停。
                 # ⚠️ 待浏览器实测校准：Fake 模型不出工具调用，子代理不触发，
                 # 事件形态（字段名/嵌套深度）需真实链路验证
+                _trace_event(context.session_id if context else None, evt)  # 推理层 trace
                 seq += 1
                 yield {
                     "type": "subagent",
@@ -446,6 +505,9 @@ async def stream_agent_events(
                     "depth": 0,
                     "id": seq,
                 }
+            elif event_type == "on_chat_model_start":
+                # 推理层 trace：模型调用（含子代理内部——parent_ids 层级可区分）
+                _trace_event(context.session_id if context else None, evt)
 
 
 def _truncate(text: str, limit: int = 300) -> str:
