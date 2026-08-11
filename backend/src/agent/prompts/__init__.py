@@ -11,6 +11,7 @@ from src.agent.prompts.prompts import (  # noqa: F401
     MEMORY_GUIDANCE_V3,
     MODE_INSTRUCTIONS,
     PROMPT_LAYERS,
+    REVIEW_GUIDANCE,
     TITLE_GENERATE_PROMPT,
     build_system_prompt,
 )

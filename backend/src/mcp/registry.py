@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from src.agent.tools.fetch_tool import fetch_url
 from src.agent.tools.sandbox_tool import (
     download_sandbox_file,
     run_code_in_sandbox,
@@ -22,6 +23,7 @@ from src.agent.tools.skill_tool import run_skill_script
 
 TOOL_REGISTRY: dict[str, Callable[..., str]] = {
     "internet_search": internet_search,
+    "fetch_url": fetch_url,  # 受控抓取（决策 2026-08-11：搜索发现 + 抓取获取 双工具分工）
     "run_code_in_sandbox": run_code_in_sandbox,
     "run_command_in_sandbox": run_command_in_sandbox,
     "upload_workspace_file": upload_workspace_file,

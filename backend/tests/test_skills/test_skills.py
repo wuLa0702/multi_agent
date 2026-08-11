@@ -152,8 +152,14 @@ def script_env(monkeypatch, tmp_path):
 
 
 def test_run_skill_script_success(script_env) -> None:
-    """评审问题 2 回归：读脚本 → 沙箱执行一步封装（entry 不重复拼 python）。"""
-    out = skill_tool.run_skill_script("research-report", "build_report.py", args="sample_data.json")
+    """评审问题 2 回归：读脚本 → 沙箱执行一步封装（entry 不重复拼 python）。
+
+    2026-08-10 参数改名：args → script_args（langchain 1.x 工具转换保留字
+    冲突 v__args，评估跑数实证 run_skill_script() got 'v__args'）。
+    """
+    out = skill_tool.run_skill_script(
+        "research-report", "build_report.py", script_args="sample_data.json"
+    )
     assert out == "out:build_report.py sample_data.json"
     assert script_env["run_script"] == 1
 

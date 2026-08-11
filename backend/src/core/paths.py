@@ -137,6 +137,22 @@ def get_uploads_dir() -> Path:
     return base
 
 
+def get_eval_assets_dir() -> Path:
+    """评估任务集资产目录（2026-08-10 评估体系 P0-a）：backend/assets/eval/。
+
+    assets 为入库资产层（任务集人工标注须入库，data/ 是 gitignore 运行时产物）；
+    parents[2] = backend（与 get_static_skills_dir 同约定）。
+    """
+    return Path(__file__).resolve().parents[2] / "assets" / "eval"
+
+
+def get_eval_report_dir() -> Path:
+    """评估报告输出目录（2026-08-10 评估体系 P0-b）：data/eval/reports/（运行时产物）。"""
+    base = get_app_dir() / "eval" / "reports"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
 # ── 数据库文件名（集中维护——main_agent 测试注入场景/tests 断言拼同名文件）──
 # 2026-08-06 结构优化：文件名散落 main_agent + 3 个测试文件，统一收敛常量，
 # 文件名改名只改本处（文件名联动纪律，见计划-后端结构优化实施 T4）。

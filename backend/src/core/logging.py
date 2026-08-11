@@ -143,5 +143,22 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
         audit.addHandler(audit_handler)
         audit.propagate = False
 
+    # 推理层 trace logger（2026-08-10 阶段一：定位 recursion 撞限根因）：
+    # → logs/agent_trace.jsonl。采集 on_chat_model_start / on_tool_start/end /
+    # 子代理启停（main_agent._trace_event 构造扁平 JSON 行，摘要口径防密钥+防膨胀）。
+    # propagate=False：trace 独立成流，不混入主日志；滚动同审计。
+    trace = logging.getLogger("trace")
+    if not trace.handlers:
+        trace_handler = SizeTimedRotatingFileHandler(
+            log_dir / "agent_trace.jsonl",
+            max_bytes=MAX_BYTES,
+            backup_count=BACKUP_COUNT,
+            encoding=LOG_ENCODING,
+        )
+        trace_handler.setFormatter(logging.Formatter("%(message)s"))
+        trace.setLevel(logging.INFO)
+        trace.addHandler(trace_handler)
+        trace.propagate = False
+
     root._multilog_configured = True  # type: ignore[attr-defined]
     return root

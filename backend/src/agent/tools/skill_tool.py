@@ -30,7 +30,7 @@ def run_skill_script(
     skill_name: str,
     script_name: str,
     *,
-    args: str = "",
+    script_args: str = "",
     config: RunnableConfig | None = None,
 ) -> str:
     """执行技能脚本（读文件 → 沙箱执行，一步封装）。
@@ -38,7 +38,7 @@ def run_skill_script(
     Args:
         skill_name: 技能名（data/skills/skill_md/<skill_name>/）
         script_name: scripts/ 下的脚本文件名（禁 ../ 与绝对路径）
-        args: 脚本命令行参数（如 "sample_data.json"）
+        script_args: 脚本命令行参数（如 "sample_data.json"）
         config: 执行配置（框架注入，取 thread_id 定位会话沙箱）
 
     Returns:
@@ -61,7 +61,7 @@ def run_skill_script(
         sandbox = sandbox_pool.get_sandbox(_thread_id_from(config))
         # entry 不拼 python 前缀——adapter.run_script 内部已拼 "python {entry}"
         return sandbox_adapter.run_script(
-            sandbox, {script_name: content}, f"{script_name} {args}".strip()
+            sandbox, {script_name: content}, f"{script_name} {script_args}".strip()
         )
     except Exception as e:  # noqa: BLE001 —— 工具失败降级为错误信息，不冒泡中断 run
         return f"技能脚本执行失败（{type(e).__name__}）：{e}。请勿重试沙箱。"

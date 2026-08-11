@@ -27,7 +27,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 import threading
 from collections import OrderedDict
 from collections.abc import AsyncIterator
@@ -66,8 +68,9 @@ from src.agent.tools.sandbox_tool import (
 )
 from src.agent.tools.skill_tool import run_skill_script
 
-logger = logging.getLogger(__name__)
+from src.agent.middlewares.trace import trace_event  # 推理层 trace（决策 #4：agent/middlewares/trace.py）
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ChatContext:
@@ -128,7 +131,29 @@ _checkpointer: AsyncSqliteSaver | None = None
 
 # 对话流并发限流（计划文档 C.1-2）：单机多浏览器并发对话同时断点落库
 # 会触发 SQLite 写锁，Semaphore 限制同时执行的流数量，超出排队。
-_stream_semaphore = asyncio.Semaphore(4)
+# 2026-08-10 拍板：硬编码 4 → settings.stream_concurrency（本地 .env.dev=10，
+# 云端 .env.prod=2，环境保存可调）。
+# 2026-08-11 决策 #3：模块级固定值 → 函数工厂（惰性创建，settings 变化可重建，
+# 不关心底层只关心获取）。
+_stream_semaphore: asyncio.Semaphore | None = None
+
+
+def get_stream_semaphore() -> asyncio.Semaphore:
+    """对话流并发信号量（函数工厂：惰性创建 + settings 变化重建）。
+
+    ⚠️ 重建语义：settings.stream_concurrency 变化时重建（测试/环境切换场景）；
+    生产运行中 settings 不变，重建仅发生在请求开始获取时，不影响已排队等待者
+    （旧信号量释放后自然结束）。
+
+    Returns:
+        当前并发上限的信号量
+    """
+    global _stream_semaphore
+    # getattr 防御：测试会注入 nullcontext 替身（无 _value），工厂不炸
+    current = getattr(_stream_semaphore, "_value", None)
+    if _stream_semaphore is None or current != settings.stream_concurrency:
+        _stream_semaphore = asyncio.Semaphore(settings.stream_concurrency)
+    return _stream_semaphore
 
 
 async def init_checkpointer(db_path=None) -> None:
@@ -388,10 +413,16 @@ async def stream_agent_events(
         if checkpoint_id:
             config["configurable"]["checkpoint_id"] = checkpoint_id
     # stream_subgraphs：子代理/子图事件（v3 subagents 投影的 v2 等价物）
-    config = {**(config or {}), "stream_subgraphs": True}
+    # recursion_limit：settings.agent_recursion_limit（2026-08-10 评估实证
+    # 默认 25 研究任务易撞限——见 测试报告-评估体系首跑）
+    config = {
+        **(config or {}),
+        "stream_subgraphs": True,
+        "recursion_limit": settings.agent_recursion_limit,
+    }
 
     seq = 0
-    async with _stream_semaphore:  # 并发限流：SQLite 写锁缓解
+    async with get_stream_semaphore():  # 并发限流：SQLite 写锁缓解
         async for evt in agent.astream_events(
             {"messages": messages}, version="v2", context=context, config=config
         ):
@@ -403,6 +434,7 @@ async def stream_agent_events(
                     seq += 1
                     yield {"type": "token", "text": text, "id": seq}
             elif event_type == "on_tool_start":
+                trace_event(context.session_id if context else None, evt)  # 推理层 trace
                 seq += 1
                 yield {
                     "type": "tool_call",
@@ -413,6 +445,7 @@ async def stream_agent_events(
                     "id": seq,
                 }
             elif event_type == "on_tool_end":
+                trace_event(context.session_id if context else None, evt)  # 推理层 trace
                 seq += 1
                 yield {
                     "type": "tool_call",
@@ -430,6 +463,7 @@ async def stream_agent_events(
                 # 子图链事件携带该 metadata 即子代理启停。
                 # ⚠️ 待浏览器实测校准：Fake 模型不出工具调用，子代理不触发，
                 # 事件形态（字段名/嵌套深度）需真实链路验证
+                trace_event(context.session_id if context else None, evt)  # 推理层 trace
                 seq += 1
                 yield {
                     "type": "subagent",
@@ -438,6 +472,9 @@ async def stream_agent_events(
                     "depth": 0,
                     "id": seq,
                 }
+            elif event_type == "on_chat_model_start":
+                # 推理层 trace：模型调用（含子代理内部——parent_ids 层级可区分）
+                trace_event(context.session_id if context else None, evt)
 
 
 def _truncate(text: str, limit: int = 300) -> str:
@@ -489,7 +526,7 @@ async def stream_agent_tokens(
         if checkpoint_id:
             config["configurable"]["checkpoint_id"] = checkpoint_id
 
-    async with _stream_semaphore:  # 并发限流：SQLite 写锁缓解
+    async with get_stream_semaphore():  # 并发限流：SQLite 写锁缓解
         async for evt in agent.astream_events(
             {"messages": messages}, version="v2", context=context, config=config
         ):
