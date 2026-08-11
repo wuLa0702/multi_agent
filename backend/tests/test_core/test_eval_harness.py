@@ -219,6 +219,9 @@ def test_tasks_asset_exists() -> None:
     assert all("以联网搜索" in t["query"] for t in tasks), (
         "query 必须约束工具偏好（2026-08-10 跑偏修复：搜索为主，沙箱仅必要验证）"
     )
+    assert all("禁止在沙箱内联网抓取" in t["query"] for t in tasks), (
+        "query 必须禁止沙箱自写爬虫（2026-08-10 trace 定位：模型绕过搜索自写 curl/urllib 抓取循环 50 轮）"
+    )
 
 
 def test_citation_re_pattern_sanity() -> None:
