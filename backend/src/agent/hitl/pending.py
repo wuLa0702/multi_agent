@@ -12,6 +12,42 @@
   reject 时累加，resume 判断是否达配置上限
 - Redis 不可达 → 异常上抛（approve 路由转 503；测试 mock get_redis）
 - 过期 → 404 友好提示（前端提示重开，同 RESUME_NOT_FOUND 处理）
+
+## Redis 存储 JSON 示例
+
+**主 key** `hitl:pending:{checkpoint_id}`（中断上下文，SET EX 600）：
+```json
+{
+  "session_id": "sess-42",
+  "action_requests": [
+    {"name": "run_code_in_sandbox", "args": {"code": "print(1)"}, "call_id": "call-a"},
+    {"name": "ask_human", "args": {"message": "调研范围是？"}, "call_id": "call-b"}
+  ],
+  "review_configs": [
+    {"action_name": "run_code_in_sandbox", "allowed_decisions": ["approve", "edit", "reject"]},
+    {"action_name": "ask_human", "allowed_decisions": ["respond"]}
+  ]
+}
+```
+
+**decisions LIST** `hitl:pending:{checkpoint_id}:decisions`（按 action index 占位，RPUSH/LSET）：
+```json
+// index 0 = call-a（决策数 == action 数 → accepted=true）
+[
+  {"type": "reject", "message": "别跑这段代码"},
+  {"type": "respond", "message": "2026 年市场规模 + 头部玩家格局"}
+]
+// 四种决策形状：
+// {"type": "approve"}
+// {"type": "reject", "message": "拒绝理由"}
+// {"type": "edit", "edited_action": {"name": "run_code_in_sandbox", "args": {"code": "print(2)"}}}
+// {"type": "respond", "message": "人类回答（仅 ask_human）"}
+```
+
+**修订计数 key** `hitl:revise:{session_id}`（publish_report 被拒累加，INCR EX 3600）：
+```json
+2   // 超过 settings.publish_review_max_revisions → resume 注入停止提示
+```
 """
 
 from __future__ import annotations

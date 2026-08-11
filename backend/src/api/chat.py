@@ -39,6 +39,7 @@ from src.core.errors import RetryableError
 from src.core.constants import PAGINATION_LIMIT_MAX
 from src.core.model_registry import get_registry
 from src.schemas.events import (
+    ApproveEvent,
     DoneEvent,
     ErrorEvent,
     StartEvent,
@@ -304,6 +305,205 @@ async def _save_memory_in_background(
         logger.exception("记忆后台任务失败（不影响对话）")
 
 
+async def _resolve_resume_context(
+    req: ChatStreamRequest, session_id: str, conn
+) -> tuple[bool, dict | None, list[BaseMessage], dict[str, str] | None]:
+    """resume 分支准备：consume 待决审批 + 修订上限注入 + checkpoint 校验。
+
+    P0 HITL 设计 §5.4：resume_run_id 命中 Redis 待决审批 → 返回 Command(resume)
+    输入（消费即删）；同时注入修订上限 SystemMessage（v1.2）；伪造/过期 checkpoint
+    → 返回 error 事件 dict（潜伏 bug 修复，§3.3-③ 实证）。
+
+    Args:
+        req: 流式对话请求
+        session_id: 会话 ID
+        conn: SQLite 连接（新消息模式组装历史用）
+
+    Returns:
+        (is_resume, resume_input, lc_messages, error_event_dict)：
+        error_event_dict 非 None → 调用方直接 yield 该事件并返回
+    """
+    from src.db import session_repo as repo
+
+    is_resume = bool(req.resume_run_id)
+    resume_input: dict | None = None
+    if is_resume:
+        from src.agent.hitl.pending import consume, get_revision_count
+
+        resume_input = await consume(req.resume_run_id)
+
+    # 准备输入消息（新消息模式 vs resume 模式；审批恢复不落库 user 消息）
+    lc_messages: list[BaseMessage] = (
+        []
+        if is_resume
+        else await _prepare_new_messages(conn, repo, req, session_id)
+    )
+
+    # v1.2 修订上限注入：publish_report 修订计数 > settings 上限 → 提示停止
+    if resume_input and settings.publish_review_max_revisions:
+        revise_count = await get_revision_count(session_id)
+        if revise_count > settings.publish_review_max_revisions:
+            lc_messages = [
+                SystemMessage(
+                    content=(
+                        f"报告已被拒绝修订 {revise_count} 次（上限 "
+                        f"{settings.publish_review_max_revisions}）。已达修订上限："
+                        "输出当前版本并停止修订，不再请求交付。"
+                    )
+                ),
+                *lc_messages,
+            ]
+
+    # 潜伏 bug 修复（设计 §5.4）：resume 无待决审批时校验 checkpoint 有效性
+    if is_resume and resume_input is None:
+        from src.agent.main_agent import checkpoint_exists
+
+        if not await checkpoint_exists(session_id, req.resume_run_id):
+            error_event = {
+                "data": ErrorEvent(
+                    code="RESUME_NOT_FOUND",
+                    detail="断点已失效（checkpoint 不存在），请重新开始对话",
+                    retryable=False,
+                ).model_dump_json()
+            }
+            return True, None, [], error_event
+
+    return is_resume, resume_input, lc_messages, None
+
+
+async def _emit_agent_events(
+    agent,
+    lc_messages: list[BaseMessage],
+    req: ChatStreamRequest,
+    session_id: str,
+    resume_input: dict | None,
+    run_id: str,
+) -> AsyncIterator[tuple[str, dict]]:
+    """Agent 事件流 → SSE 事件（token/tool_call/subagent/approve；v2 回退仅 token）。
+
+    v3 多事件分发（2026-08-05 契约 v3）：token 走 chunk、tool_call/subagent 走
+    工具/子图事件；HITL（P0 设计 §5.4/§5.5）：审批恢复 → Command(resume) 输入，
+    hitl_callback 采集中断，approve 事件透传（含 checkpoint_id/call_id 原样回传）。
+    v2 回退（event_stream_v3=False）：仅 token 流。
+
+    Args:
+        agent: build_agent 的产物
+        lc_messages: 输入消息（新消息/resume 模式）
+        req: 流式对话请求
+        session_id: 会话 ID
+        resume_input: Command(resume) 输入（无待决审批 → None）
+        run_id: chat.py 流 run_id（approve 事件流标识）
+
+    Yields:
+        (type, event_dict)：type ∈ token/tool_call/subagent/approve
+    """
+    chat_context = ChatContext(model_id=req.model_id, mode=req.mode, session_id=session_id)
+    if not settings.event_stream_v3:
+        async for text in stream_agent_tokens(
+            agent,
+            lc_messages,
+            context=chat_context,
+            checkpoint_id=req.resume_run_id,  # resume 模式：从精确快照继续
+        ):
+            yield "token", {"text": text}
+        return
+
+    from langgraph.types import Command
+
+    from src.agent.hitl.callback import HitlCallback
+
+    graph_input = Command(resume=resume_input) if resume_input else None
+    hitl_callback = HitlCallback() if settings.hitl_enabled else None
+    async for event in stream_agent_events(
+        agent,
+        lc_messages,
+        context=chat_context,
+        checkpoint_id=req.resume_run_id,
+        hitl_callback=hitl_callback,
+        run_id=run_id,
+        graph_input=graph_input,
+    ):
+        yield event["type"], event
+
+
+async def _trigger_memory_after(
+    req: ChatStreamRequest,
+    session_id: str,
+    assistant_text: str,
+    lc_messages: list[BaseMessage],
+    is_resume: bool,
+) -> None:
+    """会话结束记忆后台写入（done 前触发不等待，内部全容错）。
+
+    2026-08-04 优化：记忆写入移出 SSE 流——done 不被额外 LLM 抽取调用拖慢。
+    memory_agent 子代理（2026-08-05）：入队后台队列（监控/并发限制/指纹幂等）；
+    降级路径：单次 LLM 抽取（turn_count<2 短对话跳过省 token）。
+
+    Args:
+        req: 流式对话请求
+        session_id: 会话 ID
+        assistant_text: assistant 全文
+        lc_messages: 输入消息（turn_count 计算用）
+        is_resume: 是否 resume（resume 不重复写记忆）
+    """
+    if is_resume or not assistant_text:
+        return
+    if settings.memory_agent_enabled:
+        from src.agent.memory.agent import _fingerprint
+        from src.agent.memory.queue import MemoryTask, memory_task_queue
+
+        memory_task_queue.enqueue(
+            MemoryTask(
+                session_id=session_id,
+                user_message=req.message or "",
+                assistant_text=assistant_text,
+                fingerprint=_fingerprint(session_id, req.message or "", assistant_text),
+            )
+        )
+    else:
+        # 降级路径：现状单次 LLM 抽取（extract_memory_typed 保留）
+        # v3.1：turn_count = 历史消息轮次（user+assistant 成对）——短对话跳过
+        asyncio.create_task(
+            _save_memory_in_background(
+                req.message or "", assistant_text,
+                turn_count=len(lc_messages) // 2,
+            )
+        )
+
+
+async def _build_done_event(
+    conn, run_id: str, session_id: str, started_at: float
+) -> DoneEvent:
+    """构建 done 事件（context_used 查库 + 用量告警）。
+
+    TokenUsageMiddleware 在 token 流结束时已落库 context_used，此处取最新值
+    带给前端 store 同步；#4 用量告警（2026-08-05）：>80% 窗口 → 前端提示。
+
+    Args:
+        conn: SQLite 连接
+        run_id: 本次 run 的 ID
+        session_id: 会话 ID
+        started_at: 流开始时间戳（耗时计算）
+
+    Returns:
+        DoneEvent 实例（调用方 model_dump_json）
+    """
+    duration_ms = int((time.monotonic() - started_at) * 1000)
+    cur = await conn.execute(
+        "SELECT context_used FROM sessions WHERE id = ?", (session_id,)
+    )
+    row = await cur.fetchone()
+    return DoneEvent(
+        run_id=run_id,
+        session_id=session_id,
+        duration_ms=duration_ms,
+        context_used=row["context_used"] if row else None,
+        context_warning=(
+            row["context_used"] > 0.8 * 128_000 if row and row["context_used"] else False
+        ),
+    )
+
+
 async def _event_stream(
     req: ChatStreamRequest,
     session_id: str,
@@ -313,171 +513,63 @@ async def _event_stream(
     """SSE 事件生成器（模块级，独立可测）：start → token×N → done/error。
 
     resume 模式（P0 断点恢复）：checkpoint 状态接管——不落库 user 消息、
-    不注入模式指令、输入传空列表；从 checkpoint_id 快照继续执行。
-    审批恢复（P0 HITL 设计 §5.4）：resume_run_id 命中 Redis 待决审批 →
-    输入改为 Command(resume={"decisions": [...]})，并注入修订上限提示（v1.2）。
+    不注入模式指令；从 checkpoint_id 快照继续执行。审批恢复（P0 HITL 设计 §5.4）：
+    resume_run_id 命中待决审批 → Command(resume) 输入（准备逻辑见 _resolve_resume_context）。
+
+    只做编排：resume 准备 / start / 事件分发（_emit_agent_events）/ 落库 /
+    记忆后台（_trigger_memory_after）/ done（_build_done_event）逐段调用。
     """
     conn = await core_db.get_connection()
     try:
         from src.db import session_repo as repo
 
-        is_resume = bool(req.resume_run_id)
-
-        # 审批恢复：resume_run_id 命中待决审批 → Command(resume) 输入（消费即删）
-        resume_input = None
-        if is_resume:
-            from src.agent.hitl.pending import consume, get_revision_count
-
-            resume_input = await consume(req.resume_run_id)
-
-        # 准备输入消息（新消息模式 vs resume 模式；审批恢复不落库 user 消息）
-        lc_messages = (
-            []
-            if is_resume
-            else await _prepare_new_messages(conn, repo, req, session_id)
+        # 1. resume 准备（consume 待决审批 + 修订注入 + checkpoint 校验）
+        is_resume, resume_input, lc_messages, resume_err = await _resolve_resume_context(
+            req, session_id, conn
         )
+        if resume_err is not None:
+            yield resume_err
+            return
 
-        # v1.2 修订上限注入：publish_report 修订计数 > settings 上限 → 提示停止
-        if resume_input and settings.publish_review_max_revisions:
-            revise_count = await get_revision_count(session_id)
-            if revise_count > settings.publish_review_max_revisions:
-                lc_messages = [
-                    SystemMessage(
-                        content=(
-                            f"报告已被拒绝修订 {revise_count} 次（上限 "
-                            f"{settings.publish_review_max_revisions}）。已达修订上限："
-                            "输出当前版本并停止修订，不再请求交付。"
-                        )
-                    ),
-                    *lc_messages,
-                ]
-
-        # 潜伏 bug 修复（设计 §5.4）：resume 无待决审批时校验 checkpoint 有效性——
-        # 伪造/过期 id → RESUME_NOT_FOUND，不再静默新跑（§3.3-③ 实证）
-        if is_resume and resume_input is None:
-            from src.agent.main_agent import checkpoint_exists
-
-            if not await checkpoint_exists(session_id, req.resume_run_id):
-                yield {
-                    "data": ErrorEvent(
-                        code="RESUME_NOT_FOUND",
-                        detail="断点已失效（checkpoint 不存在），请重新开始对话",
-                        retryable=False,
-                    ).model_dump_json()
-                }
-                return
-
-        # start 事件（resume 带 resumed=true，前端保留挂起前节点）
+        # 2. start 事件（resume 带 resumed=true，前端保留挂起前节点）
         yield {
             "data": StartEvent(
                 run_id=run_id, session_id=session_id, resumed=is_resume
             ).model_dump_json()
         }
 
-        # Agent 流式执行（异常统一转 error 事件）
+        # 3. Agent 流式执行（异常统一转 error 事件）
+        full_text_parts: list[str] = []
         try:
             agent = build_agent(thread_id=session_id)  # 会话级缓存（v2.0：文件根绑会话）
-            chat_context = ChatContext(model_id=req.model_id, mode=req.mode, session_id=session_id)
-            full_text_parts: list[str] = []
-            if settings.event_stream_v3:
-                # 事件流增强（2026-08-05 引入方案 P0）：token + tool_call + subagent
-                # 三类事件分发（契约 v3 定稿事件落地）；token 仍逐 chunk（打字机效果）
-                # HITL（P0 设计 §5.4/§5.5）：审批恢复 → Command(resume) 输入；
-                # hitl_callback 采集中断；run_id 供 approve 事件流标识
-                from src.agent.hitl.callback import HitlCallback
-                from langgraph.types import Command
-
-                graph_input = Command(resume=resume_input) if resume_input else None
-                hitl_callback = HitlCallback() if settings.hitl_enabled else None
-                async for event in stream_agent_events(
-                    agent,
-                    lc_messages,
-                    context=chat_context,
-                    checkpoint_id=req.resume_run_id,
-                    hitl_callback=hitl_callback,
-                    run_id=run_id,
-                    graph_input=graph_input,
-                ):
-                    if event["type"] == "token":
-                        full_text_parts.append(event["text"])
-                        yield {"data": TokenEvent(text=event["text"]).model_dump_json()}
-                    elif event["type"] == "tool_call":
-                        yield {"data": ToolCallEvent(**event).model_dump_json()}
-                    elif event["type"] == "subagent":
-                        yield {"data": SubagentEvent(**event).model_dump_json()}
-                    elif event["type"] == "approve":
-                        # 审批事件透传前端（含 checkpoint_id/call_id 原样回传）
-                        from src.schemas.events import ApproveEvent
-
-                        yield {"data": ApproveEvent(**event).model_dump_json()}
-            else:
-                # v2 现状：仅 token 流（默认，零行为变化）
-                async for text in stream_agent_tokens(
-                    agent,
-                    lc_messages,
-                    context=chat_context,
-                    checkpoint_id=req.resume_run_id,  # resume 模式：从精确快照继续
-                ):
-                    full_text_parts.append(text)
-                    yield {"data": TokenEvent(text=text).model_dump_json()}
+            async for evt_type, evt in _emit_agent_events(
+                agent, lc_messages, req, session_id, resume_input, run_id
+            ):
+                if evt_type == "token":
+                    full_text_parts.append(evt["text"])
+                    yield {"data": TokenEvent(text=evt["text"]).model_dump_json()}
+                elif evt_type == "tool_call":
+                    yield {"data": ToolCallEvent(**evt).model_dump_json()}
+                elif evt_type == "subagent":
+                    yield {"data": SubagentEvent(**evt).model_dump_json()}
+                elif evt_type == "approve":
+                    yield {"data": ApproveEvent(**evt).model_dump_json()}
         except Exception as exc:  # noqa: BLE001 - 流内错误统一转 error 事件
             yield _build_error_event(is_resume, exc)
             return
 
-        # assistant 全文落库
+        # 4. assistant 全文落库
         assistant_text = "".join(full_text_parts)
         await repo.append_message(
             conn,
             Message(session_id=session_id, role="assistant", content=assistant_text),
         )
 
-        # 长期记忆后台写入（done 前触发不等待——2026-08-04 优化）
-        if not is_resume and assistant_text:
-            if settings.memory_agent_enabled:
-                # memory_agent 子代理（2026-08-05 记忆抽取子代理方案）：
-                # 入队后台队列（监控/日志/并发限制/指纹幂等）——多步+工具抽取
-                from src.agent.memory.agent import _fingerprint
-                from src.agent.memory.queue import MemoryTask, memory_task_queue
+        # 5. 长期记忆后台写入（done 前触发不等待——2026-08-04 优化）
+        await _trigger_memory_after(req, session_id, assistant_text, lc_messages, is_resume)
 
-                memory_task_queue.enqueue(
-                    MemoryTask(
-                        session_id=session_id,
-                        user_message=req.message or "",
-                        assistant_text=assistant_text,
-                        fingerprint=_fingerprint(
-                            session_id, req.message or "", assistant_text
-                        ),
-                    )
-                )
-            else:
-                # 降级路径：现状单次 LLM 抽取（extract_memory_typed 保留）
-                # v3.1：turn_count = 历史消息轮次（user+assistant 成对）——短对话跳过
-                asyncio.create_task(
-                    _save_memory_in_background(
-                        req.message or "", assistant_text,
-                        turn_count=len(lc_messages) // 2,
-                    )
-                )
-
-        # done 事件（流内异常时不发）；context_used 查库（TokenUsageMiddleware
-        # 在 token 流结束时已落库，此处取最新值带给前端 store 同步）
-        duration_ms = int((time.monotonic() - started_at) * 1000)
-        cur = await conn.execute(
-            "SELECT context_used FROM sessions WHERE id = ?", (session_id,)
-        )
-        row = await cur.fetchone()
-        yield {
-            "data": DoneEvent(
-                run_id=run_id,
-                session_id=session_id,
-                duration_ms=duration_ms,
-                context_used=row["context_used"] if row else None,
-                # #4 用量告警（2026-08-05）：>80% 窗口 → 前端提示"为什么变模糊"
-                context_warning=(
-                    row["context_used"] > 0.8 * 128_000 if row and row["context_used"] else False
-                ),
-            ).model_dump_json()
-        }
+        # 6. done 事件（流内异常时不发；context_used 查库带前端同步）
+        yield {"data": (await _build_done_event(conn, run_id, session_id, started_at)).model_dump_json()}
     finally:
         await conn.close()
 
