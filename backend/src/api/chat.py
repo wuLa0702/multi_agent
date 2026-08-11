@@ -19,10 +19,12 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from pydantic import BaseModel, Field
+from redis.exceptions import RedisError
 from sse_starlette.sse import EventSourceResponse
 
 from src.agent.main_agent import (
@@ -64,6 +66,31 @@ class ChatStreamRequest(BaseModel):
     mode: str = Field(
         default="default",
         description="代理模式：default/plan/agent/auto（2026-08-04 P1，先浅后深——仅提示词注入）",
+    )
+
+
+class ApproveRequest(BaseModel):
+    """审批决策请求体（P0 HITL 设计 §5.3：对齐前端 ApproveRequest 契约 + 透传扩展）。
+
+    Attributes:
+        run_id: chat.py 流 run_id（approve 事件原样回传）
+        checkpoint_id: 中断点 checkpoint_id（approve 事件原样回传，resume 恢复键）
+        call_id: 工具调用 id（v1.2：多 action 顺序匹配键，approve 事件原样回传）
+        action: approve=批准 / reject=拒绝+note 反馈 / edit=改参数后批准 /
+            respond=回答澄清问题（仅 ask_human）
+        note: reject/respond 的文本（respond 时必填——人类回答）
+        edited_arguments: edit 时修改后的完整参数
+    """
+
+    run_id: str = Field(description="chat.py 流 run_id")
+    checkpoint_id: str = Field(description="中断点 checkpoint_id（resume 恢复键）")
+    call_id: str = Field(description="工具调用 id（多 action 顺序匹配键）")
+    action: Literal["approve", "reject", "edit", "respond"] = Field(
+        description="审批决策类型"
+    )
+    note: str | None = Field(default=None, description="reject/respond 的文本")
+    edited_arguments: dict[str, Any] | None = Field(
+        default=None, description="edit 时修改后的完整参数"
     )
 
 
@@ -287,6 +314,8 @@ async def _event_stream(
 
     resume 模式（P0 断点恢复）：checkpoint 状态接管——不落库 user 消息、
     不注入模式指令、输入传空列表；从 checkpoint_id 快照继续执行。
+    审批恢复（P0 HITL 设计 §5.4）：resume_run_id 命中 Redis 待决审批 →
+    输入改为 Command(resume={"decisions": [...]})，并注入修订上限提示（v1.2）。
     """
     conn = await core_db.get_connection()
     try:
@@ -294,12 +323,49 @@ async def _event_stream(
 
         is_resume = bool(req.resume_run_id)
 
-        # 准备输入消息（新消息模式 vs resume 模式）
+        # 审批恢复：resume_run_id 命中待决审批 → Command(resume) 输入（消费即删）
+        resume_input = None
+        if is_resume:
+            from src.agent.hitl.pending import consume, get_revision_count
+
+            resume_input = await consume(req.resume_run_id)
+
+        # 准备输入消息（新消息模式 vs resume 模式；审批恢复不落库 user 消息）
         lc_messages = (
             []
             if is_resume
             else await _prepare_new_messages(conn, repo, req, session_id)
         )
+
+        # v1.2 修订上限注入：publish_report 修订计数 > settings 上限 → 提示停止
+        if resume_input and settings.publish_review_max_revisions:
+            revise_count = await get_revision_count(session_id)
+            if revise_count > settings.publish_review_max_revisions:
+                lc_messages = [
+                    SystemMessage(
+                        content=(
+                            f"报告已被拒绝修订 {revise_count} 次（上限 "
+                            f"{settings.publish_review_max_revisions}）。已达修订上限："
+                            "输出当前版本并停止修订，不再请求交付。"
+                        )
+                    ),
+                    *lc_messages,
+                ]
+
+        # 潜伏 bug 修复（设计 §5.4）：resume 无待决审批时校验 checkpoint 有效性——
+        # 伪造/过期 id → RESUME_NOT_FOUND，不再静默新跑（§3.3-③ 实证）
+        if is_resume and resume_input is None:
+            from src.agent.main_agent import checkpoint_exists
+
+            if not await checkpoint_exists(session_id, req.resume_run_id):
+                yield {
+                    "data": ErrorEvent(
+                        code="RESUME_NOT_FOUND",
+                        detail="断点已失效（checkpoint 不存在），请重新开始对话",
+                        retryable=False,
+                    ).model_dump_json()
+                }
+                return
 
         # start 事件（resume 带 resumed=true，前端保留挂起前节点）
         yield {
@@ -316,11 +382,21 @@ async def _event_stream(
             if settings.event_stream_v3:
                 # 事件流增强（2026-08-05 引入方案 P0）：token + tool_call + subagent
                 # 三类事件分发（契约 v3 定稿事件落地）；token 仍逐 chunk（打字机效果）
+                # HITL（P0 设计 §5.4/§5.5）：审批恢复 → Command(resume) 输入；
+                # hitl_callback 采集中断；run_id 供 approve 事件流标识
+                from src.agent.hitl.callback import HitlCallback
+                from langgraph.types import Command
+
+                graph_input = Command(resume=resume_input) if resume_input else None
+                hitl_callback = HitlCallback() if settings.hitl_enabled else None
                 async for event in stream_agent_events(
                     agent,
                     lc_messages,
                     context=chat_context,
                     checkpoint_id=req.resume_run_id,
+                    hitl_callback=hitl_callback,
+                    run_id=run_id,
+                    graph_input=graph_input,
                 ):
                     if event["type"] == "token":
                         full_text_parts.append(event["text"])
@@ -329,6 +405,11 @@ async def _event_stream(
                         yield {"data": ToolCallEvent(**event).model_dump_json()}
                     elif event["type"] == "subagent":
                         yield {"data": SubagentEvent(**event).model_dump_json()}
+                    elif event["type"] == "approve":
+                        # 审批事件透传前端（含 checkpoint_id/call_id 原样回传）
+                        from src.schemas.events import ApproveEvent
+
+                        yield {"data": ApproveEvent(**event).model_dump_json()}
             else:
                 # v2 现状：仅 token 流（默认，零行为变化）
                 async for text in stream_agent_tokens(
@@ -422,3 +503,70 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
     return EventSourceResponse(
         _event_stream(req, session_id, run_id, time.monotonic())
     )
+
+
+@router.post("/approve", summary="审批决策（202 即返，恢复走新 SSE 流）")
+async def approve(req: ApproveRequest) -> dict:
+    """审批/澄清决策入口：写入 Redis 待决存储，accepted=True 时前端可 resume。
+
+    P0 HITL 设计 §5.3（v1.2）：决策按 call_id 定位 action index 写入；publish_report
+    的 reject 决策额外 INCR 会话修订计数（§5.3，配置化上限由 resume 侧消费）。
+
+    Args:
+        req: 审批决策请求（run_id + checkpoint_id + call_id + action + note/edited_arguments）
+
+    Returns:
+        {"status": "ok", "accepted": bool}
+
+    Raises:
+        HTTPException(404): 无待决审批（APPROVAL_NOT_FOUND）
+        HTTPException(400): action 非法 / edit 缺参数 / respond 缺 note / call_id 不匹配
+        HTTPException(503): Redis 不可达（审批服务暂不可用）
+    """
+    from src.agent.hitl.pending import (
+        add_decision,
+        get_action_name,
+        get_session_id,
+        incr_revision,
+    )
+
+    decision: dict[str, Any] = {"type": req.action}
+    if req.action == "edit":
+        if not req.edited_arguments:
+            raise HTTPException(400, detail="edit 决策必须携带 edited_arguments")
+        tool_name = await _resolve_tool_name(req.checkpoint_id)  # Redis 读工具名
+        decision["edited_action"] = {"name": tool_name, "args": req.edited_arguments}
+    if req.action == "reject" and req.note:
+        decision["message"] = req.note
+    if req.action == "respond":
+        if not req.note:
+            raise HTTPException(400, detail="respond 决策必须携带 note（人类回答）")
+        decision["message"] = req.note
+    try:
+        accepted = await add_decision(req.checkpoint_id, req.call_id, decision)
+        # v1.2 修订计数：publish_report 被拒 → 会话级 INCR（防无限修订循环）
+        if req.action == "reject" and await get_action_name(req.checkpoint_id) == "publish_report":
+            session_id = await get_session_id(req.checkpoint_id)
+            if session_id:
+                await incr_revision(session_id)
+    except KeyError:
+        raise HTTPException(404, detail="审批已过期或不存在，请重开对话")
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+    except RedisError:
+        raise HTTPException(503, detail="审批服务暂不可用，请稍后重试")
+    return {"status": "ok", "accepted": accepted}
+
+
+async def _resolve_tool_name(checkpoint_id: str) -> str:
+    """待决审批对应的工具名（edit 决策需要 name 定位；Redis 读主 key）。
+
+    Args:
+        checkpoint_id: 中断点 checkpoint_id
+
+    Returns:
+        工具名（空串 = 无待决，由 add_decision 的 KeyError 兜底）
+    """
+    from src.agent.hitl.pending import get_action_name
+
+    return await get_action_name(checkpoint_id) or ""

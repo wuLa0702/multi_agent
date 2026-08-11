@@ -103,3 +103,32 @@ class ErrorEvent(SSEEvent):
     code: str = Field(description="错误码（对齐接口文档 §7）")
     detail: str = Field(description="具体原因")
     retryable: bool = Field(default=False, description="是否可重试")
+
+
+class ApproveEvent(SSEEvent):
+    """审批/澄清事件（P0 HITL 设计 §5.2）：流内中断挂起，等待人类决策。
+
+    Attributes:
+        run_id: chat.py 本次流 run_id（流标识；会话内多个中断可用它区分，
+            v1.1 拍板：与 checkpoint_id 职责分离）
+        checkpoint_id: 中断点真实 checkpoint_id（GraphInterruptEvent 提供，
+            v1.1 新增独立字段）——resume 恢复键，前端透传作 resume_run_id
+        call_id: 工具调用 id（v1.2：多 action 顺序匹配键，add_decision 按它定位）
+        tool_name: 工具名（run_code_in_sandbox / ask_human / publish_report）
+        arguments: 待审参数（v1.2：逐字段截断 ≤300 脱敏——同 ToolCallEvent 口径）
+        message: 人类可读审批说明（ask_human 时为问题原文；publish_report 为报告摘要）
+        allowed_decisions: 该工具允许的决策集（前端按钮渲染）
+        kind: approval=审批卡片 / clarification=澄清回答框（前端忽略未知字段）
+        id: 事件序号（流内自增）
+    """
+
+    type: Literal["approve"] = "approve"
+    run_id: str = Field(description="chat.py 流 run_id（流标识）")
+    checkpoint_id: str = Field(description="中断点真实 checkpoint_id（resume 恢复键）")
+    call_id: str = Field(description="工具调用 id（多 action 顺序匹配键）")
+    tool_name: str = Field(description="工具名")
+    arguments: dict = Field(default_factory=dict, description="待审参数（截断脱敏）")
+    message: str = Field(description="审批说明/澄清问题原文/报告摘要")
+    allowed_decisions: list[str] = Field(description="允许的决策集")
+    kind: Literal["approval", "clarification"] = Field(default="approval")
+    id: int = Field(description="事件序号")
