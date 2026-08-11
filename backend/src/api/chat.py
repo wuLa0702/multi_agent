@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -159,6 +160,50 @@ def _validate_request(req: ChatStreamRequest) -> None:
         )
 
 
+async def _append_message_safe(conn, msg) -> None:
+    """消息落库容错（矩阵：落库失败降级不阻断，响应正常）。
+
+    SQLite 瞬时错误（busy/locked）或外键失败（会话未持久化=内存模式）→
+    跳过落库记日志告警（消息不持久化，但对话继续）。
+
+    Args:
+        conn: SQLite 连接
+        msg: Message 实体（session_id/role/content）
+    """
+    from src.db import session_repo as repo
+
+    try:
+        await repo.append_message(conn, msg)
+    except (sqlite3.OperationalError, sqlite3.IntegrityError, RetryableError) as exc:
+        logger.warning("消息落库失败（降级内存，未持久化）：role=%s %s", msg.role, exc)
+
+
+async def _create_session_with_retry(conn, session_id: str) -> None:
+    """会话落库（容错矩阵：SQLite 瞬时错误重试 1 次，仍失败降级内存，不阻断）。
+
+    计划-容错处理 v1.2 §3.3：会话落库失败 → 重试 1 次 → 降级内存会话
+    （仅本次请求降级，后续消息继续尝试落库；失败记日志告警）。
+
+    Args:
+        conn: SQLite 连接
+        session_id: 新会话 ID
+    """
+    from src.db import session_repo as repo
+
+    for attempt in (1, 2):
+        try:
+            await repo.create_session(conn, session_id)
+            return
+        except (sqlite3.OperationalError, RetryableError) as exc:
+            if attempt == 1:
+                logger.warning("会话落库失败重试（%s）：%s", type(exc).__name__, session_id)
+                continue
+            logger.error(
+                "会话落库失败（降级内存会话，未持久化）：%s", session_id, exc_info=True
+            )
+            return  # 降级：跳过落库，session_id 继续（后续消息继续尝试落库）
+
+
 async def _resolve_session(conn, req: ChatStreamRequest) -> str:
     """建/取会话（session_id=None 自动新建；指定则校验存在）。
 
@@ -172,7 +217,7 @@ async def _resolve_session(conn, req: ChatStreamRequest) -> str:
 
     session_id = req.session_id or str(uuid.uuid4())
     if req.session_id is None:
-        await repo.create_session(conn, session_id)
+        await _create_session_with_retry(conn, session_id)
     elif await repo.get_session(conn, session_id) is None:
         raise HTTPException(
             status_code=404,
@@ -193,8 +238,8 @@ async def _prepare_new_messages(
     Returns:
         LangChain 消息列表（含注入的 SystemMessage）
     """
-    # 1. user 消息落库
-    await repo.append_message(
+    # 1. user 消息落库（容错：外键/瞬时失败降级内存，不阻断）
+    await _append_message_safe(
         conn, Message(session_id=session_id, role="user", content=req.message or "")
     )
 
@@ -558,9 +603,9 @@ async def _event_stream(
             yield _build_error_event(is_resume, exc)
             return
 
-        # 4. assistant 全文落库
+        # 4. assistant 全文落库（容错：外键/瞬时失败降级内存，不阻断）
         assistant_text = "".join(full_text_parts)
-        await repo.append_message(
+        await _append_message_safe(
             conn,
             Message(session_id=session_id, role="assistant", content=assistant_text),
         )
