@@ -20,10 +20,15 @@ from src.agent.tools.sandbox_tool import (
 )
 from src.agent.tools.search import internet_search
 from src.agent.tools.skill_tool import run_skill_script
+from src.core.retry import retry_tool
 
+# ── 重试包装（计划-容错处理 v1.2）：只包读操作幂等工具 ──
+# internet_search / fetch_url 是读操作（幂等）→ 瞬时故障重试；run_skill_script
+# 脚本含写操作（build_report.py 写文件）→ 重试幂等风险，排除（v1.2 评审）。
+# 沙箱纯计算工具不包（本地执行无网络瞬时故障）。
 TOOL_REGISTRY: dict[str, Callable[..., str]] = {
-    "internet_search": internet_search,
-    "fetch_url": fetch_url,  # 受控抓取（决策 2026-08-11：搜索发现 + 抓取获取 双工具分工）
+    "internet_search": retry_tool()(internet_search),
+    "fetch_url": retry_tool()(fetch_url),  # 受控抓取（决策 2026-08-11：搜索发现 + 抓取获取 双工具分工）
     "run_code_in_sandbox": run_code_in_sandbox,
     "run_command_in_sandbox": run_command_in_sandbox,
     "upload_workspace_file": upload_workspace_file,
