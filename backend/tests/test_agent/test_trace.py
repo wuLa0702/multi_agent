@@ -83,6 +83,25 @@ class TestFormatTraceLine:
         assert "subagent_start" in line["summary"]
         assert line["parent_ids"] == ["root"]
 
+    def test_chat_model_start_dict_input(self) -> None:
+        """回归：data.input 为 dict 形态（{"messages": [...]}）→ 归一为 list 不炸。
+
+        2026-08-10 实测 KeyError: 0 事故——dict 直接 [0] 会中断主链路。
+        """
+        from langchain_core.messages import HumanMessage
+
+        evt = {
+            "event": "on_chat_model_start",
+            "name": "ChatOpenAI",
+            "run_id": "r6",
+            "parent_ids": [],
+            "data": {"input": {"messages": [HumanMessage(content="dict 形态")]}},
+        }
+        line = _format_trace_line("s4", evt)
+        assert line["event"] == "on_chat_model_start"
+        assert "messages=1" in line["summary"]
+        assert "dict 形态" in line["summary"]
+
     def test_ignored_event(self) -> None:
         """非采集事件 → 空 dict（不落盘）。"""
         assert _format_trace_line("s", {"event": "on_chain_stream"}) == {}

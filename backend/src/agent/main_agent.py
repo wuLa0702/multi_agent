@@ -91,8 +91,13 @@ def _format_trace_line(session_id: str | None, evt: dict) -> dict:
     data = evt.get("data", {}) or {}
     name = evt.get("name", "")
     if event_type == "on_chat_model_start":
+        # ⚠️ 2026-08-10 实测：on_chat_model_start 的 data.input 可能是
+        # {"messages": [...]} dict 或 list——dict 直接 [0] 会 KeyError: 0
+        # （曾中断主链路，chat 测试全红），统一归一为 list
         messages = data.get("input") or []
-        first = messages[0] if messages else None
+        if isinstance(messages, dict):
+            messages = messages.get("messages", []) or []
+        first = messages[0] if isinstance(messages, list) and messages else None
         content = getattr(first, "content", None) or str(first)[:200]
         summary = f"messages={len(messages)} first={_truncate(str(content), 200)}"
     elif event_type == "on_tool_start":
@@ -119,10 +124,18 @@ def _format_trace_line(session_id: str | None, evt: dict) -> dict:
 
 
 def _trace_event(session_id: str | None, evt: dict) -> None:
-    """推理层 trace 落盘（只记不拦；trace logger 未配置时静默跳过）。"""
-    line = _format_trace_line(session_id, evt)
-    if line:
-        _trace_logger.info(json.dumps(line, ensure_ascii=False, default=str))
+    """推理层 trace 落盘（只记不拦；trace logger 未配置时静默跳过）。
+
+    ⚠️ 防御性隔离（2026-08-10 教训）：trace 是旁路能力，**任何异常不得
+    影响主链路**——曾因 input 结构 KeyError 中断事件流导致 chat 全红；
+    format/序列化失败一律降级为 debug 日志。
+    """
+    try:
+        line = _format_trace_line(session_id, evt)
+        if line:
+            _trace_logger.info(json.dumps(line, ensure_ascii=False, default=str))
+    except Exception:  # noqa: BLE001 - 旁路采集，绝不冒泡
+        logger.debug("trace 采集失败（不影响主链路）", exc_info=True)
 
 
 @dataclass
