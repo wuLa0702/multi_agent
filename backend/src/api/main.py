@@ -113,8 +113,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """启动预热 Redis + Checkpointer + 加载注册表/MCP；关闭释放连接池。"""
     try:
         await get_redis().ping()
-    except Exception:
-        pass  # 本地没 Redis 也能起，/v1/health 会标记 disconnected
+    except Exception:  # noqa: BLE001 - 启动预热降级：本地没 Redis 也能起，/v1/health 标记 disconnected
+        pass
 
     # Checkpointer 断点持久化（P0）+ Store 长期记忆（P1）：生命周期随进程
     await init_checkpointer()
@@ -131,7 +131,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
             await get_registry().load(conn)
             await get_mcp_client_manager().connect_all(conn)
-        except Exception:
+        except Exception:  # noqa: BLE001 - 加载失败降级：运行时模型回落 .env，agent 仅用内部工具
             logging.exception("注册表/MCP 加载失败——运行时模型回落 .env，agent 仅用内部工具")
         finally:
             await conn.close()
