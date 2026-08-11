@@ -35,13 +35,17 @@ if __package__ in (None, ""):
 from src.agent.rubrics.rubrics import RUBRIC_TEMPLATES  # noqa: E402 - sys.path 引导后导入
 from src.core.paths import get_eval_assets_dir, get_eval_report_dir  # noqa: E402
 
-logger = logging.getLogger(__name__)
+# 评分规则（领域能力，2026-08-11 抽取 → src/agent/rubrics/scoring.py）：
+# A 类规则指标（引用合规/来源可达）+ B 类 LLM-judge——eval_harness 只编排调用
+from src.agent.rubrics.scoring import (  # noqa: E402
+    MAX_REPORT_CHARS,
+    count_compliant_citations,
+    extract_sources,
+    judge_report,
+    verify_source_url,
+)
 
-CITATION_RE = re.compile(r"[\[【](\d{1,2})[\]】]")  # 研报中 [1] 式引用标注
-URL_RE = re.compile(r"https?://[^\s)\]\"'<>]+")  # 来源 URL 提取
-DEFAULT_TASKS = get_eval_assets_dir() / "tasks.jsonl"  # 缺省任务集（入库资产）
-SOURCE_SAMPLE_SIZE = 5  # A2 来源抽查上限（每报告 3-5 条）
-MAX_REPORT_CHARS = 4000  # judge 输入截断（长报告防上下文爆）
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -69,115 +73,6 @@ class TaskMetrics:
     def a2_ratio(self) -> float:
         """来源可达率（§2 A2——HTTP 可达性，unknown 不计入分母）。"""
         return self.sources_reachable / self.sources_checked if self.sources_checked else 0.0
-
-
-# ── A1：引用编号合规率（v1.1 改名：只查合规，不做语义匹配）──
-def count_compliant_citations(report_text: str, sources: list[str]) -> tuple[int, int]:
-    """统计合规引用数：引用标注编号是否在 sources 列表范围内。
-
-    ⚠️ 范围合规 ≠ 内容对应（v1.1 评审修正）：sources 有 5 条、报告引 [3]，
-    编号合规但第 3 条来源可能与引用内容无关——P1 升级为 LLM 语义匹配抽查。
-
-    Args:
-        report_text: 研报全文
-        sources: 来源 URL 列表（从报告文末提取）
-
-    Returns:
-        (compliant, total) 引用编号合规率 = compliant / total
-    """
-    refs = {int(m) for m in CITATION_RE.findall(report_text)}
-    if not refs:
-        return 0, 0
-    compliant = sum(1 for r in refs if 1 <= r <= len(sources))
-    return compliant, len(refs)
-
-
-def extract_sources(report_text: str) -> list[str]:
-    """从报告文末提取来源 URL 列表（去重保序）。
-
-    Args:
-        report_text: 研报全文
-
-    Returns:
-        URL 列表（去重，保持出现顺序）
-    """
-    seen: list[str] = []
-    for url in URL_RE.findall(report_text):
-        url = url.rstrip(".,;:，。；：")
-        if url not in seen:
-            seen.append(url)
-    return seen
-
-
-# ── A2：来源可达性（v1.1 评审修正：LLM 不联网，改 HTTP 验证）──
-async def verify_source_url(client: httpx.AsyncClient, url: str) -> str:
-    """检查来源 URL 是否可访问（§2 A2）。
-
-    Args:
-        client: 复用连接池的 httpx 客户端
-        url: 来源 URL
-
-    Returns:
-        "reachable"（2xx/3xx）/ "unreachable"（超时/4xx/5xx）/ "unknown"（网络异常，不计入统计）
-    """
-    try:
-        resp = await client.get(url, timeout=10.0, follow_redirects=True)
-        return "reachable" if resp.status_code < 400 else "unreachable"
-    except (httpx.TimeoutException, httpx.NetworkError):
-        return "unreachable"
-    except Exception:  # noqa: BLE001 - DNS/SSL 等网络异常统一记 unknown，不污染统计
-        return "unknown"
-
-
-# ── B 类：LLM-judge 盲评（纯文本 + 规则解析，规避 response_format 三态全挂）──
-JUDGE_PROMPT_TEMPLATE = """你是研报质量评估员。对以下研报按两个维度打分（1-5 分，整数），
-只输出两行，格式严格如下：
-完整度: <1-5>
-可靠性: <1-5>
-
-评分标准：
-- 完整度：{completeness_rubric}
-- 可靠性：{veracity_rubric}
-
-研报内容：
-{report}
-"""
-
-
-def parse_judge_output(text: str) -> tuple[float, float]:
-    """解析 judge 纯文本输出为 (completeness, veracity)。失败 → (0.0, 0.0)。
-
-    坑（P1-2 实证）：国产模型 response_format 三态全挂 → judge 输出不强制 JSON，
-    用正则解析；解析失败降级为 0 分（调用侧记入 errors）。
-    """
-    m_c = re.search(r"完整度:\s*([1-5])", text)
-    m_v = re.search(r"可靠性:\s*([1-5])", text)
-    if not (m_c and m_v):
-        return 0.0, 0.0
-    return float(m_c.group(1)), float(m_v.group(1))
-
-
-async def judge_report(report_text: str, model_id: int | None = None) -> tuple[float, float, str]:
-    """LLM-judge 盲评：复用 rubrics.py 模板打分（B1/B2）。
-
-    Args:
-        report_text: 研报全文（截断后送入）
-        model_id: judge 模型 ID（None → 默认主模型；建议异 provider 消风格偏好）
-
-    Returns:
-        (completeness, veracity, judge_text) 分数 + 原始输出（供解析失败排查）
-    """
-    from src.llm.adapter import get_chat_model
-
-    prompt = JUDGE_PROMPT_TEMPLATE.format(
-        completeness_rubric=RUBRIC_TEMPLATES["report_completeness"],
-        veracity_rubric=RUBRIC_TEMPLATES["source_veracity"],
-        report=report_text[:MAX_REPORT_CHARS],
-    )
-    model = get_chat_model(model_id=model_id)
-    judge_text = await model.ainvoke(prompt)  # type: ignore[union-attr]
-    text = judge_text.content if hasattr(judge_text, "content") else str(judge_text)
-    return (*parse_judge_output(text), text)
 
 
 # ── 单任务执行（复用 chat SSE 契约，mock 不适用——eval 走真实链路）──
