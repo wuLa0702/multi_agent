@@ -198,8 +198,26 @@ _checkpointer: AsyncSqliteSaver | None = None
 # 对话流并发限流（计划文档 C.1-2）：单机多浏览器并发对话同时断点落库
 # 会触发 SQLite 写锁，Semaphore 限制同时执行的流数量，超出排队。
 # 2026-08-10 拍板：硬编码 4 → settings.stream_concurrency（本地 .env.dev=10，
-# 云端 .env.prod=2，环境保存可调）
-_stream_semaphore = asyncio.Semaphore(settings.stream_concurrency)
+# 云端 .env.prod=2，环境保存可调）。
+# 2026-08-11 决策 #3：模块级固定值 → 函数工厂（惰性创建，settings 变化可重建，
+# 不关心底层只关心获取）。
+_stream_semaphore: asyncio.Semaphore | None = None
+
+
+def get_stream_semaphore() -> asyncio.Semaphore:
+    """对话流并发信号量（函数工厂：惰性创建 + settings 变化重建）。
+
+    ⚠️ 重建语义：settings.stream_concurrency 变化时重建（测试/环境切换场景）；
+    生产运行中 settings 不变，重建仅发生在请求开始获取时，不影响已排队等待者
+    （旧信号量释放后自然结束）。
+
+    Returns:
+        当前并发上限的信号量
+    """
+    global _stream_semaphore
+    if _stream_semaphore is None or _stream_semaphore._value != settings.stream_concurrency:
+        _stream_semaphore = asyncio.Semaphore(settings.stream_concurrency)
+    return _stream_semaphore
 
 
 async def init_checkpointer(db_path=None) -> None:
@@ -468,7 +486,7 @@ async def stream_agent_events(
     }
 
     seq = 0
-    async with _stream_semaphore:  # 并发限流：SQLite 写锁缓解
+    async with get_stream_semaphore():  # 并发限流：SQLite 写锁缓解
         async for evt in agent.astream_events(
             {"messages": messages}, version="v2", context=context, config=config
         ):
@@ -572,7 +590,7 @@ async def stream_agent_tokens(
         if checkpoint_id:
             config["configurable"]["checkpoint_id"] = checkpoint_id
 
-    async with _stream_semaphore:  # 并发限流：SQLite 写锁缓解
+    async with get_stream_semaphore():  # 并发限流：SQLite 写锁缓解
         async for evt in agent.astream_events(
             {"messages": messages}, version="v2", context=context, config=config
         ):
