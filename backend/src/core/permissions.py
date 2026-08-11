@@ -1,4 +1,4 @@
-"""Permissions 权限标准模板：技能只读 + 高危写入审批（开关门控）+ 子代理覆盖。
+"""Permissions 权限标准模板：技能只读 + 高危写入审批（hitl_enabled 门控）+ 子代理覆盖。
 
 基于 deepagents 官方 FilesystemPermission（deepagents 0.7.1 核实）：
 - operations 仅 read/write 两粒度（write 覆盖 write_file/edit_file/delete/upload_files）
@@ -15,22 +15,20 @@ from __future__ import annotations
 
 from deepagents import FilesystemPermission
 
-# ── 高危写入 interrupt 审批开关 ──
-# 当前 SSE approve 事件链路（前端审批面板）未接入——interrupt 规则命中会挂起
-# 而无审批出口。链路接入后翻转本常量即全链路生效（唯一激活点）。
-INTERRUPT_PERMISSIONS_ENABLED = False
-
 
 def build_main_permissions() -> list[FilesystemPermission]:
     """主 Agent 声明式权限。
 
     - /skills/** 写 deny：技能目录只读（agent 工具层直接拒绝，P0 激活）
     - /memories/private/**、/memories/secrets/** 写 interrupt：高危记忆文件
-      写入挂起人工审批（INTERRUPT_PERMISSIONS_ENABLED 门控，默认不激活）
+      写入挂起人工审批（v1.2 评审修正：由 settings.hitl_enabled 统一门控——
+      删除原独立常量 INTERRUPT_PERMISSIONS_ENABLED，单配置点防双开关不一致）
 
     Returns:
         FilesystemPermission 列表（传给 create_deep_agent(permissions=...)）
     """
+    from src.core.config import settings  # 惰性导入防循环
+
     perms = [
         FilesystemPermission(
             operations=["write"],
@@ -38,7 +36,7 @@ def build_main_permissions() -> list[FilesystemPermission]:
             mode="deny",
         ),
     ]
-    if INTERRUPT_PERMISSIONS_ENABLED:
+    if settings.hitl_enabled:
         perms.append(
             FilesystemPermission(
                 operations=["write"],

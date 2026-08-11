@@ -34,19 +34,24 @@ import threading
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Any
 
 from deepagents import create_deep_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
-from src.agent.hitl.hitl import build_hitl_interrupt_on
+from src.agent.hitl.callback import HitlCallback
+from src.agent.hitl.hitl import build_hitl_interrupt_on, should_mount_hitl_tools
+from src.agent.hitl.pending import register_interrupt
 from src.agent.middlewares.interpreter import build_interpreter_middleware
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.middlewares.tool_audit import ToolAuditMiddleware
 from src.agent.rubrics.rubrics import build_rubric_middleware
 from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
+from src.agent.tools.ask_human import ask_human
+from src.agent.tools.publish_report import publish_report
 from src.core.backend import create_backend
 from src.core.config import settings
 from src.core.paths import (
@@ -197,6 +202,37 @@ async def close_checkpointer() -> None:
         _checkpointer = None
 
 
+async def checkpoint_exists(thread_id: str, checkpoint_id: str) -> bool:
+    """校验 checkpoint 是否存在（resume 潜伏 bug 修复，P0 设计 §5.4）。
+
+    langgraph 对无效 checkpoint_id 静默从空状态开始（§3.3-③ 实证）——resume
+    前主动校验，避免"看起来成功实际重开"的状态丢失。测试/脚本未初始化
+    checkpointer 时跳过校验（返回 True）。
+
+    Args:
+        thread_id: 会话 ID（checkpoint 按 thread 隔离）
+        checkpoint_id: resume_run_id（approve 事件透传的真实 checkpoint_id）
+
+    Returns:
+        True=checkpoint 存在（或 checkpointer 未初始化）；False=不存在
+    """
+    if _checkpointer is None:
+        return True
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "checkpoint_ns": "",
+            "checkpoint_id": checkpoint_id,
+        }
+    }
+    try:
+        if hasattr(_checkpointer, "aget_tuple"):
+            return (await _checkpointer.aget_tuple(config)) is not None
+    except Exception:  # noqa: BLE001 —— 校验失败视为不存在（宁可报错不静默重开）
+        return False
+    return True
+
+
 # Store 长期记忆（P1，2026-08-04）：SqliteStore 持久化（评审选型拍板），
 # 生命周期由 lifespan 管理（与 checkpointer 同模式）；未初始化 → 降级无记忆。
 _store = None
@@ -293,6 +329,11 @@ def _build_agent(thread_id: str):
         # 技能域（Skill 体系 P1）：技能脚本执行闭环（读文件→沙箱→执行一步封装）
         run_skill_script,
     ]
+    # HITL 工具（P0 设计 §5.1）：hitl_enabled 门控挂载——ask_human（需求澄清/
+    # 中途确认，respond 决策）+ publish_report（输出审核交付闸门）。关 HITL 时
+    # 不挂载，避免模型调用永远抛错/无审批出口的工具。
+    if should_mount_hitl_tools(settings.hitl_enabled):
+        internal_tools += [ask_human, publish_report]
     mcp_tools = get_mcp_client_manager().get_tools()
     model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用
     middleware = [
@@ -378,8 +419,11 @@ async def stream_agent_events(
     messages: list[BaseMessage],
     context: ChatContext | None = None,
     checkpoint_id: str | None = None,
+    hitl_callback: HitlCallback | None = None,
+    run_id: str = "",
+    graph_input: Any = None,
 ) -> AsyncIterator[dict]:
-    """事件流（引入方案 P0 校准版）：token + tool_call + subagent 三类事件。
+    """事件流（引入方案 P0 校准版）：token + tool_call + subagent + approve 事件。
 
     ⚠️ 实测校准（2026-08-05，方案 §6.2 风险项 2.3）：v3 messages 投影为
     message 粒度（整条消息，非逐 chunk），且本模型栈（OpenAI 兼容 adapter）
@@ -388,18 +432,24 @@ async def stream_agent_events(
     tool_call 走 on_tool_start/on_tool_end，subagent 走 stream_subgraphs 子图链。
     v3 声明式投影保留为 examples/ 学习脚本（不接生产链路）。
 
+    HITL（P0 设计 §5.5）：hitl_callback（GraphCallbackHandler）经 config["callbacks"]
+    采集中断；流循环 try/finally 保证中断登记（异常提前结束也登记——中断已落
+    checkpoint，登记缺失会让 resume 404）；finally 之后产 approve 事件并终止流。
+
     产出事件（SSE 协议 v3 对齐）：
       {"type": "token",     "text": ..., "id": 序号}
       {"type": "tool_call", "tool": ..., "status": "running|completed|error",
        "input": ..., "output": ..., "id": 序号}
       {"type": "subagent",  "name": ..., "status": "started|completed|failed",
        "depth": 0, "id": 序号}
+      {"type": "approve",   "run_id"/"checkpoint_id"/"call_id"/"tool_name"/... }
 
     Args:
         agent: build_agent 的产物
         messages: LangChain 消息列表（含历史）；resume 模式传空列表
         context: 请求级上下文（session_id → thread_id config 封装）
         checkpoint_id: resume 模式从精确快照继续
+        hitl_callback: HITL 中断采集回调（None 不挂；挂载后 config 加 callbacks）
 
     Yields:
         事件 dict（SSE 层据此分发）
@@ -420,61 +470,90 @@ async def stream_agent_events(
         "stream_subgraphs": True,
         "recursion_limit": settings.agent_recursion_limit,
     }
+    if hitl_callback is not None:
+        # HITL 中断检测唯一途径（设计 §3.3-② 实证：astream_events 不产 on_interrupt）
+        config["callbacks"] = [hitl_callback]
 
+    session_id = context.session_id if context else None  # 修订计数定位（v1.2）
     seq = 0
     async with get_stream_semaphore():  # 并发限流：SQLite 写锁缓解
-        async for evt in agent.astream_events(
-            {"messages": messages}, version="v2", context=context, config=config
-        ):
-            event_type = evt.get("event")
-            if event_type == "on_chat_model_stream":
-                chunk = evt.get("data", {}).get("chunk")
-                text = getattr(chunk, "text", None) if chunk is not None else None
-                if text:
+        interrupted = None
+        # 审批恢复（P0 设计 §5.4）：graph_input 为 Command(resume=...) 时直接作
+        # astream_events 输入（§3.3-① 实证可行）；否则默认 {"messages": messages}
+        input_payload = graph_input if graph_input is not None else {"messages": messages}
+        try:
+            async for evt in agent.astream_events(
+                input_payload, version="v2", context=context, config=config
+            ):
+                event_type = evt.get("event")
+                if event_type == "on_chat_model_stream":
+                    chunk = evt.get("data", {}).get("chunk")
+                    text = getattr(chunk, "text", None) if chunk is not None else None
+                    if text:
+                        seq += 1
+                        yield {"type": "token", "text": text, "id": seq}
+                elif event_type == "on_tool_start":
+                    trace_event(context.session_id if context else None, evt)  # 推理层 trace
                     seq += 1
-                    yield {"type": "token", "text": text, "id": seq}
-            elif event_type == "on_tool_start":
-                trace_event(context.session_id if context else None, evt)  # 推理层 trace
+                    yield {
+                        "type": "tool_call",
+                        "tool": evt.get("name", ""),
+                        "status": "running",
+                        "input": _truncate(str(evt.get("data", {}).get("input", ""))),
+                        "output": None,
+                        "id": seq,
+                    }
+                elif event_type == "on_tool_end":
+                    trace_event(context.session_id if context else None, evt)  # 推理层 trace
+                    seq += 1
+                    yield {
+                        "type": "tool_call",
+                        "tool": evt.get("name", ""),
+                        "status": "completed",
+                        "input": "",
+                        "output": _truncate(str(evt.get("data", {}).get("output", ""))),
+                        "id": seq,
+                    }
+                elif event_type in ("on_chain_start", "on_chain_end") and evt.get(
+                    "metadata", {}
+                ).get("lc_agent_name"):
+                    # 子代理事件：deepagents 子代理经 with_config 注入
+                    # lc_agent_name（_compile_spec 约定，subagents.py:437）——
+                    # 子图链事件携带该 metadata 即子代理启停。
+                    # ⚠️ 待浏览器实测校准：Fake 模型不出工具调用，子代理不触发，
+                    # 事件形态（字段名/嵌套深度）需真实链路验证
+                    trace_event(context.session_id if context else None, evt)  # 推理层 trace
+                    seq += 1
+                    yield {
+                        "type": "subagent",
+                        "name": evt["metadata"]["lc_agent_name"],
+                        "status": "started" if event_type == "on_chain_start" else "completed",
+                        "depth": 0,
+                        "id": seq,
+                    }
+                elif event_type == "on_chat_model_start":
+                    # 推理层 trace：模型调用（含子代理内部——parent_ids 层级可区分）
+                    trace_event(context.session_id if context else None, evt)
+        finally:
+            # v1.2 评审修正：try/finally 保证登记——无论正常/异常结束，只要回调
+            # 采到中断（中断已落 checkpoint），必须写 Redis，否则 resume 404
+            if hitl_callback is not None and hitl_callback.interrupted:
+                info = hitl_callback.interrupted
+                await register_interrupt(
+                    info["checkpoint_id"], info["hitl_request"], session_id or ""
+                )
+                interrupted = info
+        # finally 之后产 approve 事件（generator 不能在 finally 内 yield）→ 终止流
+        if interrupted is not None:
+            for action, review in _iter_action_reviews(interrupted["hitl_request"]):
                 seq += 1
-                yield {
-                    "type": "tool_call",
-                    "tool": evt.get("name", ""),
-                    "status": "running",
-                    "input": _truncate(str(evt.get("data", {}).get("input", ""))),
-                    "output": None,
-                    "id": seq,
-                }
-            elif event_type == "on_tool_end":
-                trace_event(context.session_id if context else None, evt)  # 推理层 trace
-                seq += 1
-                yield {
-                    "type": "tool_call",
-                    "tool": evt.get("name", ""),
-                    "status": "completed",
-                    "input": "",
-                    "output": _truncate(str(evt.get("data", {}).get("output", ""))),
-                    "id": seq,
-                }
-            elif event_type in ("on_chain_start", "on_chain_end") and evt.get(
-                "metadata", {}
-            ).get("lc_agent_name"):
-                # 子代理事件：deepagents 子代理经 with_config 注入
-                # lc_agent_name（_compile_spec 约定，subagents.py:437）——
-                # 子图链事件携带该 metadata 即子代理启停。
-                # ⚠️ 待浏览器实测校准：Fake 模型不出工具调用，子代理不触发，
-                # 事件形态（字段名/嵌套深度）需真实链路验证
-                trace_event(context.session_id if context else None, evt)  # 推理层 trace
-                seq += 1
-                yield {
-                    "type": "subagent",
-                    "name": evt["metadata"]["lc_agent_name"],
-                    "status": "started" if event_type == "on_chain_start" else "completed",
-                    "depth": 0,
-                    "id": seq,
-                }
-            elif event_type == "on_chat_model_start":
-                # 推理层 trace：模型调用（含子代理内部——parent_ids 层级可区分）
-                trace_event(context.session_id if context else None, evt)
+                yield _build_approve_event(
+                    run_id=run_id,  # chat.py 流 run_id（v1.1：与 checkpoint 分离）
+                    checkpoint_id=interrupted["checkpoint_id"],
+                    action=action,
+                    review=review,
+                    seq=seq,
+                )
 
 
 def _truncate(text: str, limit: int = 300) -> str:
@@ -482,6 +561,81 @@ def _truncate(text: str, limit: int = 300) -> str:
     if len(text) > limit:
         return text[:limit] + "…"
     return text
+
+
+def _iter_action_reviews(hitl_request: dict):
+    """HITLRequest → (action, review) 逐条（按序一一对应）。
+
+    Args:
+        hitl_request: {"action_requests": [...], "review_configs": [...]}
+
+    Yields:
+        (action_request, review_config) 二元组（review 缺省给空 dict）
+    """
+    configs = {c.get("action_name"): c for c in hitl_request.get("review_configs", [])}
+    for action in hitl_request.get("action_requests", []):
+        yield action, configs.get(action.get("name"), {})
+
+
+def _build_approve_event(
+    run_id: str, checkpoint_id: str, action: dict, review: dict, seq: int
+) -> dict:
+    """approve 事件构建（对齐前端 B2 契约 + run_id/checkpoint_id 分离，设计 §5.2）。
+
+    Args:
+        run_id: chat.py 本次流 run_id（流标识，前端区分多次中断）
+        checkpoint_id: 中断点 checkpoint_id（resume 恢复键，前端透传）
+        action: action_request（name/args）
+        review: review_config（allowed_decisions）
+        seq: 流内事件序号
+
+    Returns:
+        SSE 事件 dict（approve）
+    """
+    allowed = review.get("allowed_decisions", ["approve", "reject"])
+    name = action.get("name", "")
+    args = action.get("args", {}) or {}
+    if name == "ask_human":
+        message = f"澄清：{str(args.get('message', ''))[:200]}"
+    elif name == "publish_report":
+        message = f"交付审核：{str(args.get('title', ''))[:100]}"
+    else:
+        message = f"工具 {name} 需要审批"
+    return {
+        "type": "approve",
+        "run_id": run_id,
+        "checkpoint_id": checkpoint_id,  # v1.1 新增独立字段
+        "call_id": action.get("call_id") or f"action-{seq}",  # v1.2：fallback 流内唯一
+        "tool_name": name,
+        "arguments": _truncate_args(args),  # v1.2 评审修正：脱敏截断
+        "message": message,
+        "allowed_decisions": allowed,
+        "kind": "clarification" if name == "ask_human" else "approval",
+        "id": seq,
+    }
+
+
+def _truncate_args(args: dict, limit: int = 300) -> dict:
+    """待审参数脱敏截断（v1.2 评审修正，对齐 §5.2「脱敏截断 ≤300」）。
+
+    publish_report 的 report_content 可能很长——不截断会撑爆 SSE 事件；
+    逐字符串字段截断到 limit（保留 dict 结构），嵌套 dict 顶层字段已覆盖
+    主要场景（report_content/title/message 均为顶层 str）。
+
+    Args:
+        args: 工具调用参数 dict
+        limit: 单字段截断上限
+
+    Returns:
+        截断后的 dict（长字符串字段 + "…" 后缀）
+    """
+    truncated: dict = {}
+    for key, value in args.items():
+        if isinstance(value, str) and len(value) > limit:
+            truncated[key] = value[:limit] + "…"
+        else:
+            truncated[key] = value
+    return truncated
 
 
 async def stream_agent_tokens(

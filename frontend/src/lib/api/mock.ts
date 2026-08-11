@@ -30,6 +30,7 @@ function mockApproveEvent(): SSEEvent {
   return {
     type: "approve",
     run_id: `mock-run-${Date.now()}`,
+    checkpoint_id: `mock-cp-${Date.now()}`, // P0 HITL v1.1：resume 恢复键
     call_id: `mock-call-${Date.now()}`,
     tool_name: "run_code_in_sandbox",
     arguments: {
