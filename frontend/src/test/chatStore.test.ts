@@ -91,7 +91,7 @@ beforeEach(async () => {
     toolCalls: {},
     agentTree: [],
     streamStatus: "idle",
-    pendingApproval: null,
+    pendingApprovals: [],
     pendingRunId: null,
     approvalHistory: [],
   });
@@ -173,44 +173,48 @@ describe("subagent 事件", () => {
 });
 
 describe("审批流程", () => {
+  // 审批测试事件统一带 checkpoint_id（P0 HITL v1.1：resume 恢复键）
+  const approvalFire = (msg: string) =>
+    fireEvent({ type: "approve", run_id: "r1", checkpoint_id: "cp-1", call_id: "c1", tool_name: "rm", arguments: {}, message: msg });
+
   it("approve 事件 → awaiting_approval + localStorage 持久化", async () => {
-    await fireEvent({ type: "approve", run_id: "r1", call_id: "c1", tool_name: "rm", arguments: {}, message: "删除文件" });
+    await approvalFire("删除文件");
     const s = useChatStore.getState();
     expect(s.streamStatus).toBe("awaiting_approval");
-    expect(s.pendingApproval?.run_id).toBe("r1");
-    expect(localStorage.getItem("multi-agent.pendingRunId")).toBe("r1");
+    expect(s.pendingApprovals[0]?.run_id).toBe("r1");
+    expect(localStorage.getItem("multi-agent.pendingRunId")).toBe("cp-1");
   });
 
   it("approve() → 提交接口 + resume 恢复执行", async () => {
     apiMock.approve.mockResolvedValue({ status: "ok", accepted: true });
-    await fireEvent({ type: "approve", run_id: "r1", call_id: "c1", tool_name: "rm", arguments: {}, message: "x" });
+    await approvalFire("x");
 
     await useChatStore.getState().approve();
 
-    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "r1", action: "approve", note: null, edited_arguments: null });
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "r1", checkpoint_id: "cp-1", call_id: "c1", action: "approve", note: null, edited_arguments: null });
     const resumeReq = streamChatMock.mock.calls.at(-1)![0];
-    expect(resumeReq).toMatchObject({ resume_run_id: "r1" });
+    expect(resumeReq).toMatchObject({ resume_run_id: "cp-1" });
   });
 
   it("reject() → action 为 reject 且带 note", async () => {
     apiMock.approve.mockResolvedValue({ status: "ok", accepted: true });
-    await fireEvent({ type: "approve", run_id: "r1", call_id: "c1", tool_name: "rm", arguments: {}, message: "x" });
+    await approvalFire("x");
 
     await useChatStore.getState().reject("理由");
 
-    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "r1", action: "reject", note: "理由", edited_arguments: null });
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "r1", checkpoint_id: "cp-1", call_id: "c1", action: "reject", note: "理由", edited_arguments: null });
   });
 
   it("审批失效（RUN_NOT_FOUND）→ 清理状态 + 提示", async () => {
     const { ApiError } = await import("@/lib/api/client");
     apiMock.approve.mockRejectedValue(new ApiError(404, { code: "RUN_NOT_FOUND", detail: "run 不存在", error: "" }));
-    await fireEvent({ type: "approve", run_id: "r1", call_id: "c1", tool_name: "rm", arguments: {}, message: "x" });
+    await approvalFire("x");
 
     await useChatStore.getState().approve();
 
     const s = useChatStore.getState();
     expect(s.streamStatus).toBe("idle");
-    expect(s.pendingApproval).toBeNull();
+    expect(s.pendingApprovals).toHaveLength(0);
     expect(localStorage.getItem("multi-agent.pendingRunId")).toBeNull();
     expect(s.notices.some((n) => n.kind === "info" && n.text.includes("已失效"))).toBe(true);
   });
@@ -234,14 +238,14 @@ describe("start 事件（resume 语义）", () => {
 
 describe("结束与错误", () => {
   it("done → idle + 清审批态", async () => {
-    useChatStore.setState({ pendingApproval: { run_id: "r1", call_id: "c", tool_name: "t", arguments: {}, message: "m" }, streamStatus: "awaiting_approval", pendingRunId: "r1" });
+    useChatStore.setState({ pendingApprovals: [{ run_id: "r1", checkpoint_id: "cp-1", call_id: "c", tool_name: "t", arguments: {}, message: "m" }], streamStatus: "awaiting_approval", pendingRunId: "cp-1" });
     localStorage.setItem("multi-agent.pendingRunId", "r1");
 
     await fireEvent({ type: "done", run_id: "r1", session_id: "s1", duration_ms: 5 });
 
     const s = useChatStore.getState();
     expect(s.streamStatus).toBe("idle");
-    expect(s.pendingApproval).toBeNull();
+    expect(s.pendingApprovals).toHaveLength(0);
     expect(localStorage.getItem("multi-agent.pendingRunId")).toBeNull();
   });
 
@@ -360,16 +364,18 @@ describe("审批流程（HITL，v4.0 §2.1）", () => {
   const approveEvent: SSEEvent = {
     type: "approve",
     run_id: "run-1",
+    checkpoint_id: "cp-1", // P0 HITL v1.1：resume 恢复键
     call_id: "call-1",
     tool_name: "run_code_in_sandbox",
     arguments: { code: "print(1)" },
     message: "沙箱执行任意代码",
   };
 
-  it("approve 事件 → pendingApproval + awaiting_approval", async () => {
+  it("approve 事件 → pendingApprovals 队列 + awaiting_approval", async () => {
     await fireEvent(approveEvent);
     const st = useChatStore.getState();
-    expect(st.pendingApproval).toMatchObject({ run_id: "run-1", tool_name: "run_code_in_sandbox" });
+    expect(st.pendingApprovals).toHaveLength(1);
+    expect(st.pendingApprovals[0]).toMatchObject({ run_id: "run-1", tool_name: "run_code_in_sandbox" });
     expect(st.streamStatus).toBe("awaiting_approval");
   });
 
@@ -378,18 +384,18 @@ describe("审批流程（HITL，v4.0 §2.1）", () => {
     await fireEvent(approveEvent);
     await useChatStore.getState().approve();
 
-    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "run-1", action: "approve", note: null, edited_arguments: null });
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "run-1", checkpoint_id: "cp-1", call_id: "call-1", action: "approve", note: null, edited_arguments: null });
     expect(useChatStore.getState().approvalHistory).toEqual([{ tool_name: "run_code_in_sandbox", action: "approve", ts: expect.any(String) }]);
     const req = streamChatMock.mock.calls.at(-1)![0];
-    expect(req).toMatchObject({ resume_run_id: "run-1" });
-    expect(useChatStore.getState().pendingApproval).toBeNull();
+    expect(req).toMatchObject({ resume_run_id: "cp-1" });
+    expect(useChatStore.getState().pendingApprovals).toHaveLength(0);
   });
 
   it("reject(note) → 携带拒绝理由", async () => {
     apiMock.approve.mockResolvedValue({ status: "ok", accepted: true });
     await fireEvent(approveEvent);
     await useChatStore.getState().reject("参数有风险");
-    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "run-1", action: "reject", note: "参数有风险", edited_arguments: null });
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "run-1", checkpoint_id: "cp-1", call_id: "call-1", action: "reject", note: "参数有风险", edited_arguments: null });
     expect(useChatStore.getState().approvalHistory.at(-1)?.action).toBe("reject");
   });
 
@@ -397,7 +403,7 @@ describe("审批流程（HITL，v4.0 §2.1）", () => {
     apiMock.approve.mockResolvedValue({ status: "ok", accepted: true });
     await fireEvent(approveEvent);
     await useChatStore.getState().approveWithEdit({ code: "print(2)" });
-    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "run-1", action: "edit", note: null, edited_arguments: { code: "print(2)" } });
+    expect(apiMock.approve).toHaveBeenCalledWith({ run_id: "run-1", checkpoint_id: "cp-1", call_id: "call-1", action: "edit", note: null, edited_arguments: { code: "print(2)" } });
   });
 
   it("RUN_NOT_FOUND → 审批失效清理", async () => {
@@ -405,9 +411,32 @@ describe("审批流程（HITL，v4.0 §2.1）", () => {
     await fireEvent(approveEvent);
     await useChatStore.getState().approve();
     const st = useChatStore.getState();
-    expect(st.pendingApproval).toBeNull();
+    expect(st.pendingApprovals).toHaveLength(0);
     expect(st.streamStatus).toBe("idle");
     expect(st.notices.some((n) => n.text.includes("已失效"))).toBe(true);
+  });
+
+  it("多 action：首卡 accepted=false 不 resume，次卡 accepted=true 才恢复", async () => {
+    const evtA: SSEEvent = { type: "approve", run_id: "run-1", checkpoint_id: "cp-1", call_id: "call-a", tool_name: "run_code_in_sandbox", arguments: {}, message: "A" };
+    const evtB: SSEEvent = { type: "approve", run_id: "run-1", checkpoint_id: "cp-1", call_id: "call-b", tool_name: "run_skill_script", arguments: {}, message: "B" };
+    await fireEvent(evtA);
+    await fireEvent(evtB);
+    expect(useChatStore.getState().pendingApprovals).toHaveLength(2);
+    expect(useChatStore.getState().pendingApprovals[0].call_id).toBe("call-a");
+
+    // 首卡提交：后端 accepted=false（还有 1 张待审）→ 不 resume，队列移除首卡
+    const callsBefore = streamChatMock.mock.calls.length;
+    apiMock.approve.mockResolvedValueOnce({ status: "ok", accepted: false });
+    await useChatStore.getState().approve();
+    expect(streamChatMock.mock.calls.length).toBe(callsBefore); // 未 resume
+    expect(useChatStore.getState().pendingApprovals).toHaveLength(1);
+    expect(useChatStore.getState().pendingApprovals[0].call_id).toBe("call-b");
+
+    // 次卡提交：accepted=true（决策齐）→ resume
+    apiMock.approve.mockResolvedValueOnce({ status: "ok", accepted: true });
+    await useChatStore.getState().approve();
+    expect(streamChatMock.mock.calls.length).toBe(callsBefore + 1); // resume 触发新流
+    expect(useChatStore.getState().pendingApprovals).toHaveLength(0);
   });
 });
 

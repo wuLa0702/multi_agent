@@ -5,9 +5,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-from src.core import permissions as perm_module
 from src.core.permissions import build_main_permissions, build_subagent_permissions
 
 
@@ -20,12 +17,14 @@ def test_main_permissions_deny_skills_write() -> None:
 
 
 def test_main_permissions_interrupt_dormant_by_default(monkeypatch) -> None:
-    """T2：interrupt 规则默认不激活（approve 事件链路未接入）；开关翻转后出现。"""
+    """T2：interrupt 规则默认不激活；hitl_enabled 翻转后出现（P0 HITL 设计 §5.6：删常量统一门控）。"""
+    from src.core.config import settings
+
     perms = build_main_permissions()
     assert len(perms) == 1, "默认仅 deny 规则，interrupt 不得进入返回列表"
     assert all(p.mode != "interrupt" for p in perms)
 
-    monkeypatch.setattr(perm_module, "INTERRUPT_PERMISSIONS_ENABLED", True)
+    monkeypatch.setattr(settings, "hitl_enabled", True)
     perms_on = build_main_permissions()
     assert any(p.mode == "interrupt" for p in perms_on)
     interrupt = [p for p in perms_on if p.mode == "interrupt"][0]

@@ -6,6 +6,7 @@
 
 from src.agent.prompts.prompts import (  # noqa: F401
     DEFAULT_SYSTEM_PROMPT,
+    HITL_GUIDANCE_TEMPLATE,
     MEMORY_AGENT_PROMPT,
     MEMORY_EXTRACT_PROMPT,
     MEMORY_GUIDANCE_V3,

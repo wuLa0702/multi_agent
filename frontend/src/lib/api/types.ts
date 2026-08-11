@@ -183,9 +183,11 @@ export interface ChatStreamRequest {
 }
 
 export interface ApproveRequest {
-  run_id: string;
-  action: "approve" | "reject" | "edit"; // edit = 编辑参数后批准（高危三决策，v4.0 §2.1.6）
-  note?: string | null;
+  run_id: string; // chat.py 流 run_id（approve 事件原样回传）
+  checkpoint_id: string; // 中断点 checkpoint_id（approve 事件回传，resume 恢复键，P0 HITL v1.1）
+  call_id: string; // 工具调用 id（多 action 顺序匹配键，P0 HITL v1.2）
+  action: "approve" | "reject" | "edit" | "respond"; // respond=回答澄清（ask_human，P0 HITL）
+  note?: string | null; // reject/respond 的文本（respond 必填=人类回答）
   edited_arguments?: Record<string, unknown> | null; // edit 时携带修改后的参数
 }
 
@@ -244,8 +246,9 @@ export interface SubagentEvent {
 
 export interface ApproveEvent {
   type: "approve";
-  run_id: string;
-  call_id: string;
+  run_id: string; // chat.py 流 run_id
+  checkpoint_id: string; // 中断点 checkpoint_id（resume 恢复键，P0 HITL v1.1）
+  call_id: string; // 工具调用 id（多 action 顺序匹配键，P0 HITL v1.2）
   tool_name: string;
   arguments: Record<string, unknown>;
   message: string;

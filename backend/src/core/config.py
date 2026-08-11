@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     # ⚠️ P0-V1 验证（设计 §6.1：grader response_format 国产模型风险）通过前保持 False——
     # 验证是开发动作，通过后直接开本开关，无"验证过"中间态（v1.2 评审修正）。
     rubric_enabled: bool = False
+    # 输出审核修订上限（2026-08-11 P0 HITL 设计 §5.4，v1.2 评审修正：配置化不硬编码）：
+    # publish_report 被拒后模型修订重出次数上限；resume 时计数 > 上限 → 注入
+    # SystemMessage 提示模型输出当前版本并停止修订（防无限修订循环）。0 = 不注入。
+    publish_review_max_revisions: int = 2
 
     # ── 记忆/存储 ──
     redis_url: str = "redis://localhost:6379/0"

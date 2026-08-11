@@ -138,6 +138,24 @@ REVIEW_GUIDANCE = """
 """
 
 
+# 人在回路引导（P0 HITL 设计 §4.2/§4.5，2026-08-11）：hitl_enabled 时注入。
+# {max_revisions} 由 build_system_prompt 格式化（settings.publish_review_max_revisions，
+# 配置化不硬编码——v1.2 评审修正）。
+HITL_GUIDANCE_TEMPLATE = """
+
+## 人在回路（HITL）
+
+### ask_human（澄清 / 中途确认）
+当用户目标、范围、约束或交付形式模糊时，先调用 `ask_human` 澄清，不要靠猜。
+执行计划开始前可调用 `ask_human` 请求确认。
+
+### publish_report（交付审核）
+研报完整撰写完成后（各章节 + 引用齐全），调用 `publish_report` 提交审核交付，
+不要自作主张视为完成。通过 → 交付完成；被拒并附修改意见 → 逐条修订后重新提交
+（最多 {max_revisions} 次）；达到修订上限 → 输出当前版本并说明，不再请求交付。
+"""
+
+
 # 分层常量（v2 计划 §4.2）：核心 > 可选 > 动态（裁剪优先级；裁剪逻辑 P2）
 PROMPT_LAYERS = {
     "core": ["DEFAULT_SYSTEM_PROMPT"],              # 核心层：角色（必选）
@@ -152,6 +170,8 @@ def build_system_prompt(*, mode: str = "default") -> str:
     P1 只做分层组装（v2.0 澄清）——裁剪逻辑放 P2（需精确 token 计算与
     触发时机，与自定义压缩器一起做）。
     P0-2（2026-08-10）：注入 REVIEW_GUIDANCE（审核回路指引）。
+    P0 HITL（2026-08-11）：hitl_enabled=True 时注入 HITL_GUIDANCE_TEMPLATE
+    （ask_human 澄清引导 + publish_report 交付审核 + 修订上限）。
 
     Args:
         mode: 代理模式（plan/agent/auto → 追加可选层模式指令）
@@ -161,12 +181,20 @@ def build_system_prompt(*, mode: str = "default") -> str:
     """
     from src.agent.prompts import (
         DEFAULT_SYSTEM_PROMPT,
+        HITL_GUIDANCE_TEMPLATE,
         MEMORY_GUIDANCE_V3,
         MODE_INSTRUCTIONS,
         REVIEW_GUIDANCE,
     )
+    from src.core.config import settings
 
     parts = [DEFAULT_SYSTEM_PROMPT, REVIEW_GUIDANCE, MEMORY_GUIDANCE_V3]
+    if settings.hitl_enabled:
+        parts.append(
+            HITL_GUIDANCE_TEMPLATE.format(
+                max_revisions=settings.publish_review_max_revisions
+            )
+        )
     instruction = MODE_INSTRUCTIONS.get(mode)
     if instruction:
         parts.append(instruction)

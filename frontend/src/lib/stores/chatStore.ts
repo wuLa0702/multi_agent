@@ -61,7 +61,8 @@ interface ChatState {
   toolCalls: Record<string, ToolCall>;
   agentTree: AgentNode[];
   streamStatus: StreamStatus;
-  pendingApproval: ApproveEvent | null;
+  /** 待审批队列（多 action：N 条 approve 事件 N 张卡，队首可操作，P1） */
+  pendingApprovals: ApproveEvent[];
   /** 审批历史（已批准/已拒绝折叠单行，v4.0 §2.1.7） */
   approvalHistory: { tool_name: string; action: "approve" | "reject" | "edit"; ts: string }[];
   pendingRunId: string | null; // localStorage 镜像（刷新恢复用）
@@ -139,7 +140,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     toolCalls: {},
     agentTree: [],
     streamStatus: "idle",
-    pendingApproval: null,
+    pendingApprovals: [],
     approvalHistory: [],
     pendingRunId: localStorage.getItem(PENDING_RUN_KEY),
     providers: [],
@@ -160,7 +161,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           { id: null, session_id: s.sessionId ?? "", role: "user", content: trimmed, created_at: new Date().toISOString() },
         ],
         notices: s.streamStatus === "awaiting_approval" ? s.notices : s.notices,
-        pendingApproval: null, // 发送新消息时清掉旧审批态
+        pendingApprovals: [], // 发送新消息时清掉旧审批态
         pendingRunId: null,
       }));
       localStorage.removeItem(PENDING_RUN_KEY);
@@ -214,29 +215,32 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     async resume(runId: string) {
-      set({ pendingApproval: null, pendingRunId: null });
+      set({ pendingApprovals: [], pendingRunId: null });
       localStorage.removeItem(PENDING_RUN_KEY);
       // 断点恢复（P0）：必须带 session_id（== thread_id，checkpoint 按执行线隔离）
       startStream({ session_id: get().sessionId, resume_run_id: runId });
     },
 
     async approve() {
-      const { pendingApproval, resume } = get();
-      if (!pendingApproval) return;
-      await submitApproval(pendingApproval, "approve", resume);
+      const { pendingApprovals, resume } = get();
+      const current = pendingApprovals[0];
+      if (!current) return;
+      await submitApproval(current, "approve", resume);
     },
 
     async reject(note?: string) {
-      const { pendingApproval, resume } = get();
-      if (!pendingApproval) return;
-      await submitApproval(pendingApproval, "reject", resume, note);
+      const { pendingApprovals, resume } = get();
+      const current = pendingApprovals[0];
+      if (!current) return;
+      await submitApproval(current, "reject", resume, note);
     },
 
     /** 编辑参数后批准（高危三决策，v4.0 §2.1.6）：携带修改后的 arguments */
     async approveWithEdit(edited: Record<string, unknown>) {
-      const { pendingApproval, resume } = get();
-      if (!pendingApproval) return;
-      await submitApproval(pendingApproval, "edit", resume, undefined, edited);
+      const { pendingApprovals, resume } = get();
+      const current = pendingApprovals[0];
+      if (!current) return;
+      await submitApproval(current, "edit", resume, undefined, edited);
     },
 
     cancel() {
@@ -253,7 +257,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         toolCalls: {},
         agentTree: [],
         streamStatus: "idle",
-        pendingApproval: null,
+        pendingApprovals: [],
       });
     },
 
@@ -266,7 +270,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         toolCalls: {},
         agentTree: [],
         streamStatus: "idle",
-        pendingApproval: null,
+        pendingApprovals: [],
         pendingRunId: null,
       });
       localStorage.removeItem(PENDING_RUN_KEY);
@@ -315,8 +319,10 @@ async function submitApproval(
     useChatStore.setState((s) => ({ notices: [...s.notices, n] }));
 
   try {
-    await api.approve({
+    const resp = await api.approve({
       run_id: approval.run_id,
+      checkpoint_id: approval.checkpoint_id, // P0 HITL v1.1：恢复键
+      call_id: approval.call_id, // P0 HITL v1.2：多 action 顺序匹配键
       action,
       note: note ?? null,
       edited_arguments: action === "edit" ? (edited ?? null) : null,
@@ -328,13 +334,24 @@ async function submitApproval(
         { tool_name: approval.tool_name, action, ts: new Date().toISOString() },
       ],
     }));
-    await resume(approval.run_id);
+    if (resp.accepted) {
+      // 全部决策齐（决策数 == action 数）→ 清队列 + resume 恢复
+      useChatStore.setState({ pendingApprovals: [] });
+      await resume(approval.checkpoint_id);
+    } else {
+      // 还有剩余待审 → 从队列移除当前卡，保留剩余继续等待
+      useChatStore.setState((s) => ({
+        pendingApprovals: s.pendingApprovals.filter(
+          (a) => a.call_id !== approval.call_id
+        ),
+      }));
+    }
   } catch (err) {
     if (err instanceof ApiError) {
       // 契约 §7：RUN_NOT_FOUND / NOT_PENDING → 审批已失效，前端清理状态
       if (err.code === "RUN_NOT_FOUND" || err.code === "NOT_PENDING") {
         pushNotice({ kind: "info", text: "该审批已失效（可能已被处理），请重发消息。" });
-        useChatStore.setState({ pendingApproval: null, pendingRunId: null, streamStatus: "idle" });
+        useChatStore.setState({ pendingApprovals: [], pendingRunId: null, streamStatus: "idle" });
         localStorage.removeItem(PENDING_RUN_KEY);
         return;
       }
@@ -362,7 +379,7 @@ function handleEvent(
       set({
         sessionId: event.session_id,
         streamStatus: "streaming",
-        pendingApproval: null,
+        pendingApprovals: [],
       });
       break;
     }
@@ -413,8 +430,18 @@ function handleEvent(
     }
 
     case "approve": {
-      set({ pendingApproval: event, streamStatus: "awaiting_approval", pendingRunId: event.run_id });
-      localStorage.setItem(PENDING_RUN_KEY, event.run_id);
+      // 追加进待审批队列（多 action：N 条事件 N 张卡）；call_id 去重防 resume 重放
+      // 刷新恢复键 = checkpoint_id（P0 HITL v1.1：resume 恢复键，run_id 只是流标识）
+      set((s) =>
+        s.pendingApprovals.some((a) => a.call_id === event.call_id)
+          ? s
+          : {
+              pendingApprovals: [...s.pendingApprovals, event],
+              streamStatus: "awaiting_approval",
+              pendingRunId: event.checkpoint_id,
+            }
+      );
+      localStorage.setItem(PENDING_RUN_KEY, event.checkpoint_id);
       break;
     }
 
@@ -431,7 +458,7 @@ function handleEvent(
     case "done": {
       set({
         streamStatus: "idle",
-        pendingApproval: null,
+        pendingApprovals: [],
         pendingRunId: null,
         // 2026-08-04 P2：done 事件携带上下文用量 → 输入栏进度条真实化
         ...(event.context_used != null
