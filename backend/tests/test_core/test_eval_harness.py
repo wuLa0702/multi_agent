@@ -222,6 +222,9 @@ def test_tasks_asset_exists() -> None:
     assert all("禁止在沙箱内联网抓取" in t["query"] for t in tasks), (
         "query 必须禁止沙箱自写爬虫（2026-08-10 trace 定位：模型绕过搜索自写 curl/urllib 抓取循环 50 轮）"
     )
+    assert all("最终回复必须直接输出" in t["query"] for t in tasks), (
+        "query 必须明确交付形式（2026-08-10 trace 定位：模型反复编辑沙箱报告文件不输出文本，撞 recursion 50）"
+    )
 
 
 def test_citation_re_pattern_sanity() -> None:
