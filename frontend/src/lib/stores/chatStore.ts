@@ -317,6 +317,8 @@ async function submitApproval(
   try {
     await api.approve({
       run_id: approval.run_id,
+      checkpoint_id: approval.checkpoint_id, // P0 HITL v1.1：恢复键
+      call_id: approval.call_id, // P0 HITL v1.2：多 action 顺序匹配键
       action,
       note: note ?? null,
       edited_arguments: action === "edit" ? (edited ?? null) : null,
@@ -328,7 +330,8 @@ async function submitApproval(
         { tool_name: approval.tool_name, action, ts: new Date().toISOString() },
       ],
     }));
-    await resume(approval.run_id);
+    // resume 恢复键 = checkpoint_id（approve 事件透传）
+    await resume(approval.checkpoint_id);
   } catch (err) {
     if (err instanceof ApiError) {
       // 契约 §7：RUN_NOT_FOUND / NOT_PENDING → 审批已失效，前端清理状态
@@ -413,8 +416,9 @@ function handleEvent(
     }
 
     case "approve": {
-      set({ pendingApproval: event, streamStatus: "awaiting_approval", pendingRunId: event.run_id });
-      localStorage.setItem(PENDING_RUN_KEY, event.run_id);
+      // 刷新恢复键 = checkpoint_id（P0 HITL v1.1：resume 恢复键，run_id 只是流标识）
+      set({ pendingApproval: event, streamStatus: "awaiting_approval", pendingRunId: event.checkpoint_id });
+      localStorage.setItem(PENDING_RUN_KEY, event.checkpoint_id);
       break;
     }
 
