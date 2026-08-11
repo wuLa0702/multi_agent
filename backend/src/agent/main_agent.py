@@ -215,7 +215,9 @@ def get_stream_semaphore() -> asyncio.Semaphore:
         当前并发上限的信号量
     """
     global _stream_semaphore
-    if _stream_semaphore is None or _stream_semaphore._value != settings.stream_concurrency:
+    # getattr 防御：测试会注入 nullcontext 替身（无 _value），工厂不炸
+    current = getattr(_stream_semaphore, "_value", None)
+    if _stream_semaphore is None or current != settings.stream_concurrency:
         _stream_semaphore = asyncio.Semaphore(settings.stream_concurrency)
     return _stream_semaphore
 
