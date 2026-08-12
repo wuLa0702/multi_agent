@@ -14,6 +14,8 @@ from html import unescape
 
 import httpx
 
+from src.core.retry import retry_tool
+
 # ── 抓取限制（决策 §3.1：安全 + 防膨胀）──
 _FETCH_TIMEOUT_SECONDS = 10.0  # 兜底常量（settings.tool_timeout_seconds 优先，P1-d）
 _MAX_BODY_CHARS = 8000  # 输出截断上限（防上下文膨胀）
@@ -56,6 +58,7 @@ def clean_html(html: str, max_chars: int = _MAX_BODY_CHARS) -> str:
     return text[:max_chars]
 
 
+@retry_tool(retries=2, extra_exceptions=(httpx.HTTPStatusError,))
 def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
     from src.core.config import settings  # 超时统一（P1-d）：settings.tool_timeout_seconds
     timeout = settings.tool_timeout_seconds
@@ -70,6 +73,9 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
 
     Raises:
         ValueError: 非法 URL（非 http/https）
+
+    P1 容错（2026-08-12 批次2.5 R-4）：网络瞬时故障（超时/连接/5xx）**上抛给
+    @retry_tool 重试**（读操作幂等）——重试耗尽才降级；HTTP 4xx/非法 URL 就地降级。
     """
     if not _validate_url(url):
         from src.agent.middlewares.tool_audit import log_security_blocked
@@ -84,9 +90,13 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
             headers={"User-Agent": _UA},
         )
         if resp.status_code >= 400:
-            return f"抓取失败：HTTP {resp.status_code}（{url}）"
+            if resp.status_code >= 500:
+                raise httpx.HTTPStatusError(
+                    f"HTTP {resp.status_code}", request=resp.request, response=resp
+                )
+            return f"抓取失败：HTTP {resp.status_code}（{url}）"  # 4xx 不可重试
         return clean_html(resp.text, max_chars=max_chars)
-    except httpx.TimeoutException:
-        return f"抓取超时（{timeout}s）：{url}"
-    except Exception as exc:  # noqa: BLE001 - 网络异常多样，统一降级提示
+    except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError):
+        raise  # 网络瞬时故障 → retry_tool 重试
+    except Exception as exc:  # noqa: BLE001 - 其余网络异常统一降级提示
         return f"抓取失败（{type(exc).__name__}）：{url}"
