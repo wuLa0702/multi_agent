@@ -14,10 +14,9 @@ from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from src.core import db as core_db
+from src.agent.services import settings_service
 from src.core.logging import setup_logging
 from src.core.paths import get_frontend_log_path
-from src.db import settings_repository as settings_repo
 
 router = APIRouter(tags=["settings"])
 
@@ -58,22 +57,14 @@ class LogsRequest(BaseModel):
 @router.get("/v1/settings", response_model=SettingsResponse)
 async def get_settings() -> SettingsResponse:
     """读取全部系统配置（空表返回空 dict，前端用默认值）。"""
-    conn = await core_db.get_connection()
-    try:
-        values = await settings_repo.get_all(conn)
-    finally:
-        await conn.close()
+    values = await settings_service.get_all_settings()
     return SettingsResponse(settings=values)
 
 
 @router.put("/v1/settings")
 async def put_settings(req: SettingsUpdateRequest):
     """批量写入配置（INSERT OR REPLACE，幂等；前端开关变更即保存）。"""
-    conn = await core_db.get_connection()
-    try:
-        await settings_repo.upsert_many(conn, req.settings)
-    finally:
-        await conn.close()
+    await settings_service.upsert_settings(req.settings)
     return {"status": "ok", "updated": list(req.settings.keys())}
 
 

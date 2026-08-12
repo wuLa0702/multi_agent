@@ -16,8 +16,8 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from src.agent.main_agent import rebuild_agent
+from src.agent.services import skill_service
 from src.core import db as core_db
-from src.db import skill_repository as repo
 from src.mcp.client import get_mcp_client_manager
 from src.schemas.skill import (
     SKILL_TYPE_MCP,
@@ -104,11 +104,7 @@ async def install(req: InstallRequest):
 @router.get("/installed", response_model=InstalledSkillListResponse)
 async def installed_list() -> InstalledSkillListResponse:
     """已安装 Skill 列表（更新时间倒序）。"""
-    conn = await core_db.get_connection()
-    try:
-        items = await repo.list_installed(conn)
-    finally:
-        await conn.close()
+    items = await skill_service.list_installed_skills()
     return InstalledSkillListResponse(items=items, total=len(items))
 
 

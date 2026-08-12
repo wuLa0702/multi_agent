@@ -128,26 +128,33 @@ async def test_delete_evicts_cache_and_cleans_workspace(
 async def test_delete_calls_rebuild_and_cleanup(
     app_env_dev, tmp_db_path, session_id, mocker, monkeypatch
 ) -> None:
-    """P0 联动：rebuild_agent 与 cleanup_workspace 均以 session_id 调用（404 不触发）。"""
-    from src.agent import main_agent
+    """P0 联动：rebuild_agent / cleanup_workspace / sandbox 销毁均以 session_id 调用（404 不触发）。
 
-    mock_rebuild = mocker.patch("src.api.sessions.main_agent.rebuild_agent")
-    mock_cleanup = mocker.patch("src.api.sessions.cleanup_workspace")
+    2026-08-12 结构重构：联动逻辑移入 agent/services/session_service，patch 目标随之更新。
+    """
+    from src.agent.services import session_service
+
+    mock_rebuild = mocker.patch("src.agent.services.session_service.main_agent.rebuild_agent")
+    mock_cleanup = mocker.patch("src.agent.services.session_service.cleanup_workspace")
+    mock_sandbox = mocker.patch("src.agent.services.session_service.sandbox_pool.destroy")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.delete(f"/v1/sessions/{session_id}")
     assert resp.status_code == 200
     mock_rebuild.assert_called_once_with(session_id)
     mock_cleanup.assert_called_once_with(session_id, older_than_days=0)
+    mock_sandbox.assert_called_once_with(session_id)
 
     # 404 路径：不触发联动（会话不存在）
     mock_rebuild.reset_mock()
     mock_cleanup.reset_mock()
+    mock_sandbox.reset_mock()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp404 = await client.delete(f"/v1/sessions/not-exist")
     assert resp404.status_code == 404
     mock_rebuild.assert_not_called()
     mock_cleanup.assert_not_called()
+    mock_sandbox.assert_not_called()
 
 
 @pytest.mark.asyncio
