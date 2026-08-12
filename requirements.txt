@@ -43,3 +43,4 @@ pyyaml>=6.0             # 子代理 YAML 声明式
 # - langsmith：src 无直接 import（tracing 配置由 langchain 传递依赖提供）
 # - python-dotenv：src 无直接 import（pydantic-settings 传递依赖处理 .env）
 # - fakeredis：测试用 AsyncFakeRedis 手写替身（test_hitl/test_cost），未装
+searchpin>=1.0.8  # 默认搜索引擎（免费，懒加载，未装则降级博查）
