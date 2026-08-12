@@ -1,8 +1,8 @@
 /**
  * F1/F2/F3 前端补充单测（2026-08-12）。
- * - api mock 分支：updateModelPrice / getCostSummary / getCostAlerts / listProviders(含单价) / getSettings
+ * - api 方法：updateModelPrice / getCostSummary / getCostAlerts / listProviders(含单价) / getSettings
  * - 组件：ModelPriceList（单价行渲染）/ CostPanel（成本汇总展示）
- * mock.ts MOCK_ENABLED=true 全局生效，api 方法直接返回 mock 数据。
+ * MOCK_ENABLED=false（真后端模式）→ 本测试用 fetch stub 模拟后端响应，测试不依赖后端。
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -10,6 +10,34 @@ import { render, screen } from "@testing-library/react";
 import { api } from "@/lib/api/client";
 import { ModelPriceList } from "@/components/settings/ModelPriceList";
 import { CostPanel } from "@/components/chat/CostPanel";
+
+// fetch stub：按 URL 路由返回模拟后端数据（MOCK_ENABLED=false 时 api 走真 fetch）
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      let body: unknown = { status: "ok" };
+      if (u.includes("/v1/providers/models/") && u.includes("/price")) {
+        body = { status: "ok", model_id: 1 };
+      } else if (u.includes("/v1/providers")) {
+        body = {
+          providers: [
+            { id: 1, slug: "deepseek", name: "DeepSeek", is_active: true,
+              models: [{ id: 1, provider_id: 1, name: "deepseek-v4-flash", is_default: true, is_active: true, input_price: 0.001, output_price: 0.002 }] },
+          ],
+        };
+      } else if (u.includes("/v1/cost/summary")) {
+        body = { session_id: "s1", total_cost: 1.2345, input_tokens: 12000, output_tokens: 3000, alert_count: 1 };
+      } else if (u.includes("/v1/cost/alerts")) {
+        body = { status: "ok", items: [{ threshold: 1, total_cost: 1.23, created_at: "2026-08-12" }], total: 1 };
+      } else if (u.includes("/v1/settings")) {
+        body = { status: "ok", settings: { hitl_enabled: "true" } };
+      }
+      return { ok: true, status: 200, json: async () => body } as Response;
+    }),
+  );
+});
 
 describe("F1 模型单价 api mock", () => {
   it("updateModelPrice 返回 ok", async () => {

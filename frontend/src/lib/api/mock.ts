@@ -41,7 +41,7 @@ export function mockSettings() {
 }
 
 /** 开发/测试开关：true = 走 mock 流；联调真后端时改 false */
-export const MOCK_ENABLED = true;
+export const MOCK_ENABLED = false;
 
 /** 与 streamChat 对齐的回调集合（复用 sse.ts 的 StreamCallbacks 类型） */
 import type { StreamCallbacks } from "./sse";
