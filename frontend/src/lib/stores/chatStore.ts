@@ -46,7 +46,7 @@ export interface AgentNode {
 }
 
 export interface ChatNotice {
-  kind: "info" | "error";
+  kind: "info" | "error" | "warning";
   text: string;
 }
 
@@ -450,6 +450,17 @@ function handleEvent(
         notices: [
           ...get().notices,
           { kind: "info", text: `上下文已压缩：移除 ${event.removed_count} 条历史消息。${event.summary}` },
+        ],
+      });
+      break;
+    }
+
+    case "cost_alert": {
+      // 成本分级告警（5/10/20，2026-08-12 F3）：notices 展示（Toast 由上层渲染）
+      set({
+        notices: [
+          ...get().notices,
+          { kind: "warning", text: `成本告警：已超 ¥${event.threshold}（当前 ¥${event.total_cost.toFixed(4)}）` },
         ],
       });
       break;

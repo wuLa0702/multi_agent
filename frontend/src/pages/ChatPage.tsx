@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MessageSquare, Plus } from "lucide-react";
+import { CostPanel } from "@/components/chat/CostPanel";
 import { useSessionStore } from "@/lib/stores/sessionStore";
 import { useChatStore } from "@/lib/stores/chatStore";
 import { useUiModeStore } from "@/lib/stores/uiModeStore";
@@ -121,6 +122,8 @@ export default function ChatPage() {
 
         {/* 任务规划模式顶部面板（v5.0 §2.3：todos 非空时固定顶部） */}
         <TodoPanel />
+        {/* 会话成本展示（F2，2026-08-12） */}
+        <CostPanel sessionId={sessionId} />
         <ChatMessages />
 
         {/* 悬浮输入框（v3 §3.2：圆角卡片 + 阴影 + 底部留白 + 宽度对齐消息区） */}
