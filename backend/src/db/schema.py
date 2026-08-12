@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS models (
     is_default  INTEGER NOT NULL DEFAULT 0,
     is_active   INTEGER NOT NULL DEFAULT 1,
     sort_order  INTEGER NOT NULL DEFAULT 0,
+    input_price REAL NOT NULL DEFAULT 0,   -- 成本档位（元/千 token 输入，2026-08-11 成本控制）
+    output_price REAL NOT NULL DEFAULT 0,  -- 成本档位（元/千 token 输出）
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
@@ -114,6 +116,33 @@ CREATE TABLE IF NOT EXISTS settings (
     value       TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+
+-- 成本流水（2026-08-11 成本控制 §5.1 D1）：每次图执行一条，可审计可汇总
+CREATE TABLE IF NOT EXISTS token_cost_ledger (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id    TEXT NOT NULL,
+    model_id      INTEGER NOT NULL,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    input_cost    REAL NOT NULL DEFAULT 0,
+    output_cost   REAL NOT NULL DEFAULT 0,
+    total_cost    REAL NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_cost_ledger_session ON token_cost_ledger(session_id);
+
+-- 成本告警（2026-08-11 成本控制 §5.4 D4）：预算软告警落库留痕
+CREATE TABLE IF NOT EXISTS cost_alerts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT NOT NULL,
+    threshold   REAL NOT NULL,
+    total_cost  REAL NOT NULL,
+    message     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_cost_alerts_session ON cost_alerts(session_id);
 """
 
 
@@ -131,6 +160,12 @@ _SESSIONS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("context_used", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
+# 旧库迁移：models 加成本档位单价列（2026-08-11 成本控制 §5.2 D2）
+_MODELS_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("input_price", "REAL NOT NULL DEFAULT 0"),
+    ("output_price", "REAL NOT NULL DEFAULT 0"),
+]
+
 
 async def init_schema(conn: aiosqlite.Connection) -> None:
     """幂等执行建表 SQL（CREATE IF NOT EXISTS，可反复调用）。
@@ -144,6 +179,7 @@ async def init_schema(conn: aiosqlite.Connection) -> None:
     await conn.executescript(_SCHEMA_SQL)
     await _migrate_columns(conn, "mcp_servers", _MCP_SERVERS_NEW_COLUMNS)
     await _migrate_columns(conn, "sessions", _SESSIONS_NEW_COLUMNS)
+    await _migrate_columns(conn, "models", _MODELS_NEW_COLUMNS)
     await conn.commit()
 
 

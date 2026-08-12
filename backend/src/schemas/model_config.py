@@ -58,3 +58,5 @@ class ModelConfig(BaseModel):
     model_name: str
     base_url: str
     api_key_env: str
+    input_price: float = 0.0   # 成本档位（元/千 token 输入，2026-08-11 成本控制）
+    output_price: float = 0.0  # 成本档位（元/千 token 输出）
