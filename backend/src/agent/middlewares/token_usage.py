@@ -165,7 +165,11 @@ def _resolve_model_config(model_id: int | None):
 
 
 async def _check_cost_alert(conn, session_id: str) -> None:
-    """累计成本超阈值 → 落 cost_alerts（去重：同阈值最近已告警不重复）。
+    """累计成本超阈值 → 分级告警落库（2026-08-12 成本评审 2.2 方案 A）。
+
+    分级告警：阈值按倍数递增（5/10/20...）每级告警一次——避免"只告警一次后
+    成本飙到 100 元失联"，也避免每次核算都打扰。触发级别 = 当前累计成本
+    跨越的最高档位。
 
     底层函数，按规范豁免（通用统计封装）。
 
@@ -177,14 +181,19 @@ async def _check_cost_alert(conn, session_id: str) -> None:
 
     from src.db import cost_repository
 
-    threshold = settings.session_cost_warn_threshold
-    if threshold <= 0:
+    base = settings.session_cost_warn_threshold
+    if base <= 0:
         return
     total_cost = await cost_repository.sum_session_cost(conn, session_id)
-    if total_cost <= threshold:
+    if total_cost < base:
         return
-    last = await cost_repository.latest_alert_threshold(conn, session_id)
-    if last is not None and abs(last - threshold) < 1e-9:
-        return  # 去重：同阈值已告警
+    # 达到的最高档位（1×/2×/4×/8×... 倍数递增）
+    level = 1
+    while total_cost >= base * (2**level):
+        level += 1
+    threshold = base * (2 ** (level - 1))
+    highest = await cost_repository.highest_alert_threshold(conn, session_id)
+    if highest is not None and threshold <= highest + 1e-9:
+        return  # 该档位（及以下）已告警过——分级去重
     await cost_repository.insert_cost_alert(conn, session_id, threshold, total_cost)
     await conn.commit()

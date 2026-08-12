@@ -107,18 +107,18 @@ class TestCostAlert:
 
     @pytest.mark.asyncio
     async def test_alert_dedup_same_threshold(self, tmp_db_path, monkeypatch) -> None:
-        """同阈值去重：连续核算只告警一次（§8 用例 9）。"""
+        """同档位去重：同一档位只告警一次（§8 用例 9 + 2026-08-12 分级）。"""
         await _setup_model_with_price(monkeypatch)
         await _init_db(tmp_db_path)
         monkeypatch.setattr(settings, "session_cost_warn_threshold", 0.001)
-        for _ in range(5):
+        for _ in range(5):  # 每次核算累计 0.002，跨档位 0.002/0.004/0.008 → 3 档
             await tu._log_cost_for_round("s1", 1, 1000)
         conn = await core_db.get_connection()
         row = await (await conn.execute(
             "SELECT COUNT(*) AS n FROM cost_alerts WHERE session_id='s1'"
         )).fetchone()
         await conn.close()
-        assert row["n"] == 1
+        assert row["n"] == 3  # 分级：0.002 / 0.004 / 0.008 三档各一次（同档去重）
 
     @pytest.mark.asyncio
     async def test_alert_disabled_when_threshold_zero(self, tmp_db_path, monkeypatch) -> None:
@@ -133,6 +133,29 @@ class TestCostAlert:
         )).fetchone()
         await conn.close()
         assert row["n"] == 0
+
+    @pytest.mark.asyncio
+    async def test_alert_tiered_thresholds(self, tmp_db_path, monkeypatch) -> None:
+        """分级告警：成本跨档位 → 各档位各告警一次（2026-08-12 评审 2.2 方案 A）。
+
+        阈值 0.001，每次核算 +0.002：累计 0.002（档 0.002）、0.004（档 0.004）、
+        0.006（档 0.004 去重）、0.008（档 0.008）——预期 3 档（0.002/0.004/0.008）。
+        """
+        await _setup_model_with_price(monkeypatch)
+        await _init_db(tmp_db_path)
+        monkeypatch.setattr(settings, "session_cost_warn_threshold", 0.001)
+        for _ in range(4):  # 累计 0.008
+            await tu._log_cost_for_round("s1", 1, 1000)
+        conn = await core_db.get_connection()
+        row = await (await conn.execute(
+            "SELECT COUNT(*) AS n FROM cost_alerts WHERE session_id='s1'"
+        )).fetchone()
+        thresholds = await (await conn.execute(
+            "SELECT threshold FROM cost_alerts WHERE session_id='s1' ORDER BY threshold"
+        )).fetchall()
+        await conn.close()
+        assert row["n"] == 3
+        assert [float(t["threshold"]) for t in thresholds] == [0.002, 0.004, 0.008]
 
 
 class TestCostSummaryApi:

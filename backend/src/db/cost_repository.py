@@ -55,20 +55,23 @@ async def sum_session_cost(conn: aiosqlite.Connection, session_id: str) -> float
     return float(row["tc"]) if row else 0.0
 
 
-async def latest_alert_threshold(
+async def highest_alert_threshold(
     conn: aiosqlite.Connection, session_id: str
 ) -> float | None:
-    """最近一条告警的阈值（去重判定：同阈值不重复告警）。
+    """已告警的最高档位阈值（分级告警去重判定：只对已跨越档位去重）。
+
+    2026-08-12 分级告警：用 MAX(threshold) 而非最新一条——created_at 同秒不稳，
+    且分级语义是"该档位是否已告警"（最高档即代表已覆盖的档位集合）。
 
     Returns:
-        最近阈值；无告警 → None
+        最高已告警阈值；无告警 → None
     """
     cur = await conn.execute(
-        "SELECT threshold FROM cost_alerts WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT MAX(threshold) AS t FROM cost_alerts WHERE session_id = ?",
         (session_id,),
     )
     row = await cur.fetchone()
-    return float(row["threshold"]) if row else None
+    return float(row["t"]) if row and row["t"] is not None else None
 
 
 async def insert_cost_alert(
