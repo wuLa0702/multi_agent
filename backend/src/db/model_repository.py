@@ -15,27 +15,40 @@ import aiosqlite
 from src.schemas.model_config import ModelConfig, ModelInfo, ProviderWithModels
 
 # ── 默认 seed 数据（首次启动填充；新增模型/厂商 = 改这里或走管理接口）──
+# 单价：元/千 token（2026-08-12 实测预填，来源官方定价）
+# deepseek：输入 1 元/1M、输出 2 元/1M（flash）；3/6（pro）——api-docs.deepseek.com/quick_start/pricing
+# 豆包 doubao-seed-evolving：约 6/30 元/1M（Seed 2.1 Pro 官方 ¥6/¥30）
+# 豆包 Doubao-Seed-2.0-Code：官方 ¥3.2/¥16 每 1M
+# glm-4-plus：官方约 ¥50/¥50 每 1M
 _DEFAULT_PROVIDERS: list[dict] = [
     {
         "slug": "deepseek",
         "name": "DeepSeek",
         "base_url": "https://api.deepseek.com/v1",
         "api_key_env": "DEEPSEEK_API_KEY",
-        "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+        "models": [
+            {"name": "deepseek-v4-flash", "input_price": 0.001, "output_price": 0.002},
+            {"name": "deepseek-v4-pro", "input_price": 0.003, "output_price": 0.006},
+        ],
     },
     {
         "slug": "ark",
         "name": "豆包",
         "base_url": "https://ark.cn-beijing.volces.com/api/v3",
         "api_key_env": "ARK_API_KEY",
-        "models": ["doubao-seed-evolving", "Doubao-Seed-2.0-Code"],
+        "models": [
+            {"name": "doubao-seed-evolving", "input_price": 0.006, "output_price": 0.030},
+            {"name": "Doubao-Seed-2.0-Code", "input_price": 0.0032, "output_price": 0.016},
+        ],
     },
     {
         "slug": "zhipu",
         "name": "智谱",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "api_key_env": "ZHIPU_API_KEY",
-        "models": ["glm-4-plus"],
+        "models": [
+            {"name": "glm-4-plus", "input_price": 0.050, "output_price": 0.050},
+        ],
     },
 ]
 
@@ -72,14 +85,17 @@ async def seed_defaults(conn: aiosqlite.Connection) -> None:
         )
         provider_id = cur.lastrowid
         assert provider_id is not None
-        for j, model_name in enumerate(p["models"]):
+        for j, model_spec in enumerate(p["models"]):
+            model_name = model_spec["name"] if isinstance(model_spec, dict) else model_spec
+            in_price = model_spec.get("input_price", 0.0) if isinstance(model_spec, dict) else 0.0
+            out_price = model_spec.get("output_price", 0.0) if isinstance(model_spec, dict) else 0.0
             await conn.execute(
                 """INSERT INTO models
                    (provider_id, name, is_default, is_active, sort_order,
                     input_price, output_price, created_at, updated_at)
                    VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)""",
-                # 近似单价（元/千 token，2026-08-11 成本控制 §5.2：统一档位，生产按实际填）
-                (provider_id, model_name, 1 if j == 0 else 0, j, 0.002, 0.008, now, now),
+                # 真实单价（元/千 token，2026-08-12 预填官方定价；厂商调价时改 _DEFAULT_PROVIDERS）
+                (provider_id, model_name, 1 if j == 0 else 0, j, in_price, out_price, now, now),
             )
     await conn.commit()
 
