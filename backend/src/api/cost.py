@@ -20,47 +20,36 @@ async def get_cost_summary(session_id: str = Query(..., description="会话 ID")
     Returns:
         {"session_id", "total_cost", "input_tokens", "output_tokens", "alert_count"}
     """
+    from src.db import cost_repository
+
     conn = await core_db.get_connection()
     try:
-        cur = await conn.execute(
-            """SELECT COALESCE(SUM(input_tokens),0) AS it, COALESCE(SUM(output_tokens),0) AS ot,
-                      COALESCE(SUM(total_cost),0) AS tc FROM token_cost_ledger
-               WHERE session_id = ?""",
-            (session_id,),
-        )
-        row = await cur.fetchone()
-        cur2 = await conn.execute(
-            "SELECT COUNT(*) AS n FROM cost_alerts WHERE session_id = ?", (session_id,)
-        )
-        alert = await cur2.fetchone()
+        s = await cost_repository.summary(conn, session_id)
     finally:
         await conn.close()
 
-    if row is None or (row["it"] == 0 and row["ot"] == 0 and row["tc"] == 0):
+    if s["input_tokens"] == 0 and s["output_tokens"] == 0 and s["total_cost"] == 0:
         raise HTTPException(
             status_code=404,
             detail={"error": "会话无成本记录", "detail": f"session_id={session_id} 无成本流水", "code": "COST_NOT_FOUND"},
         )
     return {
         "session_id": session_id,
-        "total_cost": round(float(row["tc"]), 4),
-        "input_tokens": row["it"],
-        "output_tokens": row["ot"],
-        "alert_count": int(alert["n"]) if alert else 0,
+        "total_cost": round(s["total_cost"], 4),
+        "input_tokens": s["input_tokens"],
+        "output_tokens": s["output_tokens"],
+        "alert_count": s["alert_count"],
     }
 
 
 @router.get("/alerts")
 async def get_cost_alerts(session_id: str = Query(..., description="会话 ID")):
     """会话成本告警列表（cost_alerts 表，倒序）。"""
+    from src.db import cost_repository
+
     conn = await core_db.get_connection()
     try:
-        cur = await conn.execute(
-            "SELECT threshold, total_cost, message, created_at FROM cost_alerts "
-            "WHERE session_id = ? ORDER BY created_at DESC",
-            (session_id,),
-        )
-        rows = await cur.fetchall()
+        items = await cost_repository.list_alerts(conn, session_id)
     finally:
         await conn.close()
-    return {"status": "ok", "items": [dict(r) for r in rows], "total": len(rows)}
+    return {"status": "ok", "items": items, "total": len(items)}

@@ -101,9 +101,9 @@ async def _get_previous_used(conn, session_id: str) -> int:
     Returns:
         上次落库的 context_used（无记录 → 0）
     """
-    cur = await conn.execute("SELECT context_used FROM sessions WHERE id = ?", (session_id,))
-    row = await cur.fetchone()
-    return int(row["context_used"] or 0) if row else 0
+    from src.db import session_repo
+
+    return await session_repo.get_context_used(conn, session_id)
 
 
 async def _log_cost_for_round(session_id: str, model_id: int | None, used: int) -> None:
@@ -130,12 +130,10 @@ async def _log_cost_for_round(session_id: str, model_id: int | None, used: int) 
             return  # 注册表未加载/无模型 → 跳过核算
         # P0 近似：增量未拆输入/输出，全记输入价（P2 接 usage_metadata 拆分）
         cost = round(delta * cfg.input_price / 1000, 6)
-        await conn.execute(
-            """INSERT INTO token_cost_ledger
-               (session_id, model_id, input_tokens, output_tokens,
-                input_cost, output_cost, total_cost, created_at)
-               VALUES (?, ?, ?, 0, ?, 0, ?, ?)""",
-            (session_id, cfg.id, delta, cost, cost, _now_utc_str()),
+        from src.db import cost_repository
+
+        await cost_repository.insert_cost_ledger(
+            conn, session_id, cfg.id, delta, 0, cost, 0.0, cost
         )
         await conn.commit()
         await _check_cost_alert(conn, session_id)
@@ -177,29 +175,16 @@ async def _check_cost_alert(conn, session_id: str) -> None:
     """
     from src.core.config import settings
 
+    from src.db import cost_repository
+
     threshold = settings.session_cost_warn_threshold
     if threshold <= 0:
         return
-    cur = await conn.execute(
-        "SELECT COALESCE(SUM(total_cost),0) AS tc FROM token_cost_ledger WHERE session_id = ?",
-        (session_id,),
-    )
-    total_cost = float((await cur.fetchone())["tc"])
+    total_cost = await cost_repository.sum_session_cost(conn, session_id)
     if total_cost <= threshold:
         return
-    cur2 = await conn.execute(
-        "SELECT threshold FROM cost_alerts WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
-        (session_id,),
-    )
-    last = await cur2.fetchone()
-    if last and abs(float(last["threshold"]) - threshold) < 1e-9:
+    last = await cost_repository.latest_alert_threshold(conn, session_id)
+    if last is not None and abs(last - threshold) < 1e-9:
         return  # 去重：同阈值已告警
-    await conn.execute(
-        """INSERT INTO cost_alerts (session_id, threshold, total_cost, message, created_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (
-            session_id, threshold, total_cost,
-            f"会话成本已达 ¥{total_cost:.2f}，超阈值 ¥{threshold:.2f}", _now_utc_str(),
-        ),
-    )
+    await cost_repository.insert_cost_alert(conn, session_id, threshold, total_cost)
     await conn.commit()
