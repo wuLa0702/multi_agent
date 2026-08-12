@@ -68,10 +68,12 @@ class TokenUsageMiddleware(AgentMiddleware):
                 logger.debug("TokenUsageMiddleware: 无 session_id，跳过")
                 return
 
-            await _save_context_used(session_id, used, self.context_window)
-            # 成本核算：本轮增量 → 单价 → 流水 + 告警（旁路，失败不影响）
+            # ⚠️ 顺序关键（2026-08-12 项 C-1 实测发现 bug）：必须先算成本增量
+            # （_log_cost_for_round 内部读 context_used 旧值作 delta 起点），
+            # 再 _save_context_used 更新——颠倒会让 delta 恒为 0，成本流水永不落库。
             model_id = getattr(context, "model_id", None) if context is not None else None
             await _log_cost_for_round(session_id, model_id, used)
+            await _save_context_used(session_id, used, self.context_window)
         except Exception:  # noqa: BLE001 —— 统计是旁路能力，失败不阻断对话
             logger.exception("TokenUsageMiddleware: 用量/成本落库失败（不影响对话）")
 
