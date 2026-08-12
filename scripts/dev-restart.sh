@@ -2,18 +2,18 @@
 # ============================================================
 # multi-agent 后端快速重启（日常开发用）
 #
-# 功能：杀 8010 旧进程 → 校验依赖 → 起后端（uvicorn --reload）
+# 功能：杀 8010/5176 旧进程 → 校验依赖 → 起前端(Vite) → 起后端（uvicorn --reload）
 # 用法：
 #   bash scripts/dev-restart.sh
 #
 # 与 dev.sh 的区别：
-#   - dev.sh         完整启动：检查 Docker → 起资源(redis+opensandbox) → 起后端
-#   - dev-restart.sh 快重启：不碰 docker 容器，只重启后端进程（秒级）
+#   - dev.sh         完整启动：检查 Docker → 起资源(redis+opensandbox) → 起前端 → 起后端
+#   - dev-restart.sh 快重启：不碰 docker 容器，起前端 + 重启后端进程（秒级）
 #
 # 说明：
 #   - 本地后端 = venv 直跑，不涉及任何镜像；改 backend/src/ 代码热重载即时生效
 #   - 首次启动 / 资源变了请用 dev.sh（本脚本不含 compose up）
-#   - 前端（未来）：在本脚本追加 npm dev 启动即可
+#   - 前端：随后端一起后台启动（Vite :5176，日志 logs/frontend-dev.log），访问 http://localhost:5176
 # ============================================================
 set -euo pipefail
 
@@ -28,14 +28,15 @@ echo "=============================================="
 echo "  multi-agent 后端快速重启 (dev)"
 echo "=============================================="
 
-# ── [1/3] 清理 8010 端口旧进程（Ctrl+C 残留 / reloader 孤儿 spawn 子进程）──
+# ── [1/4] 清理旧进程（8010 后端 / 5176 前端）──
 echo ""
-echo "==> [1/3] 清理 8010 旧进程..."
+echo "==> [1/4] 清理 8010/5176 旧进程..."
 kill_port 8010
+kill_port 5176
 
-# ── [2/3] 校验后端依赖 ──
+# ── [2/4] 校验后端依赖 ──
 echo ""
-echo "==> [2/3] 校验后端依赖..."
+echo "==> [2/4] 校验后端依赖..."
 PY="python"
 if [ -x "$ROOT/.venv/Scripts/python.exe" ]; then
   PY="$ROOT/.venv/Scripts/python.exe"      # Windows venv
@@ -47,13 +48,25 @@ if ! "$PY" -c "import fastapi, uvicorn" >/dev/null 2>&1; then
   echo "❌ 后端依赖未安装。请先：pip install -r requirements.txt（或 pip install -e .）"
   exit 1
 fi
-echo "✅ 依赖正常"
+echo "✅ 后端依赖正常"
 
-# ── [3/3] 启动后端 ──
+# ── [3/4] 启动前端（Vite :5176，后台运行）──
 echo ""
-echo "==> [3/3] 启动后端 (FastAPI :8010)..."
-echo "   访问: http://localhost:8010/docs | 健康检查: http://localhost:8010/v1/health"
-echo "   （Ctrl+C 停止后端；停资源: docker compose --env-file .env.dev down）"
+echo "==> [3/4] 启动前端 (Vite :5176)..."
+if [ ! -d "$ROOT/frontend/node_modules" ]; then
+  echo "⏳ 首次运行：安装前端依赖 (pnpm install)..."
+  (cd "$ROOT/frontend" && pnpm install) || { echo "❌ 前端依赖安装失败，请检查 pnpm 与网络"; exit 1; }
+fi
+mkdir -p "$ROOT/logs"
+(cd "$ROOT/frontend" && VITE_API_PROXY="http://127.0.0.1:8010" pnpm dev > "$ROOT/logs/frontend-dev.log" 2>&1 &)
+echo "   ✅ 前端已后台启动 → http://localhost:5176（日志 logs/frontend-dev.log）"
+
+# ── [4/4] 启动后端 ──
+echo ""
+echo "==> [4/4] 启动后端 (FastAPI :8010)..."
+echo "   🖥️  前端: http://localhost:5176"
+echo "   📚  API 文档: http://localhost:8010/docs | 健康: http://localhost:8010/v1/health"
+echo "   （Ctrl+C 停止后端；停前端: taskkill 5176 或重跑本脚本；停资源: docker compose --env-file .env.dev down）"
 echo ""
 cd "$ROOT/backend"
 exec "$PY" -m uvicorn src.api.main:app --reload --port 8010

@@ -19,6 +19,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.api.chat import router as chat_router
@@ -169,6 +170,28 @@ app.include_router(mcp_servers_router)
 app.include_router(settings_router)
 app.include_router(uploads_router)
 app.include_router(context_usage_router)
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def root() -> str:
+    """根路径友好页（2026-08-12 提升易用性）：API 入口 + 前端地址，替代裸 404。"""
+    return """<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>multi-agent · API</title>
+<style>body{font-family:system-ui;max-width:720px;margin:48px auto;padding:0 20px;color:#333}
+a{color:#2563eb;text-decoration:none}a:hover{text-decoration:underline}
+.card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;margin:12px 0}
+code{background:#eef2f7;padding:1px 5px;border-radius:4px}</style></head>
+<body>
+<h1>🕸️ multi-agent API</h1>
+<p>后端 FastAPI 已启动。以下入口：</p>
+<div class="card"><b>🖥️ 前端页面</b>（完整 UI，推荐）<br>
+<a href="http://localhost:5176">http://localhost:5176</a>
+<span style="color:#94a3b8">（若打不开，运行 <code>scripts/dev.sh</code> 或 <code>dev-restart.sh</code> 会自动拉起）</span></div>
+<div class="card"><b>📚 API 文档</b>（Swagger 交互式）<br><a href="/docs">/docs</a></div>
+<div class="card"><b>❤️ 健康检查</b><br><a href="/v1/health">/v1/health</a></div>
+<p style="color:#94a3b8;font-size:13px">REST 接口统一 <code>/v1/</code> 前缀（providers/sessions/skills/cost/settings…）。</p>
+</body></html>"""
 
 
 class McpMountMiddleware:
