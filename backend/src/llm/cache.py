@@ -94,21 +94,61 @@ def _set_memory(prompt: str, model_name: str, value: str) -> None:
         _cache[key] = (time.monotonic(), value)
 
 
-def _get_redis(prompt: str, model_name: str) -> str | None:
-    """Redis 后端：GET llm_cache:{sha1}（redis 不可用 → None 降级，容错纪律）。"""
+async def _get_redis(prompt: str, model_name: str) -> str | None:
+    """Redis 后端：GET llm_cache:{sha1}（redis 不可用 → None 降级，容错纪律）。
+
+    ⚠️ async（2026-08-12 C-4 实测修复）：redis.asyncio 客户端是进程级单例，
+    连接绑定首次事件循环——同步桥接（asyncio.run/线程安全队列）会跨循环复用
+    连接导致 'Event loop is closed'。必须 async 接口在调用方（adapter.chat）的
+    loop 内 await。memory 后端仍同步（进程 dict）。
+    """
     try:
-        return get_redis().get(f"{_REDIS_PREFIX}:{_key(prompt, model_name)}")
+        return await get_redis().get(f"{_REDIS_PREFIX}:{_key(prompt, model_name)}")
     except Exception:  # noqa: BLE001 - redis 不可用降级，不阻断 LLM 调用
         return None
 
 
-def _set_redis(prompt: str, model_name: str, value: str) -> None:
+async def _set_redis(prompt: str, model_name: str, value: str) -> None:
     """Redis 后端：SETEX（TTL 取 settings.llm_cache_ttl；redis 不可用静默跳过）。"""
     from src.core.config import settings
 
     try:
-        get_redis().setex(
+        await get_redis().setex(
             f"{_REDIS_PREFIX}:{_key(prompt, model_name)}", settings.llm_cache_ttl, value
         )
     except Exception:  # noqa: BLE001 - redis 不可用跳过，不阻断
         return
+
+
+async def get_cached_async(prompt: str, model_name: str, ttl: int) -> str | None:
+    """async 版缓存读（adapter.chat 在 async 上下文调用，2026-08-12 C-4 修复）。
+
+    Args:
+        prompt: 输入 prompt
+        model_name: 模型名
+        ttl: 有效期（秒）
+
+    Returns:
+        缓存结果；None=未命中/过期/redis 不可用
+    """
+    from src.core.config import settings
+
+    if settings.llm_cache_backend == "redis":
+        return await _get_redis(prompt, model_name)
+    return _get_memory(prompt, model_name, ttl)
+
+
+async def set_cached_async(prompt: str, model_name: str, value: str) -> None:
+    """async 版缓存写（adapter.chat 在 async 上下文调用，2026-08-12 C-4 修复）。
+
+    Args:
+        prompt: 输入 prompt
+        model_name: 模型名
+        value: 模型回复
+    """
+    from src.core.config import settings
+
+    if settings.llm_cache_backend == "redis":
+        await _set_redis(prompt, model_name, value)
+    else:
+        _set_memory(prompt, model_name, value)

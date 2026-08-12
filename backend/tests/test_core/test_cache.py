@@ -65,22 +65,29 @@ class TestCacheRedisBackend:
     """Redis 后端（2026-08-11 缓存接 Redis）：键前缀 + TTL + 不可用降级。"""
 
     def test_redis_backend_set_get(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """redis 后端 async 接口（2026-08-12 C-4 修复：同步桥接跨循环崩溃 → async 版）。"""
         from src.core.config import settings
         from src.llm import cache as cache_mod
 
         store: dict[str, str] = {}
 
         class FakeRedis:
-            def get(self, k):
+            async def get(self, k):
                 return store.get(k)
 
-            def setex(self, k, ttl, v):
+            async def setex(self, k, ttl, v):
                 store[k] = v
 
         monkeypatch.setattr(settings, "llm_cache_backend", "redis")
         monkeypatch.setattr(cache_mod, "get_redis", lambda: FakeRedis())
-        cache_mod.set_cached("你好", "m", "v1")
-        assert cache_mod.get_cached("你好", "m", ttl=3600) == "v1"
+
+        async def run() -> None:
+            await cache_mod.set_cached_async("你好", "m", "v1")
+            assert await cache_mod.get_cached_async("你好", "m", ttl=3600) == "v1"
+
+        import asyncio
+
+        asyncio.run(run())
         # 键前缀
         assert list(store.keys())[0].startswith("llm_cache:")
 
@@ -95,4 +102,10 @@ class TestCacheRedisBackend:
             raise ConnectionError("redis down")
 
         monkeypatch.setattr(cache_mod, "get_redis", _boom)
-        assert cache_mod.get_cached("你好", "m", ttl=3600) is None
+
+        async def run() -> None:
+            return await cache_mod.get_cached_async("你好", "m", ttl=3600)
+
+        import asyncio
+
+        assert asyncio.run(run()) is None

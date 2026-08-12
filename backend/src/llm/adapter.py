@@ -115,15 +115,17 @@ class LLMAdapter:
             Exception: LLM 调用失败（超时/限流，由上层决定重试或降级）
         """
         from src.core.config import settings
-        from src.llm.cache import get_cached, set_cached
+        from src.llm.cache import get_cached_async, set_cached_async
 
         model_name = getattr(self._model, "model_name", "") or "default"
         if settings.llm_cache_enabled:
-            cached = get_cached(prompt, model_name, settings.llm_cache_ttl)
+            # async 版（2026-08-12 C-4 修复）：redis 后端必须在调用方 loop 内 await，
+            # 同步桥接会跨循环复用连接崩溃
+            cached = await get_cached_async(prompt, model_name, settings.llm_cache_ttl)
             if cached is not None:
                 return cached
         response = await self._model.ainvoke(prompt)
         text = str(response.content)
         if settings.llm_cache_enabled:
-            set_cached(prompt, model_name, text)
+            await set_cached_async(prompt, model_name, text)
         return text

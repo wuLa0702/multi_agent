@@ -54,13 +54,14 @@ class TestFetchUrl:
         assert "HTTP 404" in fetch_url("https://x.com/missing")
 
     def test_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """超时 → 降级提示。"""
+        """超时 → retry_tool 重试（P1 容错 R-4）→ 耗尽降级"工具调用失败"。"""
 
         def _raise(*a, **k):
             raise httpx.TimeoutException("timeout")
 
         monkeypatch.setattr(httpx, "get", _raise)
-        assert "抓取超时" in fetch_url("https://slow.com")
+        result = fetch_url("https://slow.com")
+        assert "工具调用失败" in result
 
     def test_network_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """其他异常 → 降级提示（工具失败不中断 run）。"""
