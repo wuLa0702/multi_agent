@@ -33,6 +33,17 @@ _SENSITIVE_TOOLS = {
 _MAX_ARGS_LEN = 300
 
 
+def log_security_blocked(tool: str, reason: str) -> None:
+    """安全拦截审计（模块级，工具实现也可调；安全机制 D5）。"""
+    audit_logger.info(json.dumps({
+        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "layer": "security",
+        "event": "blocked",
+        "tool": tool,
+        "reason": reason,
+    }, ensure_ascii=False, default=str))
+
+
 class ToolAuditMiddleware(AgentMiddleware):
     """工具调用审计：只审计不拦截（旁路能力，失败绝不影响工具执行）。
 
@@ -62,6 +73,10 @@ class ToolAuditMiddleware(AgentMiddleware):
         if name in _SENSITIVE_TOOLS:
             record["args"] = self._sanitize_args(name, tool_call.get("args", {}) or {})
         audit_logger.info(json.dumps(record, ensure_ascii=False, default=str))
+
+    def _audit_blocked(self, tool: str, reason: str) -> None:
+        """安全拦截事件（D5）：委托模块级 log_security_blocked。"""
+        log_security_blocked(tool, reason)
 
     @staticmethod
     def _thread_id_from(request) -> str:

@@ -68,6 +68,25 @@ async def create_session(conn: aiosqlite.Connection, session_id: str, title: str
     return Session(id=session_id, title=title, created_at=now, updated_at=now)
 
 
+async def get_context_used(conn: aiosqlite.Connection, session_id: str) -> int:
+    """读会话当前上下文用量（成本核算差量起点，2026-08-11）。
+
+    只读单列，避免整 Session 对象构造（datetime 解析成本）。
+
+    Args:
+        conn: SQLite 连接
+        session_id: 会话 ID
+
+    Returns:
+        context_used（无记录 → 0）
+    """
+    cur = await conn.execute(
+        "SELECT context_used FROM sessions WHERE id = ?", (session_id,)
+    )
+    row = await cur.fetchone()
+    return int(row["context_used"] or 0) if row else 0
+
+
 async def get_session(conn: aiosqlite.Connection, session_id: str) -> Session | None:
     """按 ID 查会话；不存在返回 None。"""
     cursor = await conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))

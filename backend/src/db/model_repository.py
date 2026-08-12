@@ -75,9 +75,11 @@ async def seed_defaults(conn: aiosqlite.Connection) -> None:
         for j, model_name in enumerate(p["models"]):
             await conn.execute(
                 """INSERT INTO models
-                   (provider_id, name, is_default, is_active, sort_order, created_at, updated_at)
-                   VALUES (?, ?, ?, 1, ?, ?, ?)""",
-                (provider_id, model_name, 1 if j == 0 else 0, j, now, now),
+                   (provider_id, name, is_default, is_active, sort_order,
+                    input_price, output_price, created_at, updated_at)
+                   VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)""",
+                # 近似单价（元/千 token，2026-08-11 成本控制 §5.2：统一档位，生产按实际填）
+                (provider_id, model_name, 1 if j == 0 else 0, j, 0.002, 0.008, now, now),
             )
     await conn.commit()
 
@@ -96,7 +98,8 @@ def _row_to_model(row: aiosqlite.Row) -> ModelInfo:
 _PROVIDER_JOIN_SQL = """
 SELECT p.id AS provider_id, p.slug, p.name AS provider_name,
        p.base_url, p.api_key_env, p.is_active AS provider_active,
-       m.id AS model_id, m.name AS model_name, m.is_default, m.is_active
+       m.id AS model_id, m.name AS model_name, m.is_default, m.is_active,
+       m.input_price, m.output_price
 FROM providers p
 LEFT JOIN models m ON m.provider_id = p.id
 WHERE p.is_active = 1 AND (m.id IS NULL OR m.is_active = 1)
@@ -152,6 +155,8 @@ async def list_model_configs(conn: aiosqlite.Connection) -> list[ModelConfig]:
             model_name=row["model_name"],
             base_url=row["base_url"],
             api_key_env=row["api_key_env"],
+            input_price=float(row["input_price"] or 0),
+            output_price=float(row["output_price"] or 0),
         )
         for row in rows
         if row["model_id"] is not None

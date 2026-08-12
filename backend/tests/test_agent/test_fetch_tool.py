@@ -28,9 +28,9 @@ class TestCleanHtml:
 
 class TestFetchUrl:
     def test_invalid_protocol(self) -> None:
-        """非 http/https → 降级提示（不抛异常）。"""
+        """非 http/https → 降级提示（不抛异常；安全机制 D3 注入校验消息）。"""
         out = fetch_url("ftp://x.com")
-        assert "仅支持 http/https" in out
+        assert "链接格式非法" in out
 
     def test_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """200 + HTML → 清洗后文本（截断生效）。"""

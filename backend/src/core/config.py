@@ -116,6 +116,14 @@ class Settings(BaseSettings):
     # 本地 .env.dev=10（开发机强）；云端 .env.prod=2（2核4g 保守）——开大先验
     # 限流/写锁，出问题再调小（co-creator 拍板：本地允许 10，云端 2）
     stream_concurrency: int = 4
+    # ── 成本控制（2026-08-11 设计 §4.3/§4.4/§5.3/§5.4）──
+    # LLM 结果缓存开关（面试演示开；生产按需）
+    llm_cache_enabled: bool = False
+    llm_cache_ttl: int = 3600            # 缓存有效期（秒）
+    # 缓存后端：memory（进程内存，单用户够用）/ redis（生产，跨进程持久化，2026-08-11）
+    llm_cache_backend: str = "memory"
+    # 会话成本软告警阈值（元，>0 启用；只记录+告警，不做硬限制——用户拍板）
+    session_cost_warn_threshold: float = 5.0
 
     # ── 人在回路 / Rubric（2026-08-06 设计：docs/decisions/方案-人在回路与Rubric评分-详细设计-v1.md）──
     # HITL 审批：True = 沙箱/文件/技能等副作用工具执行前人类审批（按风险分级，见 agent/hitl/hitl.py）。

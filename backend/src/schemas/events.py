@@ -96,6 +96,15 @@ class SubagentEvent(SSEEvent):
     id: int = Field(description="事件序号（流内自增）")
 
 
+class CostAlertEvent(SSEEvent):
+    """成本软告警（2026-08-11 成本控制 §5.6）：超阈值提示前端，只记录不硬限制。"""
+
+    type: Literal["cost_alert"] = "cost_alert"
+    session_id: str = Field(description="会话 ID")
+    total_cost: float = Field(description="累计会话成本（元）")
+    threshold: float = Field(description="触发阈值（元）")
+
+
 class ErrorEvent(SSEEvent):
     """流内错误（SSE 已建立后发生；请求阶段错误走 HTTP 4xx）。"""
 

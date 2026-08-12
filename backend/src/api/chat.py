@@ -40,6 +40,7 @@ from src.core.constants import PAGINATION_LIMIT_MAX
 from src.core.model_registry import get_registry
 from src.schemas.events import (
     ApproveEvent,
+    CostAlertEvent,
     DoneEvent,
     ErrorEvent,
     StartEvent,
@@ -471,6 +472,35 @@ async def _trigger_memory_after(
         )
 
 
+async def _fetch_latest_cost_alert(conn, session_id: str) -> dict | None:
+    """取会话最新成本告警 → SSE data（无告警返回 None）。
+
+    中间件落 cost_alerts 已去重（同阈值一次）；本函数只读最新一条。
+
+    Args:
+        conn: SQLite 连接
+        session_id: 会话 ID
+
+    Returns:
+        SSE data dict（CostAlertEvent 序列化）；无告警 None
+    """
+    cur = await conn.execute(
+        "SELECT threshold, total_cost FROM cost_alerts WHERE session_id = ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (session_id,),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return None
+    return {
+        "data": CostAlertEvent(
+            session_id=session_id,
+            total_cost=float(row["total_cost"]),
+            threshold=float(row["threshold"]),
+        ).model_dump_json()
+    }
+
+
 async def _build_done_event(
     conn, run_id: str, session_id: str, started_at: float
 ) -> DoneEvent:
@@ -523,6 +553,8 @@ async def _event_stream(
     try:
         from src.db import session_repo as repo
 
+        _cost_alert_sent = False  # 成本告警 run 内发一次（2026-08-11 成本控制 §5.6）
+
         # 1. resume 准备（consume 待决审批 + 修订注入 + checkpoint 校验）
         is_resume, resume_input, lc_messages, resume_err = await _resolve_resume_context(
             req, session_id, conn
@@ -567,6 +599,14 @@ async def _event_stream(
 
         # 5. 长期记忆后台写入（done 前触发不等待——2026-08-04 优化）
         await _trigger_memory_after(req, session_id, assistant_text, lc_messages, is_resume)
+
+        # 5.5 成本软告警事件（2026-08-11 成本控制 §5.6）：本 run 有超阈值告警 → yield
+        #     中间件落 cost_alerts 已去重；这里 run 内发一次（前端 pushNotice）
+        if not _cost_alert_sent:
+            alert = await _fetch_latest_cost_alert(conn, session_id)
+            if alert is not None:
+                yield {"data": alert}
+                _cost_alert_sent = True
 
         # 6. done 事件（流内异常时不发；context_used 查库带前端同步）
         yield {"data": (await _build_done_event(conn, run_id, session_id, started_at)).model_dump_json()}

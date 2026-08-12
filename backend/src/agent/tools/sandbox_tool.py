@@ -160,6 +160,8 @@ def run_command_in_sandbox(
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
     blocked = _validate_command(command)
     if blocked:
+        from src.agent.middlewares.tool_audit import log_security_blocked
+        log_security_blocked("run_command_in_sandbox", blocked)
         return blocked
     try:
         sandbox = sandbox_pool.get_sandbox(_thread_id_from(config))
@@ -193,6 +195,8 @@ def upload_workspace_file(
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
     blocked = _validate_sandbox_path(filename)
     if blocked:
+        from src.agent.middlewares.tool_audit import log_security_blocked
+        log_security_blocked("upload_workspace_file", blocked)
         return blocked
     try:
         sandbox = sandbox_pool.get_sandbox(_thread_id_from(config))
@@ -220,6 +224,8 @@ def download_sandbox_file(
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
     blocked = _validate_sandbox_path(filename)
     if blocked:
+        from src.agent.middlewares.tool_audit import log_security_blocked
+        log_security_blocked("download_sandbox_file", blocked)
         return blocked
     try:
         sandbox = sandbox_pool.get_sandbox(_thread_id_from(config))
