@@ -59,14 +59,48 @@ if [ ! -d "$ROOT/frontend/node_modules" ]; then
 fi
 mkdir -p "$ROOT/logs"
 (cd "$ROOT/frontend" && VITE_API_PROXY="http://127.0.0.1:8010" pnpm dev > "$ROOT/logs/frontend-dev.log" 2>&1 &)
-echo "   ✅ 前端已后台启动 → http://localhost:5176（日志 logs/frontend-dev.log）"
 
-# ── [4/4] 启动后端 ──
+# 前端就绪校验（最多 20s；curl 探活 5176）
+FE_OK=0
+if command -v curl >/dev/null 2>&1; then
+  for _ in $(seq 1 20); do
+    if curl -s -o /dev/null -m 2 "http://localhost:5176" 2>/dev/null; then FE_OK=1; break; fi
+    sleep 1
+  done
+fi
+if [ "$FE_OK" = "1" ]; then
+  echo "   ✅ 前端就绪 → http://localhost:5176"
+else
+  echo "   ⚠️  前端暂未就绪（可能仍编译中），日志: logs/frontend-dev.log"
+fi
+
+# ── [4/4] 启动后端（后台）→ 校验 /v1/health 就绪 → 输出 URL 指南 ──
 echo ""
 echo "==> [4/4] 启动后端 (FastAPI :8010)..."
-echo "   🖥️  前端: http://localhost:5176"
-echo "   📚  API 文档: http://localhost:8010/docs | 健康: http://localhost:8010/v1/health"
-echo "   （Ctrl+C 停止后端；停前端: taskkill 5176 或重跑本脚本；停资源: docker compose --env-file .env.dev down）"
-echo ""
 cd "$ROOT/backend"
-exec "$PY" -m uvicorn src.api.main:app --reload --port 8010
+"$PY" -m uvicorn src.api.main:app --reload --port 8010 > "$ROOT/logs/backend-dev.log" 2>&1 &
+
+# 后端就绪校验（最多 30s；/v1/health 200 = 就绪）
+BE_OK=0
+if command -v curl >/dev/null 2>&1; then
+  for _ in $(seq 1 30); do
+    if curl -s -o /dev/null -m 2 "http://localhost:8010/v1/health" 2>/dev/null; then BE_OK=1; break; fi
+    sleep 1
+  done
+fi
+if [ "$BE_OK" = "1" ]; then echo "   ✅ 后端就绪（/v1/health 200）"; else echo "   ⚠️  后端未就绪，日志: logs/backend-dev.log"; fi
+
+# ── URL 指南（每个地址说明用途）──
+echo ""
+echo "=============================================="
+echo "  服务已启动 · 入口指南（按需打开）"
+echo "=============================================="
+echo "  🖥️  http://localhost:5176   前端页面（完整 UI，日常主要入口）"
+echo "  🏠  http://localhost:8010    后端导航页（接口入口汇总）"
+echo "  📚  http://localhost:8010/docs   API 交互文档（Swagger，可在线测试接口）"
+echo "  ❤️  http://localhost:8010/v1/health  健康检查（200=正常；redis 断连显示 degraded 不影响主功能）"
+echo "  🗂  日志：logs/frontend-dev.log · logs/backend-dev.log"
+echo "  停止：Ctrl+C 停后端；前端 taskkill 5176 或重跑本脚本；资源: docker compose --env-file .env.dev down"
+echo ""
+echo "  提示：MCP 外部 server 连不上（如 Smithery 403）是正常降级——只跳过该 server，不影响启动与内置工具。"
+wait

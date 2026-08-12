@@ -80,43 +80,11 @@ else
   echo "⚠️  opensandbox 端口暂不可达（可能仍在拉镜像/启动，后端连不上时会报错，可稍后重试）"
 fi
 
-# ── [4/5] 启动前端（Vite :5176，后台运行）──
+# ── [4/5] 前端由 dev-restart.sh 统一启动（避免重复起 5176）──
 echo ""
-echo "==> [4/5] 启动前端 (Vite :5176)..."
-kill_port 5176
+echo "==> [4/5] 前端随后端一起启动（dev-restart.sh 负责）..."
 
-# 依赖校验：首次运行自动安装
-if [ ! -d "$ROOT/frontend/node_modules" ]; then
-  echo "⏳ 首次运行：安装前端依赖 (pnpm install)..."
-  (cd "$ROOT/frontend" && pnpm install) || { echo "❌ 前端依赖安装失败，请检查 pnpm 与网络"; exit 1; }
-fi
-
-# 代理目标：固定指向本地后端 8010（本地开发端口，2026-08-02 拍板）
-PROXY_TARGET="http://127.0.0.1:8010"
-
-mkdir -p "$ROOT/logs"
-(cd "$ROOT/frontend" && VITE_API_PROXY="$PROXY_TARGET" pnpm dev > "$ROOT/logs/frontend-dev.log" 2>&1 &)
-
-# 等待前端就绪（最多 15s）
-FE_OK=0
-if command -v curl >/dev/null 2>&1; then
-  for _ in $(seq 1 15); do
-    if curl -s -o /dev/null -m 2 "http://localhost:5176" 2>/dev/null; then
-      FE_OK=1
-      break
-    fi
-    sleep 1
-  done
-fi
-if [ "$FE_OK" = "1" ]; then
-  echo "✅ 前端就绪: http://localhost:5176 （日志: logs/frontend-dev.log）"
-  # 自动弹出浏览器（Windows: cmd start；Linux: xdg-open；macOS: open）
-  open_browser "http://localhost:5176"
-else
-  echo "⚠️  前端暂未就绪（可能仍在编译），查看 logs/frontend-dev.log"
-fi
-
-# ── [5/5] 启动后端（复用 dev-restart.sh：杀 8010 旧进程 + 起后端）──
+# ── [5/5] 启动前端 + 后端（dev-restart.sh：杀 8010/5176 → 起前端 → 起后端 → 就绪校验 + URL 指南）──
 echo ""
-echo "==> [5/5] 启动后端 (FastAPI :8010)..."
+echo "==> [5/5] 启动前端 + 后端..."
 exec bash "$ROOT/scripts/dev-restart.sh"
