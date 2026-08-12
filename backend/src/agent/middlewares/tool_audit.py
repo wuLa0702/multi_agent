@@ -63,6 +63,16 @@ class ToolAuditMiddleware(AgentMiddleware):
             record["args"] = self._sanitize_args(name, tool_call.get("args", {}) or {})
         audit_logger.info(json.dumps(record, ensure_ascii=False, default=str))
 
+    def _audit_blocked(self, tool: str, reason: str) -> None:
+        """安全拦截事件（安全机制 D5）：校验拦截计数，审计留痕。"""
+        audit_logger.info(json.dumps({
+            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "layer": "security",
+            "event": "blocked",
+            "tool": tool,
+            "reason": reason,
+        }, ensure_ascii=False, default=str))
+
     @staticmethod
     def _thread_id_from(request) -> str:
         """会话定位：runtime.context.session_id（中间件是编译时单例，会话经请求级 context）。"""

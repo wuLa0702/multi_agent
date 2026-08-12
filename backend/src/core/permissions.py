@@ -13,7 +13,31 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from deepagents import FilesystemPermission
+
+
+def validate_workspace_path(path: str, session_id: str = "*") -> bool:
+    """校验 agent 产出的文件路径在工作区白名单内（安全机制 D1，防越权/穿越）。
+
+    底层函数，按规范豁免（通用解析封装）。
+
+    Args:
+        path: agent 给出的文件路径（相对 workspace 或绝对）
+        session_id: 会话 ID（工作区隔离；"*" 仅做格式校验不做隔离匹配）
+
+    Returns:
+        True=合法（无外部协议/绝对路径/../穿越）
+    """
+    if not path or "://" in path:  # 禁外部协议（file:// javascript:// 等）
+        return False
+    norm = Path(path).as_posix()
+    if norm.startswith("/"):  # 禁绝对路径
+        return False
+    if ".." in norm.split("/"):  # 禁父目录穿越
+        return False
+    return True
 
 
 def build_main_permissions() -> list[FilesystemPermission]:

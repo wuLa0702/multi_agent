@@ -24,6 +24,21 @@ _UA = "Mozilla/5.0 (compatible; multi-agent-fetch/1.0)"
 _TAG_RE = re.compile(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>|<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 
+# URL 注入校验（安全机制 D3）：纯 http/https + 无注入字符（空格/引号/分号/<>）
+_SAFE_URL_RE = re.compile(r"^https?://[^\s\"'<>;]+$")
+
+
+def _validate_url(url: str) -> bool:
+    """URL 严格校验（D3）：http/https + 无注入字符。
+
+    Args:
+        url: 目标 URL
+
+    Returns:
+        True=合法
+    """
+    return bool(_SAFE_URL_RE.match(url))
+
 
 def clean_html(html: str, max_chars: int = _MAX_BODY_CHARS) -> str:
     """HTML → 纯文本（去 script/style/标签，压缩空白，截断）。
@@ -54,8 +69,8 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
     Raises:
         ValueError: 非法 URL（非 http/https）
     """
-    if not url.lower().startswith(("http://", "https://")):
-        return f"仅支持 http/https 链接：{url}"
+    if not _validate_url(url):
+        return f"链接格式非法（仅支持纯 http/https URL）：{url}"
     try:
         resp = httpx.get(
             url,
