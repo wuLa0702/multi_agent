@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     # 频繁撞默认 25 → 调 50；成本权衡：上限翻倍 = 循环失控时 LLM 调用上限翻倍，
     # 需结合成本/用量告警使用；调小可降低单次成本上限）
     agent_recursion_limit: int = 50
+    # 工具调用统一超时（秒，2026-08-11 容错 P1-d）：fetch_url 等网络工具
+    # 单次请求超时——超时抛 TimeoutException → 被重试装饰器捕获 → 重试 → 降级
+    tool_timeout_seconds: float = 10.0
     # 对话流并发上限（2026-08-10 拍板：环境保存，替代 main_agent 硬编码 4）：
     # SQLite checkpointer 写锁是硬约束——Semaphore 限制同时执行的流数量，超出排队。
     # 本地 .env.dev=10（开发机强）；云端 .env.prod=2（2核4g 保守）——开大先验

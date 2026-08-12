@@ -15,7 +15,7 @@ from html import unescape
 import httpx
 
 # ── 抓取限制（决策 §3.1：安全 + 防膨胀）──
-_FETCH_TIMEOUT_SECONDS = 10.0
+_FETCH_TIMEOUT_SECONDS = 10.0  # 兜底常量（settings.tool_timeout_seconds 优先，P1-d）
 _MAX_BODY_CHARS = 8000  # 输出截断上限（防上下文膨胀）
 _MAX_REDIRECTS = 5
 _UA = "Mozilla/5.0 (compatible; multi-agent-fetch/1.0)"
@@ -57,6 +57,8 @@ def clean_html(html: str, max_chars: int = _MAX_BODY_CHARS) -> str:
 
 
 def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
+    from src.core.config import settings  # 超时统一（P1-d）：settings.tool_timeout_seconds
+    timeout = settings.tool_timeout_seconds
     """受控抓取网页正文（服务端执行，自动过工具审计）。
 
     Args:
@@ -76,7 +78,7 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
     try:
         resp = httpx.get(
             url,
-            timeout=_FETCH_TIMEOUT_SECONDS,
+            timeout=timeout,
             follow_redirects=True,
             max_redirects=_MAX_REDIRECTS,
             headers={"User-Agent": _UA},
@@ -85,6 +87,6 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
             return f"抓取失败：HTTP {resp.status_code}（{url}）"
         return clean_html(resp.text, max_chars=max_chars)
     except httpx.TimeoutException:
-        return f"抓取超时（{_FETCH_TIMEOUT_SECONDS}s）：{url}"
+        return f"抓取超时（{timeout}s）：{url}"
     except Exception as exc:  # noqa: BLE001 - 网络异常多样，统一降级提示
         return f"抓取失败（{type(exc).__name__}）：{url}"

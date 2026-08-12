@@ -33,7 +33,7 @@ async def health() -> HealthResponse:
     redis_status = "connected"
     try:
         await get_redis().ping()
-    except Exception:
+    except Exception:  # noqa: BLE001 - 探活失败只降级标记，不抛（health 语义）
         redis_status = "disconnected"
 
     # SQLite 探活（惰性开连接 + SELECT 1，用完即关）
@@ -42,7 +42,7 @@ async def health() -> HealthResponse:
         conn = await core_db.get_connection()
         await conn.execute("SELECT 1")
         await conn.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 - 探活失败只降级标记，不抛（health 语义）
         sqlite_status = "disconnected"
 
     return HealthResponse(
