@@ -74,8 +74,15 @@ def internet_search(query: str, max_results: int = 5) -> str:
             f"  {p.get('summary') or p.get('snippet', '')}"
             for p in pages[:max_results]
         )
-    except httpx.HTTPStatusError:
-        raise  # 可重试（429/5xx）→ 交给 retry_tool
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            # 授权/配额耗尽（403：key 无效或账号无额度/欠费）——重试无意义，
+            # 立即降级并明确指示 agent 直接回答（2026-08-12 实测：配额 403 曾重试 6 次拖慢）
+            return (
+                "搜索不可用：博查授权失败（HTTP 403，多为账号配额耗尽或 key 无效）。"
+                "请勿重试搜索，直接基于已有知识回答。"
+            )
+        raise  # 429/5xx → 可重试，交给 retry_tool
     except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
         raise  # 网络瞬时故障 → 交给 retry_tool 重试
     except Exception as e:  # noqa: BLE001 —— 其余异常就地降级，不冒泡中断 run
