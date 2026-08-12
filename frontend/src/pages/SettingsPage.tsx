@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { ModelPriceList } from "@/components/settings/ModelPriceList";
 import { api } from "@/lib/api/client";
 import { useChatStore } from "@/lib/stores/chatStore";
-import { setHitlEnabledMock } from "@/lib/api/mock";
+import { isMockEnabled, setHitlEnabledMock, setMockEnabled } from "@/lib/api/mock";
 import { useSkillStore } from "@/lib/stores/skillStore";
 import { useTheme } from "@/hooks/useTheme";
 import InstalledSkillRow from "@/components/skills/InstalledSkillRow";
@@ -61,6 +61,7 @@ const SYSTEM_SWITCHES: SwitchDef[] = [
 
 export default function SettingsPage() {
   const [menu, setMenu] = useState<SettingKey>("account");
+  const [mockOn, setMockOn] = useState(isMockEnabled());
   const providers = useChatStore((s) => s.providers);
   const loadProviders = useChatStore((s) => s.loadProviders);
   const { theme, setTheme } = useTheme();
@@ -157,6 +158,24 @@ export default function SettingsPage() {
             <div className="space-y-6">
               <AccountSection providers={providers} />
               <ModelPriceList />
+              <div className="rounded-lg border border-border p-3" data-testid="mock-toggle">
+                <div className="text-sm font-medium">开发模式（mock 假数据）</div>
+                <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{mockOn ? "开启中：走测试假数据（含假审批/假成本）" : "关闭：连真实后端 8010（推荐）"}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !mockOn;
+                      setMockEnabled(next);
+                      setMockOn(next);
+                      showToast(next ? "已切到 mock 模式（刷新后生效）" : "已切到真实后端模式（刷新后生效）", "info");
+                    }}
+                    className="press rounded-md border border-border px-2 py-1 text-xs"
+                  >
+                    {mockOn ? "切到真实" : "切到 mock"}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
           {menu === "appearance" && (

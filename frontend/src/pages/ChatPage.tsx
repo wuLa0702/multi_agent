@@ -6,14 +6,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MessageSquare, Plus } from "lucide-react";
-import { CostPanel } from "@/components/chat/CostPanel";
 import { useSessionStore } from "@/lib/stores/sessionStore";
 import { useChatStore } from "@/lib/stores/chatStore";
 import { useUiModeStore } from "@/lib/stores/uiModeStore";
 import SessionList from "@/components/history/SessionList";
 import ChatHeader, { exportChatAsMd } from "@/components/chat/ChatHeader";
 import ChatMessages from "@/components/chat/ChatMessages";
-import TodoPanel from "@/components/todo/TodoPanel";
+import InfoPanel from "@/components/layout/InfoPanel";
 import ChatInput from "@/components/chat/ChatInput";
 import AgentPanel from "@/components/agent/AgentPanel";
 import PageHeader from "@/components/common/PageHeader";
@@ -120,10 +119,6 @@ export default function ChatPage() {
           onClearChat={() => clearChat()}
         />
 
-        {/* 任务规划模式顶部面板（v5.0 §2.3：todos 非空时固定顶部） */}
-        <TodoPanel />
-        {/* 会话成本展示（F2，2026-08-12） */}
-        <CostPanel sessionId={sessionId} />
         <ChatMessages />
 
         {/* 悬浮输入框（v3 §3.2：圆角卡片 + 阴影 + 底部留白 + 宽度对齐消息区） */}
@@ -134,6 +129,9 @@ export default function ChatPage() {
           <ChatInput onSend={(content) => void send(content)} onCancel={cancel} />
         </div>
       </main>
+
+      {/* 右侧信息栏（P1a 交互优化：任务进度/成本收纳，可折叠） */}
+      <InfoPanel sessionId={sessionId} />
 
       {/* 第四栏：Agent 详情面板（v3 §3.5，可开关可拖动） */}
       <AgentPanel open={agentPanelOpen} onClose={() => setAgentPanelOpen(false)} />

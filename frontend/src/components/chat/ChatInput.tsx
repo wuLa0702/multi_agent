@@ -7,7 +7,7 @@
  */
 
 import { useRef, useState } from "react";
-import { Paperclip, Send, Square, MoreHorizontal } from "lucide-react";
+import { Paperclip, Send, Square, MoreHorizontal, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api/client";
 import { useChatStore } from "@/lib/stores/chatStore";
@@ -178,7 +178,7 @@ export default function ChatInput({
         />
         {isStreaming ? (
           <Button variant="outline" size="icon" onClick={onCancel} title="停止生成" aria-label="停止生成">
-            <Square className="size-4" />
+            <Loader2 className="size-4 animate-spin" />
           </Button>
         ) : (
           <Button

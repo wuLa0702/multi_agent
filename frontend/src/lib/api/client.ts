@@ -7,7 +7,7 @@
  */
 
 import {
-  MOCK_ENABLED,
+  isMockEnabled,
   mockCostAlerts,
   mockCostSummary,
   mockMcpServers,
@@ -74,7 +74,7 @@ export const api = {
 
   /** GET /v1/providers — 厂商 + 模型列表（模型下拉数据源） */
   listProviders(): Promise<ProvidersResponse> {
-    if (MOCK_ENABLED) return Promise.resolve(mockProviders() as ProvidersResponse);
+    if (isMockEnabled()) return Promise.resolve(mockProviders() as ProvidersResponse);
     return request<ProvidersResponse>("/v1/providers");
   },
 
@@ -118,7 +118,7 @@ export const api = {
   /** POST /v1/chat/approve — 审批决策（202 即返，恢复走新 SSE 流） */
   approve(req: ApproveRequest): Promise<{ status: string; accepted: boolean }> {
     // 自 mock 假数据测试（前端开发计划 §1）：mock 模式审批直接成功，resume 走 mock 流
-    if (MOCK_ENABLED) {
+    if (isMockEnabled()) {
       return Promise.resolve({ status: "ok", accepted: true });
     }
     return request<{ status: string; accepted: boolean }>("/v1/chat/approve", {
@@ -175,7 +175,7 @@ export const api = {
 
   /** GET /v1/mcp-servers — MCP 连接列表（设置页，2026-08-04 P1） */
   listMcpServers(): Promise<McpServerListResponse> {
-    if (MOCK_ENABLED) return Promise.resolve(mockMcpServers() as McpServerListResponse);
+    if (isMockEnabled()) return Promise.resolve(mockMcpServers() as McpServerListResponse);
     return request<McpServerListResponse>("/v1/mcp-servers");
   },
 
@@ -194,7 +194,7 @@ export const api = {
 
   /** GET /v1/settings — 系统配置 */
   getSettings(): Promise<SettingsResponse> {
-    if (MOCK_ENABLED) return Promise.resolve(mockSettings() as SettingsResponse);
+    if (isMockEnabled()) return Promise.resolve(mockSettings() as SettingsResponse);
     return request<SettingsResponse>("/v1/settings");
   },
 
@@ -228,7 +228,7 @@ export const api = {
 
   /** PATCH /v1/providers/models/{id}/price — 模型单价（2026-08-12 F1，成本核算入口） */
   updateModelPrice(id: number, inputPrice: number, outputPrice: number): Promise<{ status: string; model_id: number }> {
-    if (MOCK_ENABLED) return Promise.resolve({ status: "ok", model_id: id });
+    if (isMockEnabled()) return Promise.resolve({ status: "ok", model_id: id });
     return request<{ status: string; model_id: number }>(`/v1/providers/models/${id}/price`, {
       method: "PATCH",
       body: JSON.stringify({ input_price: inputPrice, output_price: outputPrice }),
@@ -237,13 +237,13 @@ export const api = {
 
   /** GET /v1/cost/summary — 会话成本汇总（2026-08-12 F2） */
   getCostSummary(sessionId: string): Promise<CostSummaryResponse> {
-    if (MOCK_ENABLED) return Promise.resolve(mockCostSummary(sessionId) as CostSummaryResponse);
+    if (isMockEnabled()) return Promise.resolve(mockCostSummary(sessionId) as CostSummaryResponse);
     return request<CostSummaryResponse>(`/v1/cost/summary?session_id=${encodeURIComponent(sessionId)}`);
   },
 
   /** GET /v1/cost/alerts — 会话成本告警列表（2026-08-12 F2） */
   getCostAlerts(sessionId: string): Promise<CostAlertListResponse> {
-    if (MOCK_ENABLED) return Promise.resolve(mockCostAlerts() as CostAlertListResponse);
+    if (isMockEnabled()) return Promise.resolve(mockCostAlerts() as CostAlertListResponse);
     return request<CostAlertListResponse>(`/v1/cost/alerts?session_id=${encodeURIComponent(sessionId)}`);
   },
 };

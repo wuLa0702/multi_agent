@@ -14,7 +14,7 @@
 import { create, type StoreApi } from "zustand";
 import { api, ApiError } from "@/lib/api/client";
 import { streamChat } from "@/lib/api/sse";
-import { streamChatMock, MOCK_ENABLED } from "@/lib/api/mock";
+import { streamChatMock, isMockEnabled } from "@/lib/api/mock";
 import type {
   TodoItem,
   ApproveEvent,
@@ -125,7 +125,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       },
     };
     // 自 mock 假数据测试（前端开发计划 §1）：MOCK_ENABLED=true 走 mock 流，联调改 false
-    if (MOCK_ENABLED) {
+    if (isMockEnabled()) {
       void streamChatMock(req, callbacks, controller.signal);
     } else {
       void streamChat(req, callbacks, controller.signal);
@@ -481,7 +481,7 @@ function handleEvent(
       // 避免刷新重进会话时重复渲染；失败静默降级保留本地流。
       const sid = get().sessionId;
       // mock 模式：mock 流消息未落库，跳过"以库为准"重拉（否则拉真实后端空结果会清空消息）
-      if (sid && !MOCK_ENABLED) void refreshMessages(sid, set, get);
+      if (sid && !isMockEnabled()) void refreshMessages(sid, set, get);
       break;
     }
 

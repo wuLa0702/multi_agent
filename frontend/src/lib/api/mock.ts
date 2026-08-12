@@ -40,8 +40,13 @@ export function mockSettings() {
   return { status: "ok", settings: { hitl_enabled: "true", log_report: "false" } };
 }
 
-/** 开发/测试开关：true = 走 mock 流；联调真后端时改 false */
-export const MOCK_ENABLED = false;
+/** 开发/测试开关：运行时切换（localStorage，默认 false=真后端）。设置页可改。 */
+export function isMockEnabled(): boolean {
+  return localStorage.getItem("multi-agent.mockEnabled") === "true";
+}
+export function setMockEnabled(enabled: boolean): void {
+  localStorage.setItem("multi-agent.mockEnabled", String(enabled));
+}
 
 /** 与 streamChat 对齐的回调集合（复用 sse.ts 的 StreamCallbacks 类型） */
 import type { StreamCallbacks } from "./sse";

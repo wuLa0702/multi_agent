@@ -29,7 +29,8 @@ vi.mock("@/lib/api/sse", () => ({
 
 // 测试环境关闭 mock 流（chatStore 走 streamChat，由上方 vi.fn 捕获）
 vi.mock("@/lib/api/mock", () => ({
-  MOCK_ENABLED: false,
+  isMockEnabled: () => false,
+  setMockEnabled: vi.fn(),
   streamChatMock: vi.fn(),
 }));
 
