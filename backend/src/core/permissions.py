@@ -18,26 +18,28 @@ from pathlib import Path
 from deepagents import FilesystemPermission
 
 
-def validate_workspace_path(path: str, session_id: str = "*") -> bool:
-    """校验 agent 产出的文件路径在工作区白名单内（安全机制 D1，防越权/穿越）。
+def validate_workspace_path(path: str, session_id: str) -> bool:
+    """校验 agent 产出的文件路径在工作区白名单内（安全机制 D1，完整校验）。
+
+    修复（2026-08-12 评审大1）：原实现未用 session_id，跨会话穿越（other/secret）
+    放行——现拼 workspace/{session_id}/ 前缀 + resolve 检查最终路径在会话目录下。
 
     底层函数，按规范豁免（通用解析封装）。
 
     Args:
-        path: agent 给出的文件路径（相对 workspace 或绝对）
-        session_id: 会话 ID（工作区隔离；"*" 仅做格式校验不做隔离匹配）
+        path: agent 给出的文件路径（相对 workspace/{session_id}/）
+        session_id: 会话 ID（必填，工作区隔离——防跨会话越权）
 
     Returns:
-        True=合法（无外部协议/绝对路径/../穿越）
+        True=合法（无外部协议/绝对路径/穿越，且在会话工作区内）
     """
     if not path or "://" in path:  # 禁外部协议（file:// javascript:// 等）
         return False
-    norm = Path(path).as_posix()
-    if norm.startswith("/"):  # 禁绝对路径
+    if not session_id:
         return False
-    if ".." in norm.split("/"):  # 禁父目录穿越
-        return False
-    return True
+    base = (Path("workspace") / session_id).resolve()
+    full = (base / path).resolve()
+    return str(full).startswith(str(base.resolve()))
 
 
 def build_main_permissions() -> list[FilesystemPermission]:

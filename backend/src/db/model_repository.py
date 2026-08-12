@@ -100,6 +100,29 @@ async def seed_defaults(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def update_model_price(
+    conn: aiosqlite.Connection, model_id: int, input_price: float, output_price: float
+) -> bool:
+    """更新模型单价（2026-08-12 成本评审 2.3：用户自定义模型成本核算入口）。
+
+    Args:
+        conn: SQLite 连接
+        model_id: 模型 ID
+        input_price: 输入单价（元/千 token）
+        output_price: 输出单价（元/千 token）
+
+    Returns:
+        True=更新成功；False=模型不存在
+    """
+    cur = await conn.execute(
+        """UPDATE models SET input_price = ?, output_price = ?, updated_at = ?
+           WHERE id = ?""",
+        (input_price, output_price, _now_iso(), model_id),
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
 def _row_to_model(row: aiosqlite.Row) -> ModelInfo:
     """providers/models 联查行 → ModelInfo。"""
     return ModelInfo(

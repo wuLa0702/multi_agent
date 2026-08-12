@@ -14,6 +14,7 @@ from html import unescape
 
 import httpx
 
+from src.agent.middlewares.tool_audit import security_audit
 from src.core.retry import retry_tool
 
 # ── 抓取限制（决策 §3.1：安全 + 防膨胀）──
@@ -30,16 +31,19 @@ _WS_RE = re.compile(r"\s+")
 _SAFE_URL_RE = re.compile(r"^https?://[^\s\"'<>;]+$")
 
 
-def _validate_url(url: str) -> bool:
-    """URL 严格校验（D3）：http/https + 无注入字符。
+@security_audit(tool="fetch_url")
+def _validate_url(url: str) -> str | None:
+    """URL 严格校验（D3）：http/https + 无注入字符（security_audit 统一审计）。
 
     Args:
         url: 目标 URL
 
     Returns:
-        True=合法
+        None=合法；str=拦截原因（security_audit 自动记审计）
     """
-    return bool(_SAFE_URL_RE.match(url))
+    if not _SAFE_URL_RE.match(url):
+        return "URL 注入/协议非法"
+    return None
 
 
 def clean_html(html: str, max_chars: int = _MAX_BODY_CHARS) -> str:
@@ -77,9 +81,7 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
     P1 容错（2026-08-12 批次2.5 R-4）：网络瞬时故障（超时/连接/5xx）**上抛给
     @retry_tool 重试**（读操作幂等）——重试耗尽才降级；HTTP 4xx/非法 URL 就地降级。
     """
-    if not _validate_url(url):
-        from src.agent.middlewares.tool_audit import log_security_blocked
-        log_security_blocked("fetch_url", "URL 注入/协议非法")
+    if _validate_url(url) is not None:
         return f"链接格式非法（仅支持纯 http/https URL）：{url}"
     try:
         resp = httpx.get(

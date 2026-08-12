@@ -44,6 +44,39 @@ def log_security_blocked(tool: str, reason: str) -> None:
     }, ensure_ascii=False, default=str))
 
 
+def security_audit(tool: str):
+    """安全校验审计装饰器（2026-08-12 安全评审 2.5：收口不散落）。
+
+    包装校验函数：返回非空（错误提示）→ 自动审计 security/blocked。
+    工具实现只需"校验失败返回提示字符串"，审计由装饰器统一做——不散落易漏。
+
+    用法：
+        @security_audit(tool="fetch_url")
+        def _validate_url(url: str) -> bool | None: ...   # 返回 None=通过，str=拦截
+
+    Args:
+        tool: 审计日志中的工具名
+
+    Returns:
+        装饰器
+    """
+
+    def decorator(func):
+        from functools import wraps
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            if result:
+                reason = str(result) if isinstance(result, str) else "校验拦截"
+                log_security_blocked(tool, reason)
+            return result
+
+        return wrapper
+
+    return decorator
+
+
 class ToolAuditMiddleware(AgentMiddleware):
     """工具调用审计：只审计不拦截（旁路能力，失败绝不影响工具执行）。
 

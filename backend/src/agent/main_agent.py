@@ -98,11 +98,15 @@ class ChatContext:
 
 @wrap_model_call
 async def _configurable_model(request, handler):
-    """模型调用拦截：按请求上下文 model_id 动态选模型（运行时切换）。
+    """模型调用拦截：按请求上下文 model_id 动态选模型（运行时切换）+ 主链路缓存。
 
     每次模型调用（含主 agent 多轮）都经此换模型；context 缺省或
     model_id 为空时用默认模型。`request.override(model=...)` 仅替换
     本次调用的模型实例，agent 本体保持单例复用。
+
+    主链路缓存（2026-08-12 成本评审 1.2 扩展）：llm_cache_enabled=True 时，
+    相同 (messages 序列化, model_name) 命中 → 直接返回缓存 ModelResponse
+    （绕过 LLM）；未命中 → 调 handler 后写入。model 不同不共享缓存。
 
     注意：必须是 async 函数——项目走 astream_events（异步流式），
     wrap_model_call 装饰同步函数时只提供同步钩子，异步上下文会抛错
@@ -113,7 +117,78 @@ async def _configurable_model(request, handler):
     if context is not None:
         model_id = getattr(context, "model_id", None)
     model = get_chat_model(model_id=model_id)
+
+    from src.core.config import settings
+
+    if settings.llm_cache_enabled:
+        cached = await _main_path_cache_get(request, model)
+        if cached is not None:
+            return cached
+        result = await handler(request.override(model=model))
+        await _main_path_cache_set(request, model, result)
+        return result
     return await handler(request.override(model=model))
+
+
+async def _main_path_cache_get(request, model) -> object | None:
+    """主链路缓存查询：相同 (messages, model) 命中 → 返回缓存 ModelResponse。
+
+    底层函数，按规范豁免（通用缓存封装）。
+
+    Args:
+        request: ModelRequest（含 messages 完整输入）
+        model: ChatOpenAI 实例（model_name 做缓存键维度）
+
+    Returns:
+        命中 → ModelResponse(result=cached AIMessage)；未命中/缓存不可用 → None
+    """
+    from langchain.agents.middleware import ModelResponse
+    from langchain_core.messages import AIMessage
+    from src.llm.cache import get_cached
+
+    model_name = getattr(model, "model_name", "") or "default"
+    prompt = _serialize_messages(request.messages)
+    cached = get_cached(prompt, model_name, _get_cache_ttl())
+    if cached is None:
+        return None
+    return ModelResponse(result=AIMessage(content=cached))
+
+
+async def _main_path_cache_set(request, model, result) -> None:
+    """主链路缓存写入：调 handler 后缓存响应文本。
+
+    底层函数，按规范豁免（通用缓存封装）。
+
+    Args:
+        request: ModelRequest
+        model: ChatOpenAI 实例
+        result: ModelResponse（含 result AIMessage）
+    """
+    from src.llm.cache import set_cached
+
+    model_name = getattr(model, "model_name", "") or "default"
+    content = getattr(result, "result", None)
+    text = getattr(content, "content", None) or ""
+    if text:
+        set_cached(_serialize_messages(request.messages), model_name, str(text))
+
+
+def _serialize_messages(messages) -> str:
+    """messages → 缓存键字符串（消息 role+content 扁平化）。
+
+    底层函数，按规范豁免（通用序列化封装）。
+    """
+    parts = []
+    for m in messages or []:
+        parts.append(f"{getattr(m, 'type', 'msg')}:{getattr(m, 'content', '')}")
+    return "\n".join(parts)
+
+
+def _get_cache_ttl() -> int:
+    """缓存 TTL（settings.llm_cache_ttl，避免函数内重复 import）。"""
+    from src.core.config import settings
+
+    return settings.llm_cache_ttl
 
 
 # 会话级 Agent 缓存（v2.0 设计：CompositeBackend 会话隔离 + v3 有界 LRU）：
