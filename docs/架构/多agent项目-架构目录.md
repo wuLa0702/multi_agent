@@ -1,11 +1,12 @@
 # 多 Agent 项目 — 前后端架构目录 v2（拍板版）
 
 > 📋 **规范**：遵循 `docs/规则/文档规范.md`
-> 📌 **更新时间**：2026-08-11
+> 📌 **更新时间**：2026-08-12
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.11 | 2026-08-12 | §2 落地状态对照表新增 `agent/services/` 数据服务层（2026-08-12 结构重构：api→agent 能力子域→db 跨层收敛，api 禁直调 db/）|
 > | v2.10 | 2026-08-11 | §6.1 决策记录：新增决策 #10「项目定位目标」——研究型多 Agent 平台，双版本目标表述（技术 A / 业务 B，详见追问链 §1.1），后续开发朝该目标补齐 |
 > | v2.9 | 2026-08-06 | §2 目录结构同步结构优化 v2.3/v2.4：mcp/tools/ 迁入 agent/tools/（工具是 Agent 能力非协议层职责）、agent/hitl/ + agent/rubrics/ 子目录化（agent/ 根只留 main_agent.py）、mcp 收敛纯协议层（registry/client/server） |
 > | v2.8 | 2026-08-04 | §2 落地状态对照表补：agent/middlewares/token_usage.py ✅（TokenUsageMiddleware，图执行完自动统计用量存库）、src/skills/ ✏️（Skill Market 业务层，蓝图未列） |
@@ -207,6 +208,7 @@ multi-agent-project/
 > | api/main.py · chat.py | ✅ | 已落地（另 health.py 已落地，蓝图未列）|
 > | api/history.py · agent_loader.py · auth/ | ⏳ | 演进预留（会话 CRUD / Agent 单例 / 鉴权）|
 > | agent/main_agent.py | ✅ | deepagents 编排：搜索子代理 + 沙箱工具 |
+> | agent/services/（数据服务层） | ✅ | 2026-08-12 结构重构新增：session/model/settings/skill/cost 5 服务，api→agent 能力子域→db 跨层收敛（api 禁直调 db/）|
 > | agent/subagents/ | ✏️ | loader.py + search_agent.yaml（蓝图 template.yaml 空白模板，实际已落业务子代理）|
 > | agent/planner · summarizer · approve | ⏳ | 演进预留 |
 > | agent/graph · memory · middlewares · skills | ✏️ | 大部分空占位；middlewares/token_usage.py ✅ 已落地（TokenUsageMiddleware 上下文用量，2026-08-04） |
