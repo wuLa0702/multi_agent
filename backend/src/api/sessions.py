@@ -7,7 +7,7 @@
 - 错误统一 ErrorResponse（契约 §3.3），404 用 SESSION_NOT_FOUND（契约 §7）
 - DELETE 联动（v3.0）：缓存失效 + 工作区清理（api → agent 单向，不反向）
 
-依赖单向：api → {agent, core/db, db/session_repo}，不反向。
+依赖单向：api → agent/services（中转）→ db，不反向。
 """
 
 from __future__ import annotations
@@ -17,11 +17,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.agent import main_agent
-from src.core import db as core_db
-from src.core.backend import cleanup_workspace
-from src.db import session_repo as repo
-from src.sandbox.pool import sandbox_pool
+from src.agent.services import session_service
 from src.schemas.message import Message
 from src.schemas.session import Session
 
@@ -92,11 +88,7 @@ async def create_session() -> Session:
     Returns:
         Session 实体（UUID + 创建/更新时间）
     """
-    conn = await core_db.get_connection()
-    try:
-        return await repo.create_session(conn, str(uuid.uuid4()))
-    finally:
-        await conn.close()
+    return await session_service.create_session(str(uuid.uuid4()))
 
 
 @router.get("", summary="会话列表（契约 §4.3）")
@@ -113,13 +105,8 @@ async def list_sessions(
     Returns:
         SessionListResponse（status + items + total）
     """
-    conn = await core_db.get_connection()
-    try:
-        items = await repo.list_sessions(conn, limit=limit, offset=offset)
-        total = len(await repo.list_sessions(conn, limit=10_000))
-        return SessionListResponse(items=items, total=total)
-    finally:
-        await conn.close()
+    items, total = await session_service.list_sessions(limit=limit, offset=offset)
+    return SessionListResponse(items=items, total=total)
 
 
 @router.patch("/{session_id}", summary="修改会话标题/置顶（契约 §4.4 + P0）")
@@ -157,19 +144,10 @@ async def update_session_title(
                 code="BAD_REQUEST",
             ).model_dump(),
         )
-    conn = await core_db.get_connection()
-    try:
-        if req.title is not None:
-            if not await repo.update_session_title(conn, session_id, req.title):
-                _raise_404(session_id)
-        if req.is_pinned is not None:
-            if not await repo.update_session_pinned(conn, session_id, req.is_pinned):
-                _raise_404(session_id)
-        updated = await repo.get_session(conn, session_id)
-        assert updated is not None  # 刚更新成功必然存在
-        return updated
-    finally:
-        await conn.close()
+    updated = await session_service.update_session(session_id, req.title, req.is_pinned)
+    if updated is None:
+        _raise_404(session_id)
+    return updated
 
 
 @router.delete("/{session_id}", summary="删除会话（契约 §4.5）")
@@ -190,16 +168,9 @@ async def delete_session(session_id: str) -> DeleteResponse:
     Raises:
         HTTPException: 404 会话不存在
     """
-    conn = await core_db.get_connection()
-    try:
-        if not await repo.delete_session(conn, session_id):
-            _raise_404(session_id)
-        main_agent.rebuild_agent(session_id)
-        cleanup_workspace(session_id, older_than_days=0)
-        sandbox_pool.destroy(session_id)  # 会话删除 → 沙箱销毁（幂等，不存在静默通过）
-        return DeleteResponse()
-    finally:
-        await conn.close()
+    if not await session_service.delete_session(session_id):
+        _raise_404(session_id)
+    return DeleteResponse()
 
 
 @router.get("/{session_id}/messages", summary="历史消息分页（契约 §4.6）")
@@ -221,16 +192,12 @@ async def list_messages(
     Raises:
         HTTPException: 404 会话不存在
     """
-    conn = await core_db.get_connection()
-    try:
-        if await repo.get_session(conn, session_id) is None:
-            _raise_404(session_id)
-        # 多取 1 条判断是否还有更早页（契约 §3.4 cursor 语义）；
-        # repo 返回升序（最新在后），尾部 limit 条 = 最新一页，next_before_id = 本页最旧一条 id
-        rows = await repo.list_messages(conn, session_id, limit=limit + 1, before_id=before_id)
-        has_more = len(rows) > limit
-        page = rows[-limit:] if has_more else rows
-        next_before_id = page[0].id if has_more else None
-        return MessagePage(items=page, next_before_id=next_before_id, has_more=has_more)
-    finally:
-        await conn.close()
+    if await session_service.get_session(session_id) is None:
+        _raise_404(session_id)
+    # 多取 1 条判断是否还有更早页（契约 §3.4 cursor 语义）；
+    # service 返回升序（最新在后），尾部 limit 条 = 最新一页，next_before_id = 本页最旧一条 id
+    rows = await session_service.list_messages(session_id, limit=limit + 1, before_id=before_id)
+    has_more = len(rows) > limit
+    page = rows[-limit:] if has_more else rows
+    next_before_id = page[0].id if has_more else None
+    return MessagePage(items=page, next_before_id=next_before_id, has_more=has_more)

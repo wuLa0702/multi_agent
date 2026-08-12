@@ -19,6 +19,8 @@ class ModelInfo(BaseModel):
     name: str = Field(description="模型名（API 透传标识，如 deepseek-v4-flash）")
     is_default: bool = Field(description="该 provider 的默认模型")
     is_active: bool
+    input_price: float = Field(default=0.0, ge=0, description="输入单价（元/千 token，2026-08-12 F1）")
+    output_price: float = Field(default=0.0, ge=0, description="输出单价（元/千 token）")
 
 
 class ProviderInfo(BaseModel):

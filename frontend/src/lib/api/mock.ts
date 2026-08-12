@@ -8,6 +8,38 @@
 
 import type { ChatStreamRequest, SSEEvent } from "./types";
 
+// ── REST mock 数据（F1/F2/F4/F5，2026-08-12）──────────────────────────────
+
+/** mock 模型列表（含单价，F1 数据源） */
+export function mockProviders() {
+  return {
+    providers: [
+      { id: 1, slug: "deepseek", name: "DeepSeek", is_active: true, models: [{ provider_id: 1, name: "deepseek-v4-flash", is_default: true, is_active: true, input_price: 0.001, output_price: 0.002 }] },
+      { id: 2, slug: "ark", name: "豆包", is_active: true, models: [{ provider_id: 2, name: "doubao-seed", is_default: true, is_active: true, input_price: 0.006, output_price: 0.03 }] },
+    ],
+  };
+}
+
+/** mock 成本汇总（F2） */
+export function mockCostSummary(sessionId: string) {
+  return { session_id: sessionId, total_cost: 1.2345, input_tokens: 12000, output_tokens: 3000, alert_count: 1 };
+}
+
+/** mock 成本告警列表（F2） */
+export function mockCostAlerts() {
+  return { status: "ok", items: [{ threshold: 1, total_cost: 1.23, created_at: "2026-08-12T12:00:00" }], total: 1 };
+}
+
+/** mock MCP 连接列表（F4） */
+export function mockMcpServers() {
+  return { status: "ok", items: [{ id: 1, name: "demo-server", transport: "stdio", url: "http://demo", is_active: true, source: "smithery", version: "1.0" }], total: 1 };
+}
+
+/** mock 系统配置（F5） */
+export function mockSettings() {
+  return { status: "ok", settings: { hitl_enabled: "true", log_report: "false" } };
+}
+
 /** 开发/测试开关：true = 走 mock 流；联调真后端时改 false */
 export const MOCK_ENABLED = true;
 
@@ -74,6 +106,7 @@ export async function streamChatMock(
       await sleep(300);
       cb.onEvent({ type: "token", text: t } as SSEEvent);
     }
+    cb.onEvent({ type: "cost_alert", session_id: req.session_id ?? "mock", total_cost: 12.5, threshold: 10 } as SSEEvent);
     cb.onEvent({ type: "done", run_id: req.resume_run_id, session_id: req.session_id ?? "mock", duration_ms: 1200, context_used: 8600, context_total: 128_000 } as SSEEvent);
     cb.onEnd();
     return;
@@ -101,7 +134,7 @@ export async function streamChatMock(
       title,
       status: i < doneCount ? "completed" : i === activeIdx ? "in_progress" : "pending",
     })),
-  } as SSEEvent);
+  } as unknown as SSEEvent);
   cb.onEvent(mkTodos(0, 0));
   for (let d = 1; d <= 3; d++) {
     if (signal.aborted) return;
@@ -116,6 +149,7 @@ export async function streamChatMock(
   } else {
     // HITL 关闭：直接完成（带上下文用量，v4.0 §3.2）
     cb.onEvent({ type: "token", text: "（HITL 已关闭，高风险操作自动执行）" } as SSEEvent);
+    cb.onEvent({ type: "cost_alert", session_id: req.session_id ?? "mock", total_cost: 12.5, threshold: 10 } as SSEEvent);
     cb.onEvent({ type: "done", run_id: "mock-run-new", session_id: req.session_id ?? "mock", duration_ms: 900, context_used: 5200, context_total: 128_000 } as SSEEvent);
     cb.onEnd();
   }

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.core import db as core_db
+from src.agent.services import cost_service
 
 router = APIRouter(prefix="/v1/cost", tags=["cost"])
 
@@ -20,13 +20,7 @@ async def get_cost_summary(session_id: str = Query(..., description="会话 ID")
     Returns:
         {"session_id", "total_cost", "input_tokens", "output_tokens", "alert_count"}
     """
-    from src.db import cost_repository
-
-    conn = await core_db.get_connection()
-    try:
-        s = await cost_repository.summary(conn, session_id)
-    finally:
-        await conn.close()
+    s = await cost_service.summary(session_id)
 
     if s["input_tokens"] == 0 and s["output_tokens"] == 0 and s["total_cost"] == 0:
         raise HTTPException(
@@ -45,11 +39,5 @@ async def get_cost_summary(session_id: str = Query(..., description="会话 ID")
 @router.get("/alerts")
 async def get_cost_alerts(session_id: str = Query(..., description="会话 ID")):
     """会话成本告警列表（cost_alerts 表，倒序）。"""
-    from src.db import cost_repository
-
-    conn = await core_db.get_connection()
-    try:
-        items = await cost_repository.list_alerts(conn, session_id)
-    finally:
-        await conn.close()
+    items = await cost_service.list_alerts(session_id)
     return {"status": "ok", "items": items, "total": len(items)}

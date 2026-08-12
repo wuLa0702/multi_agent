@@ -6,9 +6,18 @@
  * - 业务调用方 catch ApiError 按 code 分支处理（见错误码表契约 §7）
  */
 
-import { MOCK_ENABLED } from "./mock";
+import {
+  MOCK_ENABLED,
+  mockCostAlerts,
+  mockCostSummary,
+  mockMcpServers,
+  mockProviders,
+  mockSettings,
+} from "./mock";
 import type {
   ApproveRequest,
+  CostAlertListResponse,
+  CostSummaryResponse,
   DeleteResponse,
   ErrorResponse,
   FrontendLogEntry,
@@ -65,6 +74,7 @@ export const api = {
 
   /** GET /v1/providers — 厂商 + 模型列表（模型下拉数据源） */
   listProviders(): Promise<ProvidersResponse> {
+    if (MOCK_ENABLED) return Promise.resolve(mockProviders() as ProvidersResponse);
     return request<ProvidersResponse>("/v1/providers");
   },
 
@@ -165,6 +175,7 @@ export const api = {
 
   /** GET /v1/mcp-servers — MCP 连接列表（设置页，2026-08-04 P1） */
   listMcpServers(): Promise<McpServerListResponse> {
+    if (MOCK_ENABLED) return Promise.resolve(mockMcpServers() as McpServerListResponse);
     return request<McpServerListResponse>("/v1/mcp-servers");
   },
 
@@ -183,6 +194,7 @@ export const api = {
 
   /** GET /v1/settings — 系统配置 */
   getSettings(): Promise<SettingsResponse> {
+    if (MOCK_ENABLED) return Promise.resolve(mockSettings() as SettingsResponse);
     return request<SettingsResponse>("/v1/settings");
   },
 
@@ -212,5 +224,26 @@ export const api = {
   /** GET /v1/context-usage — 上下文用量查表（中间件存库方案，2026-08-04 评审改版） */
   getContextUsage(sessionId: string): Promise<{ session_id: string; used: number; total: number; percent: number }> {
     return request(`/v1/context-usage?session_id=${encodeURIComponent(sessionId)}`);
+  },
+
+  /** PATCH /v1/providers/models/{id}/price — 模型单价（2026-08-12 F1，成本核算入口） */
+  updateModelPrice(id: number, inputPrice: number, outputPrice: number): Promise<{ status: string; model_id: number }> {
+    if (MOCK_ENABLED) return Promise.resolve({ status: "ok", model_id: id });
+    return request<{ status: string; model_id: number }>(`/v1/providers/models/${id}/price`, {
+      method: "PATCH",
+      body: JSON.stringify({ input_price: inputPrice, output_price: outputPrice }),
+    });
+  },
+
+  /** GET /v1/cost/summary — 会话成本汇总（2026-08-12 F2） */
+  getCostSummary(sessionId: string): Promise<CostSummaryResponse> {
+    if (MOCK_ENABLED) return Promise.resolve(mockCostSummary(sessionId) as CostSummaryResponse);
+    return request<CostSummaryResponse>(`/v1/cost/summary?session_id=${encodeURIComponent(sessionId)}`);
+  },
+
+  /** GET /v1/cost/alerts — 会话成本告警列表（2026-08-12 F2） */
+  getCostAlerts(sessionId: string): Promise<CostAlertListResponse> {
+    if (MOCK_ENABLED) return Promise.resolve(mockCostAlerts() as CostAlertListResponse);
+    return request<CostAlertListResponse>(`/v1/cost/alerts?session_id=${encodeURIComponent(sessionId)}`);
   },
 };

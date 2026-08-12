@@ -260,6 +260,13 @@ describe("结束与错误", () => {
     await fireEvent({ type: "summarize", summary: "历史摘要", removed_count: 5, keep_from_message_id: 10 });
     expect(useChatStore.getState().notices.some((n) => n.text.includes("移除 5 条"))).toBe(true);
   });
+
+  it("cost_alert → 成本告警通知（F3，2026-08-12）", async () => {
+    await fireEvent({ type: "cost_alert", session_id: "s1", total_cost: 12.5, threshold: 10 });
+    expect(
+      useChatStore.getState().notices.some((n) => n.kind === "warning" && n.text.includes("已超 ¥10")),
+    ).toBe(true);
+  });
 });
 
 describe("loadHistory", () => {

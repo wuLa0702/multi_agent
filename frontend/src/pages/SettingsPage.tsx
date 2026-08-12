@@ -22,6 +22,7 @@ import {
   Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ModelPriceList } from "@/components/settings/ModelPriceList";
 import { api } from "@/lib/api/client";
 import { useChatStore } from "@/lib/stores/chatStore";
 import { setHitlEnabledMock } from "@/lib/api/mock";
@@ -152,7 +153,12 @@ export default function SettingsPage() {
             <p className="text-xs text-muted-foreground">{current.desc}</p>
           </header>
 
-          {menu === "account" && <AccountSection providers={providers} />}
+          {menu === "account" && (
+            <div className="space-y-6">
+              <AccountSection providers={providers} />
+              <ModelPriceList />
+            </div>
+          )}
           {menu === "appearance" && (
             <div className="space-y-2">
               {(

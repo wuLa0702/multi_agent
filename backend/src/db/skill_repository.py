@@ -118,6 +118,25 @@ async def delete_installed(conn: aiosqlite.Connection, skill_id: int) -> bool:
     return cursor.rowcount > 0
 
 
+async def list_mcp_skill_ids(conn: aiosqlite.Connection, server_id: int) -> list[int]:
+    """查某 MCP server（install_path=server_id）关联的 installed_skills id 列表。
+
+    Args:
+        conn: SQLite 连接
+        server_id: mcp_servers.id
+
+    Returns:
+        关联 skill id 列表（删除连接时先清关联记录）
+    """
+    cursor = await conn.execute(
+        "SELECT id FROM installed_skills "
+        "WHERE skill_type='mcp_server' AND install_path = ?",
+        (str(server_id),),
+    )
+    rows = await cursor.fetchall()
+    return [row["id"] for row in rows]
+
+
 # ── mcp_servers 来源追踪 ──
 
 async def get_mcp_server_by_source_url(

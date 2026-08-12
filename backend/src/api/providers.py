@@ -10,9 +10,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel, Field
 
+from src.agent.services import model_service
 from src.core import db as core_db
 from src.core.model_registry import get_registry
-from src.db import model_repository
 from src.schemas.model_config import ProvidersResponse
 
 router = APIRouter(prefix="/v1", tags=["providers"])
@@ -50,13 +50,9 @@ async def update_model_price(
     Raises:
         HTTPException(404): 模型不存在
     """
-    conn = await core_db.get_connection()
-    try:
-        ok = await model_repository.update_model_price(
-            conn, model_id, req.input_price, req.output_price
-        )
-    finally:
-        await conn.close()
+    ok = await model_service.update_model_price(
+        model_id, req.input_price, req.output_price
+    )
     if not ok:
         raise HTTPException(
             status_code=404,

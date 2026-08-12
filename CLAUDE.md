@@ -1,7 +1,7 @@
 # multi-agent 项目说明书
 
 > 多 Agent 学习项目：deepagents 主线 + LangGraph 演进预留；OpenSandbox 云端沙箱；FastAPI 流式后端。
-> 设计决策与拍板记录：见 `docs/架构/2026-08-02-多agent项目-架构目录-v1.md`（v2.3，权威蓝图）。
+> 设计决策与拍板记录：见 `docs/架构/多agent项目-架构目录.md`（v2.3，权威蓝图）。
 
 ## 项目定位
 - **学习目标**：手写核心逻辑 + 多 Agent 工程化落地（面试导向）
@@ -16,7 +16,7 @@
 Python 3.11+ · FastAPI (ASGI/SSE) · LangGraph + langchain-deepagents · FastMCP · OpenSandbox SDK · Redis + SQLite · LangSmith
 
 ## 目录结构（后端）
-> 完整项目结构（前后端唯一真相源）见 `docs/架构/2026-08-02-多agent项目-架构目录-v1.md` §2 目录树。
+> 完整项目结构（前后端唯一真相源）见 `docs/架构/多agent项目-架构目录.md` §2 目录树。
 > 本文件不再内嵌结构树——结构变更只改架构文档一处。
 依赖单向：`api → agent → {mcp, sandbox, memory, db}`，禁止反向。
 
@@ -50,14 +50,14 @@ pytest backend/tests
 ## 开发纪律
 - 核心逻辑（Agent 编排/Graph/State）手写，样板代码 AI 提速（见 `.claude/rules/02-hands-on-training.md`）
 - Bug 先定位根因再修；先红后绿；提交前先给计划等确认
-- 踩坑记入 `docs/learnings/`；修改架构决策先更新架构文档版本表
+- 踩坑记入 `docs/踩坑/`；修改架构决策先更新架构文档版本表
 
 ## 文档规范（docs/ 下所有文档强制）
-- **中文文件名**（如 `docs/方案/2026-08-02-方案-后端基础架构-v1.md`），附件图片/OCR 除外
+- **中文文件名**（如 `docs/归档/2026-08-02-方案-后端基础架构-v1.md`），附件图片/OCR 除外
 - 每个文档顶部必须含规范头：📋 规范引用 + 📌 更新时间 + 📝 版本变更记录（永久保存、写细节）+ 目录
-- 格式规则唯一载体：`docs/2026-08-02-文档规范.md`（改规则只改它，不在各文档里重复抄规则）
+- 格式规则唯一载体：`docs/规则/文档规范.md`（改规则只改它，不在各文档里重复抄规则）
 - 每次更新维护固定动作：更新时间 → 版本变更记录追加（具体到二级标题）→ 文件名版本号（大改升级）
-- 详见 `docs/2026-08-02-文档规范.md`
+- 详见 `docs/规则/文档规范.md`
 
 
 <!-- CAT-CAFE-GOVERNANCE-START -->
@@ -88,5 +88,5 @@ pytest backend/tests
 - Three-layer info architecture: CLAUDE.md (≤100 lines) → Skills (on-demand) → refs/
 - Backlog: BACKLOG.md (hot) → Feature files (warm) → raw docs (cold)
 - Feature lifecycle: kickoff → discussion → implementation → review → completion
-- SOP: See docs/2026-08-03-SOP.md for the 6-step workflow
+- SOP: See docs/规则/SOP.md for the 6-step workflow
 <!-- CAT-CAFE-GOVERNANCE-END -->

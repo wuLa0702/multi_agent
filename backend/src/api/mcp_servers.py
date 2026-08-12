@@ -10,8 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from src.agent.services import skill_service
 from src.core import db as core_db
-from src.db import skill_repository as skill_repo
 from src.mcp.client import get_mcp_client_manager
 
 router = APIRouter(prefix="/v1/mcp-servers", tags=["mcp-servers"])
@@ -90,11 +90,7 @@ async def list_mcp_servers() -> McpServerListResponse:
 @router.patch("/{server_id}")
 async def update_mcp_server(server_id: int, req: McpServerUpdateRequest):
     """启停连接：更新 is_active + 触发 MCP 工具热刷新。"""
-    conn = await core_db.get_connection()
-    try:
-        hit = await skill_repo.update_mcp_server_active(conn, server_id, req.is_active)
-    finally:
-        await conn.close()
+    hit = await skill_service.update_mcp_server_active(server_id, req.is_active)
     if not hit:
         raise _error(404, "MCP_SERVER_NOT_FOUND", f"MCP 连接不存在：{server_id}")
 
@@ -113,19 +109,7 @@ async def update_mcp_server(server_id: int, req: McpServerUpdateRequest):
 @router.delete("/{server_id}")
 async def delete_mcp_server(server_id: int):
     """删除连接（含 installed_skills 关联清理）。"""
-    conn = await core_db.get_connection()
-    try:
-        # 先清关联的 installed_skills 记录（install_path 指向 mcp_servers.id）
-        cursor = await conn.execute(
-            "SELECT id FROM installed_skills WHERE skill_type='mcp_server' AND install_path = ?",
-            (str(server_id),),
-        )
-        skill_ids = [r["id"] for r in await cursor.fetchall()]
-        for sid in skill_ids:
-            await skill_repo.delete_installed(conn, sid)
-        hit = await skill_repo.delete_mcp_server_by_id(conn, server_id)
-    finally:
-        await conn.close()
+    hit = await skill_service.delete_mcp_server(server_id)
     if not hit:
         raise _error(404, "MCP_SERVER_NOT_FOUND", f"MCP 连接不存在：{server_id}")
     return {"status": "ok", "id": server_id}

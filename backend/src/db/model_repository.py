@@ -124,13 +124,15 @@ async def update_model_price(
 
 
 def _row_to_model(row: aiosqlite.Row) -> ModelInfo:
-    """providers/models 联查行 → ModelInfo。"""
+    """providers/models 联查行 → ModelInfo（含单价，2026-08-12 F1）。"""
     return ModelInfo(
         id=row["model_id"],
         provider_id=row["provider_id"],
         name=row["model_name"],
         is_default=bool(row["is_default"]),
         is_active=bool(row["is_active"]),
+        input_price=row["input_price"] or 0.0,
+        output_price=row["output_price"] or 0.0,
     )
 
 

@@ -56,6 +56,8 @@ export interface ModelInfo {
   name: string; // 模型名（API 透传标识，如 deepseek-v4-flash）
   is_default: boolean; // 该厂商的默认模型
   is_active: boolean;
+  input_price?: number; // 输入单价（元/千 token，2026-08-12 F1 模型单价）
+  output_price?: number; // 输出单价（元/千 token）
 }
 
 export interface ProviderInfo {
@@ -214,7 +216,47 @@ export type SSEEvent =
   | ApproveEvent
   | SummarizeEvent
   | DoneEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | CostAlertEvent;
+
+/** 成本告警事件（SSE，分级告警 5/10/20；2026-08-12 F3） */
+export interface CostAlertEvent {
+  type: "cost_alert";
+  session_id: string;
+  total_cost: number;
+  threshold: number;
+}
+
+// ── 成本查询（GET /v1/cost/*，2026-08-12 F2）────────────────────────────────
+
+export interface CostSummaryResponse {
+  session_id: string;
+  total_cost: number;
+  input_tokens: number;
+  output_tokens: number;
+  alert_count: number;
+}
+
+export interface CostAlertItem {
+  threshold: number;
+  total_cost: number;
+  created_at: string;
+}
+
+export interface CostAlertListResponse {
+  status: string;
+  items: CostAlertItem[];
+  total: number;
+}
+
+// ── 文件引用（安全机制 FileRef，2026-08-12 F6）─────────────────────────────
+
+export interface FileRef {
+  name: string;
+  path: string;
+  content_type?: string;
+  size?: number;
+}
 
 export interface StartEvent {
   type: "start";
