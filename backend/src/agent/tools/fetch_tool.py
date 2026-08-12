@@ -14,6 +14,8 @@ from html import unescape
 
 import httpx
 
+from src.agent.middlewares.tool_audit import security_audit
+
 # ── 抓取限制（决策 §3.1：安全 + 防膨胀）──
 _FETCH_TIMEOUT_SECONDS = 10.0  # 兜底常量（settings.tool_timeout_seconds 优先，P1-d）
 _MAX_BODY_CHARS = 8000  # 输出截断上限（防上下文膨胀）
@@ -28,16 +30,19 @@ _WS_RE = re.compile(r"\s+")
 _SAFE_URL_RE = re.compile(r"^https?://[^\s\"'<>;]+$")
 
 
-def _validate_url(url: str) -> bool:
-    """URL 严格校验（D3）：http/https + 无注入字符。
+@security_audit(tool="fetch_url")
+def _validate_url(url: str) -> str | None:
+    """URL 严格校验（D3）：http/https + 无注入字符（security_audit 统一审计）。
 
     Args:
         url: 目标 URL
 
     Returns:
-        True=合法
+        None=合法；str=拦截原因（security_audit 自动记审计）
     """
-    return bool(_SAFE_URL_RE.match(url))
+    if not _SAFE_URL_RE.match(url):
+        return "URL 注入/协议非法"
+    return None
 
 
 def clean_html(html: str, max_chars: int = _MAX_BODY_CHARS) -> str:
@@ -71,9 +76,7 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
     Raises:
         ValueError: 非法 URL（非 http/https）
     """
-    if not _validate_url(url):
-        from src.agent.middlewares.tool_audit import log_security_blocked
-        log_security_blocked("fetch_url", "URL 注入/协议非法")
+    if _validate_url(url) is not None:
         return f"链接格式非法（仅支持纯 http/https URL）：{url}"
     try:
         resp = httpx.get(
