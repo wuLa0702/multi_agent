@@ -80,3 +80,10 @@ class TestAuditBlocked:
         mw._audit_blocked("fetch_url", "注入 URL")
         rec = audit_records[-1]
         assert rec.getMessage()  # 审计 logger 记录 JSON 行
+
+    def test_fetch_url_injection_triggers_audit(self, audit_records) -> None:
+        """S-c 接线：工具校验失败 → log_security_blocked 审计（D5 计数）。"""
+        fetch_url("javascript:alert(1)")
+        rec = audit_records[-1]
+        assert "blocked" in rec.getMessage()
+        assert "fetch_url" in rec.getMessage()

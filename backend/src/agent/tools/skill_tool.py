@@ -49,6 +49,8 @@ def run_skill_script(
     # 路径校验（00-security）：禁 ../ 与绝对路径
     parts = script_name.replace("\\", "/").split("/")
     if script_name.startswith("/") or any(p == ".." for p in parts):
+        from src.agent.middlewares.tool_audit import log_security_blocked
+        log_security_blocked("run_skill_script", f"路径穿越：{script_name}")
         return "技能脚本路径不合法：仅允许 scripts/ 内相对文件名。"
     script_file = get_skill_md_dir() / skill_name / _SCRIPTS_SUBDIR / script_name
     if not script_file.is_file():

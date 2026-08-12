@@ -70,6 +70,8 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
         ValueError: 非法 URL（非 http/https）
     """
     if not _validate_url(url):
+        from src.agent.middlewares.tool_audit import log_security_blocked
+        log_security_blocked("fetch_url", "URL 注入/协议非法")
         return f"链接格式非法（仅支持纯 http/https URL）：{url}"
     try:
         resp = httpx.get(
