@@ -1,6 +1,6 @@
 # Event Streaming 与 Interpreter 引入方案 v1（学习 Demo · 评审稿）
 
-> 📋 **规范**：遵循 `docs/2026-08-02-文档规范.md`
+> 📋 **规范**：遵循 `docs/规则/文档规范.md`
 > 📌 **更新时间**：2026-08-05
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
@@ -22,8 +22,8 @@
 > **关联文档**：
 > - 官方 event-streaming：https://docs.langchain.com/oss/python/deepagents/event-streaming（v3 typed-projection，beta）
 > - 官方 interpreters：https://docs.langchain.com/oss/python/deepagents/interpreters（QuickJS，beta）
-> - SSE 契约 v3：`docs/方案/后端接口对接文档`（事件类型定稿：token/tool_call/approve/summarize/subagent/done/error）
-> - 沙箱能力计划：`docs/decisions/2026-08-05-计划-沙箱能力开发-v1.md`（执行层，本方案安全边界复用）
+> - SSE 契约 v3：`docs/架构/参考-后端接口.md`（事件类型定稿：token/tool_call/approve/summarize/subagent/done/error）
+> - 沙箱能力计划：`docs/决策/2026-08-05-计划-沙箱能力开发-v1.md`（执行层，本方案安全边界复用）
 
 ---
 
@@ -253,7 +253,7 @@ interpreter_ptc: str = "internet_search"  # PTC 白名单（逗号分隔，默�
 | **P0** | v3 迁移 | stream_agent_tokens → 事件分发器 + 开关 + token 回归 | 无（langchain_core 已支持） |
 | **P1** | SSE 补齐 | ToolCallEvent/SubagentEvent + _event_stream 分发 + 前端卡片 | P0 |
 | **P2** | Interpreters | 依赖安装 + middleware 挂载 + PTC 只读白名单 + task() demo | P0（子代理流展示顺路） |
-| **P2** | 学习配套 | examples/ 3 脚本 + 学习笔记（docs/learnings/） | P0-P2 |
+| **P2** | 学习配套 | examples/ 3 脚本 + 学习笔记（docs/踩坑/） | P0-P2 |
 
 ### 6.2 风险自检清单
 
@@ -282,12 +282,12 @@ interpreter_ptc: str = "internet_search"  # PTC 白名单（逗号分隔，默�
       开关门控 + 独立 requirements 段（quickjs 可选 extra）
 - [ ] **先红后绿**：每 P 级先用例后实现；提交前 pytest 全绿；改代码开分支
       （家规：feature/xxx 从 develop 拉）
-- [ ] **文档纪律**：本方案审批后实施；学习笔记落 docs/learnings/
+- [ ] **文档纪律**：本方案审批后实施；学习笔记落 docs/踩坑/
 
 ### 6.3 后续
 
 1. approve 事件 + interrupt 权限激活（SSE 契约最后一块空白，依赖前端审批面板）
-2. interpreter mode 三态（thread/turn/call）对比实验 → docs/learnings/
+2. interpreter mode 三态（thread/turn/call）对比实验 → docs/踩坑/
 3. 动态子代理从 `task()` demo 走向真实批量场景（N 文件审查）——届时评估
    子代理并发上限（同沙箱 pool_max 思路）
 

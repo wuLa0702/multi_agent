@@ -1,6 +1,6 @@
 # deepagents Profiles 详细设计 v2（官方文档梳理 + 适用性评估 · 决策记录：经讨论无需开发）
 
-> 📋 **规范**：遵循 `docs/2026-08-02-文档规范.md`
+> 📋 **规范**：遵循 `docs/规则/文档规范.md`
 > 📌 **更新时间**：2026-08-06
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
@@ -23,10 +23,10 @@
 
 > **关联文档**：
 > - 官方文档：`https://docs.langchain.com/oss/python/deepagents/profiles`（2026-08-04 快照）
-> - 模型选择机制：`docs/decisions/2026-08-06-计划-上下文工程开发-v2.md`（#9 窗口场景与模型选择解耦）
+> - 模型选择机制：`docs/决策/2026-08-06-计划-上下文工程开发-v2.md`（#9 窗口场景与模型选择解耦）
 > - 接线点源码：`backend/src/agent/main_agent.py`（_build_agent / _configurable_model）、`backend/src/llm/adapter.py`（_build_chat_model）、`backend/src/core/model_registry.py`
-> - 架构蓝图：`docs/架构/2026-08-02-多agent项目-架构目录-v1.md`
-> - 文档规范：`docs/2026-08-02-文档规范.md`（v4：设计方案必含核心代码）
+> - 架构蓝图：`docs/架构/多agent项目-架构目录.md`
+> - 文档规范：`docs/规则/文档规范.md`（v4：设计方案必含核心代码）
 
 ---
 
