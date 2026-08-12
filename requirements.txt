@@ -1,5 +1,7 @@
 # 与 pyproject.toml dependencies 保持一致（部署/CI 便捷入口）
 # 安装：pip install -r requirements.txt
+# 2026-08-12 更新：按 backend/.venv312 实际安装版本对齐（此前版本下限过旧，
+# 实际 deepagents 0.7.4 / langgraph 1.2.10 / langchain 1.3——0.5/0.2 下限会装错版本）
 
 # Web 层
 fastapi>=0.115
@@ -7,31 +9,37 @@ uvicorn[standard]>=0.30
 sse-starlette>=2.0
 
 # Agent 层
-langgraph>=0.2
-# Checkpointer 断点持久化（P0，2026-08-04 版本锁定——计划文档 C.4-1）
+langgraph>=1.0          # 实际 1.2.10；>=0.2 过旧（0.5 起 API 大改）
+# Checkpointer 断点持久化（P0，版本锁定——计划文档 C.4-1）
 langgraph-checkpoint==4.1.1
 langgraph-checkpoint-sqlite==3.1.0
-langchain>=0.3
-langchain-openai>=0.2
-deepagents>=0.5   # 主 harness；更正：PyPI 包名是 deepagents（langchain-deepagents 不存在）
+langchain>=1.0          # 实际 1.3.14；0.3 过旧（langchain-core 1.x 契约）
+langchain-core>=1.0     # 实际 1.5.3（chat messages/middleware 走 1.x）
+langchain-openai>=1.0   # 实际 1.4.1（OpenAI 兼容协议）
+deepagents>=0.7         # 实际 0.7.4；主 harness（HITL/Rubric/子代理）
+                        # 更正：PyPI 包名是 deepagents（langchain-deepagents 不存在）
 
 # MCP 网关层
-fastmcp>=2.0
+fastmcp>=2.0            # 实际 3.4.5
 langchain-mcp-adapters>=0.3.1   # MCP client：MultiServerMCPClient 连接外部 server
 
 # 沙箱层（云端 OpenSandbox）
 opensandbox>=0.1
 
 # 记忆/存储
-redis>=5.0
-aiosqlite>=0.20
+redis>=5.0              # 实际 8.1.0（redis.asyncio，成本缓存 redis 后端）
+aiosqlite>=0.20         # 实际 0.22.1
 
 # 基建
-pydantic>=2.8
-pydantic-settings>=2.4
-httpx>=0.27
-pyyaml>=6.0
+pydantic>=2.8           # 实际 2.13.4
+pydantic-settings>=2.4  # 实际 2.14.2
+httpx>=0.27             # 实际 0.28.1（搜索/抓取工具 + 容错重试）
+pyyaml>=6.0             # 子代理 YAML 声明式
+
+# 测试（backend/.venv312 实测；pip install -r requirements.txt -r requirements-dev.txt 或装测试）
+# pytest>=9.0 / pytest-asyncio>=1.0 / pytest-mock>=3.0（单测 376 全绿）
 
 # 已移除（2026-08-05 最小集审计）：
 # - langsmith：src 无直接 import（tracing 配置由 langchain 传递依赖提供）
 # - python-dotenv：src 无直接 import（pydantic-settings 传递依赖处理 .env）
+# - fakeredis：测试用 AsyncFakeRedis 手写替身（test_hitl/test_cost），未装
