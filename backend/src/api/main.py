@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.api.chat import router as chat_router
+from src.api.cost import router as cost_router
 from src.api.context_usage import router as context_usage_router
 from src.api.health import router as health_router
 from src.api.mcp_servers import router as mcp_servers_router
@@ -160,6 +161,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(chat_router)
+app.include_router(cost_router)
 app.include_router(providers_router)
 app.include_router(sessions_router)
 app.include_router(skills_router)

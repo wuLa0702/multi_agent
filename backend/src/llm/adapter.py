@@ -99,7 +99,11 @@ class LLMAdapter:
         self._model: BaseChatModel = model if model is not None else get_chat_model()
 
     async def chat(self, prompt: str) -> str:
-        """最简对话：单次 prompt → 文本回复。
+        """最简对话：单次 prompt → 文本回复（成本控制：轻量结果缓存可选）。
+
+        缓存（设计 §4.3/§5.3）：settings.llm_cache_enabled=True 时相同
+        (prompt, model) 命中直接返回，省一次 LLM 调用；缓存异常 → 直接调
+        LLM（降级不阻断，容错纪律）。
 
         Args:
             prompt: 用户输入（纯文本，无历史）
@@ -110,5 +114,16 @@ class LLMAdapter:
         Raises:
             Exception: LLM 调用失败（超时/限流，由上层决定重试或降级）
         """
+        from src.core.config import settings
+        from src.llm.cache import get_cached, set_cached
+
+        model_name = getattr(self._model, "model_name", "") or "default"
+        if settings.llm_cache_enabled:
+            cached = get_cached(prompt, model_name, settings.llm_cache_ttl)
+            if cached is not None:
+                return cached
         response = await self._model.ainvoke(prompt)
-        return str(response.content)
+        text = str(response.content)
+        if settings.llm_cache_enabled:
+            set_cached(prompt, model_name, text)
+        return text
