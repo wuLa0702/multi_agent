@@ -59,3 +59,40 @@ class TestCacheNotEnabled:
         # 纯函数层面：直接验证 set_cached 后 get_cached 生效（开关逻辑在 adapter）
         set_cached("x", "m", "v")
         assert get_cached("x", "m", ttl=3600) == "v"
+
+
+class TestCacheRedisBackend:
+    """Redis 后端（2026-08-11 缓存接 Redis）：键前缀 + TTL + 不可用降级。"""
+
+    def test_redis_backend_set_get(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.core.config import settings
+        from src.llm import cache as cache_mod
+
+        store: dict[str, str] = {}
+
+        class FakeRedis:
+            def get(self, k):
+                return store.get(k)
+
+            def setex(self, k, ttl, v):
+                store[k] = v
+
+        monkeypatch.setattr(settings, "llm_cache_backend", "redis")
+        monkeypatch.setattr(cache_mod, "get_redis", lambda: FakeRedis())
+        cache_mod.set_cached("你好", "m", "v1")
+        assert cache_mod.get_cached("你好", "m", ttl=3600) == "v1"
+        # 键前缀
+        assert list(store.keys())[0].startswith("llm_cache:")
+
+    def test_redis_unavailable_degrades(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """redis 不可用 → None 降级（容错纪律，不阻断 LLM）。"""
+        from src.core.config import settings
+        from src.llm import cache as cache_mod
+
+        monkeypatch.setattr(settings, "llm_cache_backend", "redis")
+
+        def _boom():
+            raise ConnectionError("redis down")
+
+        monkeypatch.setattr(cache_mod, "get_redis", _boom)
+        assert cache_mod.get_cached("你好", "m", ttl=3600) is None

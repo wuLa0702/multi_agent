@@ -120,6 +120,8 @@ class Settings(BaseSettings):
     # LLM 结果缓存开关（面试演示开；生产按需）
     llm_cache_enabled: bool = False
     llm_cache_ttl: int = 3600            # 缓存有效期（秒）
+    # 缓存后端：memory（进程内存，单用户够用）/ redis（生产，跨进程持久化，2026-08-11）
+    llm_cache_backend: str = "memory"
     # 会话成本软告警阈值（元，>0 启用；只记录+告警，不做硬限制——用户拍板）
     session_cost_warn_threshold: float = 5.0
 
