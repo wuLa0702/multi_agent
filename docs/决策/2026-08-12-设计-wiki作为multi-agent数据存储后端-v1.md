@@ -5,6 +5,7 @@
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > | 版本 | 日期 | 具体改动 |
 > |------|------|---------|
+> | v1.1 | 2026-08-12 | §3 新增「双通道澄清」（MCP vs REST：Agent 自动走 MCP、前端手动走 REST）；§4.5 新增「前端保存通道」（选中对话/文件/产物保存到 wiki，挂 SessionList/FileRefChip）；§5 计划加 P1.5 前端阶段 |
 > | v1 | 2026-08-12 | 初版：现状盘点（multi_agent 存储出口 + wiki 接入入口）+ 打通方案（MCP 网关主线，查/写/存三路线）+ 分阶段计划 + 自省 |
 
 > **目录**：
@@ -79,6 +80,19 @@ is_active: 1
 
 **连接后效果**：multi_agent 的 Agent 自动获得 `wiki_search` / `wiki_read` / `wiki_graph` 等工具（带 `wiki_` 前缀防冲突），通过既有的 `_SafeTool` 安全包装（降级不中断）。
 
+### ⚠️ 双通道澄清（MCP vs REST，2026-08-12 补充）
+
+> 用户疑问："双方是通过 MCP 客户端和服务端互相交互传输数据的么？"——**不是互相，是两条通道各自单向**：
+
+| 通道 | 谁调谁 | 用途 | 技术 |
+|------|--------|------|------|
+| **MCP 通道** | multi_agent Agent（client）→ wiki（server）| Agent 运行时自动查/写知识 | MCP 协议（工具调用）|
+| **REST 通道** | multi_agent 后端 → wiki | **前端手动保存**（用户点按钮）| HTTP REST（/v1/pages 等）|
+
+- **MCP 是"Agent 工具"协议**：机器↔机器，Agent 在对话中调 wiki 工具（wiki_search/wiki_write）
+- **前端保存走 REST**：人↔系统，用户选中对话/文件 → 点保存 → multi_agent 后端调 wiki `/v1/pages`——**不该走 MCP**（MCP 工具是 Agent 上下文里的，不是 UI 按钮的通道）
+- 两者最终都写入 wiki，但入口和语义不同
+
 ## §4 三路线（查 / 写 / 存）
 
 ### 路线 A：查（wiki 当知识库）✅ 首选，零改造
@@ -100,12 +114,40 @@ is_active: 1
 - **问题**：把会话历史塞 wiki 违背 wiki 定位（wiki 管"知识"，不管"对话"）；双写复杂、迁移难
 - **结论**：**不做**。会话/记忆保持 multi_agent 本地 SQLite，wiki 只当知识库
 
+### §4.5 前端保存通道（手动保存到 wiki）🆕 2026-08-12 补充
+
+> 用户指出："光后端有接口没有用，前端缺一个'选中对话/文件/产物，保存到 wiki'功能。"——补前端入口。
+
+**交互**：用户在 multi_agent 前端选中对话 / 文件 / 产物 → 点「保存到 wiki」→ 填页面标题（可选）→ 确认 → 写入 wiki。
+
+**挂载点**（multi_agent 前端，已有组件）：
+- **对话**：`SessionList.tsx`（对话列表每项加"保存到 wiki"按钮）→ 导出该会话的最终回答/研报
+- **产物（文件引用）**：`FileRefChip.tsx`（文件引用 chip 加保存动作）→ 导出该文件内容
+- **文件/下载**：若前端有产物下载区，同样加按钮
+
+**链路（REST，不走 MCP）**：
+```
+前端点「保存到 wiki」
+  → multi_agent 后端新接口 POST /v1/export/wiki（body: {type, id/content, title?}）
+  → multi_agent 后端调 wiki REST POST /v1/pages/{path}（PageUpdateRequest）
+  → wiki 写入 wiki_pages → 返回页面路径 → 前端提示「已保存到 wiki: {path}」
+```
+
+**关键点**：
+- 走 **REST**（用户手动操作），不走 MCP（Agent 工具通道）
+- multi_agent 后端新增一个 `wiki_export` 服务（REST 客户端，统一封装 wiki 地址/鉴权），api 层调它
+- 页面标题规范：对话 → `对话-{会话标题}`；文件 → 原文件名；产物 → `产物-{类型}-{时间}`
+- 前端复用 wiki 的 `wiki_list` 能力在保存后刷新（或简单提示路径）
+
+**待决策**：前端「保存」入口放哪几处（对话列表 / 文件 chip / 产物区），是否全部做。
+
 ## §5 分阶段计划
 
 | 阶段 | 内容 | 产出 | 工作量 |
 |------|------|------|--------|
 | **P0** | multi_agent `mcp_servers` 表插 wiki 行 + 验证工具注入 | Agent 能 `wiki_search`/`wiki_read` | 小（配置 + 验证）|
 | **P1** | wiki mcp_server 加 `wiki_write` 工具（路径白名单 + 校验）| Agent 能写 wiki | 中 |
+| **P1.5** | **前端保存通道**：multi_agent 后端 `POST /v1/export/wiki` + 前端「保存到 wiki」按钮（对话/文件/产物）| 用户手动保存到 wiki | 中 |
 | **P2** | 生产配置：跨机部署、鉴权 token、wiki --http 常驻 | 云上打通 | 中 |
 | **P3**（可选）| multi_agent 记忆体系与 wiki 知识库联动（记忆抽取 → 沉淀 wiki）| 记忆 → 知识闭环 | 大 |
 
@@ -128,6 +170,7 @@ is_active: 1
 2. **为什么"查"首选**：wiki 的只读工具已完备，插配置行即通——**最小改动验证价值**，验证后再投入"写"
 3. **为什么不做"存"**：存储职责要单一——wiki 管知识，SQLite 管会话/记忆；避免"什么都能存"导致的数据混乱
 4. **为什么文档放 multi_agent**：接入发起方是 multi_agent（Agent 获得 wiki 工具），描述的是 multi_agent 的动作；wiki 侧只做关联指针（双向链接）
+5. **为什么前端保存走 REST 而非 MCP**：MCP 是"Agent 上下文里的工具"，不是 UI 按钮的通道——前端按钮是用户操作，走 HTTP REST 语义清晰（一次请求写一个页面），MCP 留给 Agent 运行时
 
 ## §7 待你决策
 
@@ -136,7 +179,8 @@ is_active: 1
 | 1 | 接入目的（路线）| A 查 / B 写 / C 存 | **A 先行**，验证后 B；C 不做 |
 | 2 | 传输方式 | streamable_http / sse / stdio | **streamable_http**（wiki --http 支持）|
 | 3 | 文档放哪 | 已在 multi_agent（本文件）| ✅ 已定 |
-| 4 | 端口冲突核查 | 8010 vs 8010？| 需验证后定 |
+| 4 | 端口冲突核查 | 8010 vs 8010？| ✅ 已核实：wiki 改 `--port 8011` |
+| 5 | 前端保存入口 | 对话列表 / 文件 chip / 产物区 | **全部做**（P1.5）或先对话 |
 
 ---
 
