@@ -489,6 +489,128 @@ def build_agent(model: BaseChatModel | None = None, thread_id: str = "default"):
     return get_agent(thread_id)
 
 
+def _build_stream_config(
+    context: ChatContext | None,
+    checkpoint_id: str | None,
+    hitl_callback: HitlCallback | None,
+) -> dict:
+    """构建 astream_events config（线程/断点/子图/限流/回调）。
+
+    Args:
+        context: 请求级上下文（session_id → thread_id）
+        checkpoint_id: resume 模式精确快照
+        hitl_callback: HITL 中断采集回调（None 不挂）
+
+    Returns:
+        langchain config dict
+    """
+    config = None
+    if context is not None and context.session_id:
+        config = {"configurable": {"thread_id": context.session_id}}
+        if checkpoint_id:
+            config["configurable"]["checkpoint_id"] = checkpoint_id
+    # stream_subgraphs：子代理/子图事件（v3 subagents 投影的 v2 等价物）
+    # recursion_limit：settings.agent_recursion_limit（2026-08-10 评估实证
+    # 默认 25 研究任务易撞限——见 测试报告-评估体系首跑）
+    config = {
+        **(config or {}),
+        "stream_subgraphs": True,
+        "recursion_limit": settings.agent_recursion_limit,
+    }
+    if hitl_callback is not None:
+        # HITL 中断检测唯一途径（设计 §3.3-② 实证：astream_events 不产 on_interrupt）
+        config["callbacks"] = [hitl_callback]
+    return config
+
+
+def _dispatch_stream_event(
+    evt: dict, session_id: str | None, seq: int
+) -> tuple[int, dict | None]:
+    """单事件分发：trace + 事件构建（token/tool_call/subagent）。
+
+    Args:
+        evt: astream_events 原始事件 dict
+        session_id: 会话 ID（推理层 trace 定位）
+        seq: 当前事件序号
+
+    Returns:
+        (新 seq, 待 yield 事件 dict 或 None)
+    """
+    event_type = evt.get("event")
+    if event_type == "on_chat_model_stream":
+        chunk = evt.get("data", {}).get("chunk")
+        text = getattr(chunk, "text", None) if chunk is not None else None
+        if text:
+            seq += 1
+            return seq, {"type": "token", "text": text, "id": seq}
+    elif event_type == "on_tool_start":
+        trace_event(session_id, evt)  # 推理层 trace
+        seq += 1
+        return seq, {
+            "type": "tool_call",
+            "tool": evt.get("name", ""),
+            "status": "running",
+            "input": _truncate(str(evt.get("data", {}).get("input", ""))),
+            "output": None,
+            "id": seq,
+        }
+    elif event_type == "on_tool_end":
+        trace_event(session_id, evt)  # 推理层 trace
+        seq += 1
+        return seq, {
+            "type": "tool_call",
+            "tool": evt.get("name", ""),
+            "status": "completed",
+            "input": "",
+            "output": _truncate(str(evt.get("data", {}).get("output", ""))),
+            "id": seq,
+        }
+    elif event_type in ("on_chain_start", "on_chain_end") and evt.get(
+        "metadata", {}
+    ).get("lc_agent_name"):
+        # 子代理事件：deepagents 子代理经 with_config 注入
+        # lc_agent_name（_compile_spec 约定，subagents.py:437）——
+        # 子图链事件携带该 metadata 即子代理启停。
+        # ⚠️ 待浏览器实测校准：Fake 模型不出工具调用，子代理不触发，
+        # 事件形态（字段名/嵌套深度）需真实链路验证
+        trace_event(session_id, evt)  # 推理层 trace
+        seq += 1
+        return seq, {
+            "type": "subagent",
+            "name": evt["metadata"]["lc_agent_name"],
+            "status": "started" if event_type == "on_chain_start" else "completed",
+            "depth": 0,
+            "id": seq,
+        }
+    elif event_type == "on_chat_model_start":
+        # 推理层 trace：模型调用（含子代理内部——parent_ids 层级可区分）
+        trace_event(session_id, evt)
+    return seq, None
+
+
+async def _register_interrupt_if_needed(
+    hitl_callback: HitlCallback | None, session_id: str | None
+) -> dict | None:
+    """中断登记（try/finally 保证——异常提前结束也登记）。
+
+    中断已落 checkpoint，登记缺失会让 resume 404。
+
+    Args:
+        hitl_callback: HITL 中断采集回调
+        session_id: 会话 ID
+
+    Returns:
+        中断信息 dict（未中断返回 None）
+    """
+    if hitl_callback is not None and hitl_callback.interrupted:
+        info = hitl_callback.interrupted
+        await register_interrupt(
+            info["checkpoint_id"], info["hitl_request"], session_id or ""
+        )
+        return info
+    return None
+
+
 async def stream_agent_events(
     agent,
     messages: list[BaseMessage],
@@ -532,23 +654,7 @@ async def stream_agent_events(
     Raises:
         Exception: checkpoint_id 无效/不属于该 thread（API 层转 RESUME_NOT_FOUND）
     """
-    config = None
-    if context is not None and context.session_id:
-        config = {"configurable": {"thread_id": context.session_id}}
-        if checkpoint_id:
-            config["configurable"]["checkpoint_id"] = checkpoint_id
-    # stream_subgraphs：子代理/子图事件（v3 subagents 投影的 v2 等价物）
-    # recursion_limit：settings.agent_recursion_limit（2026-08-10 评估实证
-    # 默认 25 研究任务易撞限——见 测试报告-评估体系首跑）
-    config = {
-        **(config or {}),
-        "stream_subgraphs": True,
-        "recursion_limit": settings.agent_recursion_limit,
-    }
-    if hitl_callback is not None:
-        # HITL 中断检测唯一途径（设计 §3.3-② 实证：astream_events 不产 on_interrupt）
-        config["callbacks"] = [hitl_callback]
-
+    config = _build_stream_config(context, checkpoint_id, hitl_callback)
     session_id = context.session_id if context else None  # 修订计数定位（v1.2）
     seq = 0
     async with get_stream_semaphore():  # 并发限流：SQLite 写锁缓解
@@ -560,64 +666,13 @@ async def stream_agent_events(
             async for evt in agent.astream_events(
                 input_payload, version="v2", context=context, config=config
             ):
-                event_type = evt.get("event")
-                if event_type == "on_chat_model_stream":
-                    chunk = evt.get("data", {}).get("chunk")
-                    text = getattr(chunk, "text", None) if chunk is not None else None
-                    if text:
-                        seq += 1
-                        yield {"type": "token", "text": text, "id": seq}
-                elif event_type == "on_tool_start":
-                    trace_event(context.session_id if context else None, evt)  # 推理层 trace
-                    seq += 1
-                    yield {
-                        "type": "tool_call",
-                        "tool": evt.get("name", ""),
-                        "status": "running",
-                        "input": _truncate(str(evt.get("data", {}).get("input", ""))),
-                        "output": None,
-                        "id": seq,
-                    }
-                elif event_type == "on_tool_end":
-                    trace_event(context.session_id if context else None, evt)  # 推理层 trace
-                    seq += 1
-                    yield {
-                        "type": "tool_call",
-                        "tool": evt.get("name", ""),
-                        "status": "completed",
-                        "input": "",
-                        "output": _truncate(str(evt.get("data", {}).get("output", ""))),
-                        "id": seq,
-                    }
-                elif event_type in ("on_chain_start", "on_chain_end") and evt.get(
-                    "metadata", {}
-                ).get("lc_agent_name"):
-                    # 子代理事件：deepagents 子代理经 with_config 注入
-                    # lc_agent_name（_compile_spec 约定，subagents.py:437）——
-                    # 子图链事件携带该 metadata 即子代理启停。
-                    # ⚠️ 待浏览器实测校准：Fake 模型不出工具调用，子代理不触发，
-                    # 事件形态（字段名/嵌套深度）需真实链路验证
-                    trace_event(context.session_id if context else None, evt)  # 推理层 trace
-                    seq += 1
-                    yield {
-                        "type": "subagent",
-                        "name": evt["metadata"]["lc_agent_name"],
-                        "status": "started" if event_type == "on_chain_start" else "completed",
-                        "depth": 0,
-                        "id": seq,
-                    }
-                elif event_type == "on_chat_model_start":
-                    # 推理层 trace：模型调用（含子代理内部——parent_ids 层级可区分）
-                    trace_event(context.session_id if context else None, evt)
+                seq, event = _dispatch_stream_event(evt, session_id, seq)
+                if event is not None:
+                    yield event
         finally:
             # v1.2 评审修正：try/finally 保证登记——无论正常/异常结束，只要回调
             # 采到中断（中断已落 checkpoint），必须写 Redis，否则 resume 404
-            if hitl_callback is not None and hitl_callback.interrupted:
-                info = hitl_callback.interrupted
-                await register_interrupt(
-                    info["checkpoint_id"], info["hitl_request"], session_id or ""
-                )
-                interrupted = info
+            interrupted = await _register_interrupt_if_needed(hitl_callback, session_id)
         # finally 之后产 approve 事件（generator 不能在 finally 内 yield）→ 终止流
         if interrupted is not None:
             for action, review in _iter_action_reviews(interrupted["hitl_request"]):
