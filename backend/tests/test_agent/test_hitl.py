@@ -262,15 +262,37 @@ def test_add_decision_call_id_order_independent(fake_redis) -> None:
 
 
 def test_add_decision_unknown_call_id_raises(fake_redis) -> None:
-    """call_id 不匹配 → ValueError。"""
+    """多 action + 未知 call_id → ValueError（单 action 兜底归位不抛，见下测试）。"""
     from src.agent.hitl.pending import add_decision, register_interrupt
 
     _run(register_interrupt("cp-1", {
-        "action_requests": [{"name": "run_code_in_sandbox", "call_id": "call-a"}],
+        "action_requests": [
+            {"name": "run_code_in_sandbox", "call_id": "call-a"},
+            {"name": "run_skill_script", "call_id": "call-b"},
+        ],
         "review_configs": [],
     }, "s1"))
     with pytest.raises(ValueError):
         _run(add_decision("cp-1", "call-unknown", {"type": "approve"}))
+
+
+def test_add_decision_single_action_no_call_id(fake_redis) -> None:
+    """真实 HITL：action 无 call_id（只有 name）→ 单 action 兜底归位 index 0（2026-08-12 项4 实测修复）。
+
+    官方 HITL action_request 只含 name/args/description，无 call_id；
+    approve 事件 fallback `action-{seq}` 序号匹配 + 单 action 兜底。
+    """
+    from src.agent.hitl.pending import add_decision, consume, register_interrupt
+
+    _run(register_interrupt("cp-1", {
+        "action_requests": [{"name": "run_code_in_sandbox", "args": {"code": "x"}}],  # 无 call_id
+        "review_configs": [],
+    }, "s1"))
+    # fallback 序号匹配（approve 事件回传 action-0）
+    accepted = _run(add_decision("cp-1", "action-0", {"type": "approve"}))
+    assert accepted is True
+    result = _run(consume("cp-1"))
+    assert result == {"decisions": [{"type": "approve"}]}
 
 
 def test_consume_once_getdel(fake_redis) -> None:

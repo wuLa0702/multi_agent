@@ -138,18 +138,36 @@ async def add_decision(checkpoint_id: str, call_id: str, decision: dict) -> bool
 
 
 def _find_action_index(actions: list[dict], call_id: str) -> int | None:
-    """在 action_requests 中按 call_id 定位 index。
+    """在 action_requests 中定位 index（兼容真实 HITL action 无 call_id 的情况）。
+
+    实测（2026-08-12 项4 真实链路）：官方 HITL action_request 只含
+    name/args/description，**无 call_id**；approve 事件侧 fallback 生成
+    `action-{seq}`。匹配优先级：
+      1. action 显式 call_id == 目标（若有）
+      2. call_id 形如 `action-{seq}` → 按序号取
+      3. 单 action → 直接 index 0（name 兜底，单 action 场景正确归位）
 
     Args:
-        actions: action_requests（action_request 含 call_id/name）
-        call_id: 目标调用 id
+        actions: action_requests（action_request 含 call_id/name；真实场景无 call_id）
+        call_id: approve 事件回传值（action 显式 id 或 fallback `action-{seq}`）
 
     Returns:
         匹配的 index；无匹配 → None
     """
+    # 1. 显式 call_id 匹配（若 action 携带）
     for i, action in enumerate(actions):
         if action.get("call_id") == call_id:
             return i
+    # 2. fallback `action-{seq}` → 序号匹配（approve 事件生成的口径）
+    if call_id.startswith("action-"):
+        seq = call_id[len("action-"):]
+        if seq.isdigit():
+            idx = int(seq)
+            if 0 <= idx < len(actions):
+                return idx
+    # 3. 单 action 兜底（真实 HITL 场景：action 无 call_id，name 即唯一）
+    if len(actions) == 1:
+        return 0
     return None
 
 
