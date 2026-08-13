@@ -10,6 +10,7 @@ Searchpin 为懒加载：未安装 `pip install searchpin` 或首次模型下载
 from __future__ import annotations
 
 import logging
+import os
 
 import httpx
 
@@ -17,6 +18,9 @@ from src.core.config import settings
 from src.core.retry import retry_tool
 
 logger = logging.getLogger(__name__)
+
+# Searchpin 语义重排模型默认走 hf-mirror（国内 HF 直连超时；已实测镜像可下，~26s 首次）
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 
 class SearchpinClient:
