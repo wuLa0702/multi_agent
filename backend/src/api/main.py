@@ -25,6 +25,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from src.api.chat import router as chat_router
 from src.api.cost import router as cost_router
 from src.api.context_usage import router as context_usage_router
+from src.api.export import router as export_router
 from src.api.health import router as health_router
 from src.api.mcp_servers import router as mcp_servers_router
 from src.api.providers import router as providers_router
@@ -170,6 +171,7 @@ app.include_router(mcp_servers_router)
 app.include_router(settings_router)
 app.include_router(uploads_router)
 app.include_router(context_usage_router)
+app.include_router(export_router)
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)

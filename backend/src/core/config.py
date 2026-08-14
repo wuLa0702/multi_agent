@@ -148,6 +148,7 @@ class Settings(BaseSettings):
     # ── 搜索（博查 Bocha：国内 Tavily 平替，2026-08-03 拍板）──
     bocha_api_key: str = ""
     bocha_base_url: str = "https://api.bocha.cn/v1"
+    wiki_base_url: str = "http://127.0.0.1:8011"  # wiki 知识库（llm_wiki_selfbuild）REST 端点（导出通道，2026-08-13）
 
     @model_validator(mode="after")
     def _guard_clowder_prod_redis(self) -> "Settings":
