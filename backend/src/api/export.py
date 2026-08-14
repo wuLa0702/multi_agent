@@ -1,6 +1,7 @@
-"""导出 REST 路由（P1.5 wiki 保存通道，2026-08-13）：前端「保存到 wiki」→ 后端 → wiki。
+"""导出/读取 REST 路由（wiki 双向通道，2026-08-13）：写 POST /v1/export/wiki + 读 GET /v1/export/wiki/pages/{path}。
 
-前端选中对话/文件/产物 → POST /v1/export/wiki → wiki_export_service 调 wiki /v1/pages。
+前端「保存到 wiki」→ POST /v1/export/wiki → wiki_export_service 调 wiki /v1/pages；
+前端「从 wiki 拉取」→ GET /v1/export/wiki/pages/{path} → wiki_read_service 调 wiki GET。
 走 REST（用户手动操作），不走 MCP（MCP 是 Agent 工具通道）。
 """
 
@@ -10,6 +11,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.agent.services.wiki_export_service import WikiExportError, export_to_wiki
+from src.agent.services.wiki_read_service import (
+    WikiPageNotFoundError,
+    get_page_from_wiki,
+)
 
 router = APIRouter(prefix="/v1/export", tags=["export"])
 
@@ -43,3 +48,22 @@ async def export_wiki(req: WikiExportRequest) -> dict:
         # 不可达（可重试）→ 502；写入失败 → 502（前端提示）
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"status": "ok", "path": result.get("path") or req.path}
+
+
+@router.get("/wiki/pages/{page_path:path}")
+async def read_wiki_page(page_path: str) -> dict:
+    """读取 wiki 页面（双向链路读方向，2026-08-13）。
+
+    Returns:
+        {"status": "ok", "page": {"path", "title", "content", "page_type", "tags"}}
+
+    Raises:
+        HTTPException: 404 页面不存在；502 wiki 不可达/读取失败
+    """
+    try:
+        page = await get_page_from_wiki(page_path)
+    except WikiPageNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WikiExportError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"status": "ok", "page": page}

@@ -254,4 +254,12 @@ export const api = {
       body: JSON.stringify(req),
     });
   },
+
+  /** GET /v1/export/wiki/pages/{path} — 从 wiki 读取页面（双向链路读方向，2026-08-13） */
+  readFromWiki(path: string): Promise<{
+    status: string;
+    page: { path: string; title: string; content: string; page_type?: string; tags?: string[] };
+  }> {
+    return request(`/v1/export/wiki/pages/${encodeURIComponent(path)}`);
+  },
 };

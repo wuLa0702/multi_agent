@@ -7,7 +7,7 @@
  */
 
 import { useRef, useState } from "react";
-import { Paperclip, Send, Square, MoreHorizontal, Loader2 } from "lucide-react";
+import { Paperclip, Send, Square, MoreHorizontal, Loader2, BookUp, BookDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api/client";
 import { useChatStore } from "@/lib/stores/chatStore";
@@ -54,10 +54,58 @@ export default function ChatInput({
   const providers = useChatStore((s) => s.providers);
   const selectedModelId = useChatStore((s) => s.selectedModelId);
   const setSelectedModelId = useChatStore((s) => s.setSelectedModelId);
+  const sessionId = useChatStore((s) => s.sessionId);
+  const messages = useChatStore((s) => s.messages);
 
   const isStreaming = streamStatus === "connecting" || streamStatus === "streaming";
   const isAwaiting = streamStatus === "awaiting_approval";
   const busy = isStreaming || isAwaiting || disabled;
+
+  /** 保存到 wiki：取最后一条 assistant 消息 → POST /v1/export/wiki（2026-08-13 双向链路） */
+  const [wikiSaving, setWikiSaving] = useState(false);
+  const handleSaveToWiki = async () => {
+    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!lastAssistant || !sessionId) {
+      showToast("没有可保存的助手回复", "info");
+      return;
+    }
+    setWikiSaving(true);
+    try {
+      const path = `对话-${sessionId}-${Date.now()}`;
+      const r = await api.exportToWiki({
+        path,
+        content: lastAssistant.content,
+        title: `对话-${sessionId}`,
+      });
+      showToast(`已保存到 wiki：${r.path}`, "success");
+    } catch (e) {
+      showToast(`保存失败：${e instanceof Error ? e.message : String(e)}（检查 wiki 是否启动 8766）`, "error");
+    } finally {
+      setWikiSaving(false);
+    }
+  };
+
+  /** 从 wiki 拉取：path → GET /v1/export/wiki/pages/{path} → 注入对话（2026-08-13） */
+  const [wikiPath, setWikiPath] = useState("");
+  const [wikiLoading, setWikiLoading] = useState(false);
+  const handleReadFromWiki = async () => {
+    const path = wikiPath.trim();
+    if (!path) {
+      showToast("输入 wiki 页面路径", "info");
+      return;
+    }
+    setWikiLoading(true);
+    try {
+      const r = await api.readFromWiki(path);
+      showToast(`已从 wiki 读取：${r.page.title}`, "success");
+      onSend(`【从 wiki 读取 ${r.page.path}】\n\n${r.page.content}`);
+    } catch (e) {
+      showToast(`拉取失败：${e instanceof Error ? e.message : String(e)}`, "error");
+    } finally {
+      setWikiLoading(false);
+      setWikiPath("");
+    }
+  };
 
   const handleSend = () => {
     if (!text.trim() || busy) return;
@@ -143,6 +191,41 @@ export default function ChatInput({
             />
           )}
           {showContextUsage && <ContextUsage />}
+
+          {/* wiki 双向链路（2026-08-13）：保存到 wiki + 从 wiki 拉取 */}
+          <button
+            type="button"
+            disabled={busy || wikiSaving}
+            onClick={handleSaveToWiki}
+            className="press flex h-8 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            title="保存最后一条回复到 wiki 知识库"
+            aria-label="保存到 wiki"
+          >
+            <BookUp className="size-3.5" />
+            {wikiSaving ? "保存中…" : "存 wiki"}
+          </button>
+          <div className="flex items-center gap-1">
+            <input
+              value={wikiPath}
+              onChange={(e) => setWikiPath(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void handleReadFromWiki()}
+              placeholder="wiki路径"
+              disabled={busy}
+              className="h-8 w-24 rounded-lg border border-border bg-background px-2 text-xs text-muted-foreground outline-none focus-visible:border-ring disabled:opacity-50"
+              aria-label="wiki 页面路径"
+            />
+            <button
+              type="button"
+              disabled={busy || wikiLoading}
+              onClick={handleReadFromWiki}
+              className="press flex h-8 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+              title="从 wiki 读取页面并注入对话"
+              aria-label="从 wiki 拉取"
+            >
+              <BookDown className="size-3.5" />
+              {wikiLoading ? "拉取中…" : "拉wiki"}
+            </button>
+          </div>
 
           {/* 更多（mock：清空上下文 / 导出） */}
           <div className="ml-auto">
