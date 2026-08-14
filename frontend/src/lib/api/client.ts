@@ -246,4 +246,12 @@ export const api = {
     if (isMockEnabled()) return Promise.resolve(mockCostAlerts() as CostAlertListResponse);
     return request<CostAlertListResponse>(`/v1/cost/alerts?session_id=${encodeURIComponent(sessionId)}`);
   },
+
+  /** POST /v1/export/wiki — 导出到 wiki 知识库（P1.5 保存通道，2026-08-13） */
+  exportToWiki(req: { path: string; content: string; title?: string }): Promise<{ status: string; path: string }> {
+    return request(`/v1/export/wiki`, {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  },
 };
