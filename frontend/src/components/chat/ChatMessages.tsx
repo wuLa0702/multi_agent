@@ -4,8 +4,8 @@
  * 右侧可挂载 OverviewRuler 概览标尺（消息 > 10 条显示）。
  */
 
-import { useRef } from "react";
 import { useChatStore } from "@/lib/stores/chatStore";
+import { messageScrollRef } from "@/lib/messageScroll";
 import MessageList from "./MessageList";
 import OverviewRuler from "./OverviewRuler";
 import EmptyChat from "./EmptyChat";
@@ -14,7 +14,7 @@ import ScrollToBottom from "./ScrollToBottom";
 export default function ChatMessages() {
   const messages = useChatStore((s) => s.messages);
   const streamStatus = useChatStore((s) => s.streamStatus);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = messageScrollRef;
 
   const isEmpty = messages.length === 0 && streamStatus === "idle";
 

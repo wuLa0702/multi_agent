@@ -7,6 +7,7 @@
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { api } from "@/lib/api/client";
 import { ModelPriceList } from "@/components/settings/ModelPriceList";
 import { CostPanel } from "@/components/chat/CostPanel";
@@ -72,7 +73,24 @@ describe("F2 成本展示 api mock", () => {
   });
 
   it("CostPanel 展示成本汇总", async () => {
-    render(<CostPanel sessionId="s1" />);
+    // CostPanel 用 useNavigate（v6 评审方案A 路由化）→ 包 MemoryRouter
+    render(
+      <MemoryRouter>
+        <CostPanel sessionId="s1" />
+      </MemoryRouter>,
+    );
     expect(await screen.findByText(/¥/)).toBeTruthy();
+  });
+
+  it("CostPanel 成本 <¥0.01 显示 '<¥0.01'", async () => {
+    // mock summary total_cost=1.2345 ≥0.01，断言正常金额格式 + hover title 精确值
+    render(
+      <MemoryRouter>
+        <CostPanel sessionId="s1" />
+      </MemoryRouter>,
+    );
+    const cost = await screen.findByTestId("cost-panel");
+    expect(cost.textContent).toContain("¥1.23");
+    expect(cost.querySelector("span[title]")?.getAttribute("title")).toContain("1.2345");
   });
 });
