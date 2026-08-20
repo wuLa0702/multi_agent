@@ -5,7 +5,7 @@
  * 主界面清爽：顶部只留 ChatHeader + 消息 + 输入，过程信息收此栏。
  */
 import { useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ClipboardList } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ClipboardList, BookOpen } from "lucide-react";
 import { useChatStore } from "@/lib/stores/chatStore";
 import TodoPanel from "@/components/todo/TodoPanel";
 import { CostPanel } from "@/components/chat/CostPanel";
@@ -36,6 +36,18 @@ function TaskSection() {
     );
   }
   return <TodoPanel />;
+}
+
+/** T11：关联 Wiki 区块（当前对话参考的 Wiki 知识点，后端 API 待落地时接真实数据） */
+function WikiSection() {
+  // TODO: 接 wiki 相关 API（当前为占位 UI，后续接真实数据）
+  return (
+    <div className="flex flex-col items-center gap-1 py-4 text-xs text-muted-foreground">
+      <BookOpen className="size-5 opacity-40" />
+      <span>暂无关联知识</span>
+      <span className="text-[10px] opacity-60">对话中参考的 Wiki 知识点将显示在这里</span>
+    </div>
+  );
 }
 
 export default function InfoPanel({ sessionId }: { sessionId: string | null }) {
@@ -105,6 +117,9 @@ export default function InfoPanel({ sessionId }: { sessionId: string | null }) {
         </Section>
         <Section k="cost" title="成本 / 告警">
           <CostPanel sessionId={sessionId} />
+        </Section>
+        <Section k="wiki" title="关联 Wiki">
+          <WikiSection />
         </Section>
       </div>
     </aside>
