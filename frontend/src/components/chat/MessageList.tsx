@@ -1,10 +1,12 @@
 /**
  * 消息流 — MessageBubble 气泡 + 工具调用折叠 + 系统提示（notices）+ 流式工具直播块。
  * 数据源：chatStore.messages / notices / toolCalls。
+ *
+ * T4 改造（2026-08-20）：工具调用折叠——默认折叠，运行时展开，完成自动折叠，点击展开。
  */
 
-import { useMemo } from "react";
-import { Wrench, AlertCircle, Info } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Wrench, AlertCircle, Info, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/lib/stores/chatStore";
 import type { Message } from "@/lib/api/types";
@@ -12,15 +14,23 @@ import MessageBubble from "./MessageBubble";
 import ApprovalCard from "./ApprovalCard";
 import SubagentPanel from "./SubagentPanel";
 
-/** 历史里的 tool 角色消息 → 折叠块 */
+/** 历史里的 tool 角色消息 → 可折叠块（T4：默认折叠，点击展开） */
 function ToolMessageBlock({ message }: { message: Message }) {
+  const [open, setOpen] = useState(false);
   return (
     <div className="rounded-xl border border-border bg-muted/50 px-3 py-2 text-xs">
-      <div className="flex items-center gap-1.5 font-medium text-muted-foreground">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 font-medium text-muted-foreground hover:text-foreground"
+      >
+        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         <Wrench className="size-3.5" />
         tool 调用结果
-      </div>
-      <pre className="mt-1 whitespace-pre-wrap break-all text-muted-foreground">{message.content}</pre>
+      </button>
+      {open && (
+        <pre className="mt-1 whitespace-pre-wrap break-all text-muted-foreground">{message.content}</pre>
+      )}
     </div>
   );
 }
@@ -29,11 +39,23 @@ export default function MessageList() {
   const messages = useChatStore((s) => s.messages);
   const notices = useChatStore((s) => s.notices);
   const toolCalls = useChatStore((s) => s.toolCalls);
+  const streamStatus = useChatStore((s) => s.streamStatus);
 
-  // 流式进行中的 tool_call（当前 run）→ 渲染为消息流里的折叠块
   const liveToolIds = useMemo(() => Object.keys(toolCalls), [toolCalls]);
+  const isStreaming = streamStatus === "streaming" || streamStatus === "connecting";
 
-  // 最后一条 assistant 消息是否流式中（显示光标）
+  // T4：流式进行时展开，完成自动折叠
+  const [liveOpen, setLiveOpen] = useState(false);
+  useEffect(() => {
+    if (isStreaming && liveToolIds.length > 0) {
+      setLiveOpen(true); // 运行时展开
+    } else if (!isStreaming && liveToolIds.length > 0) {
+      // 流结束后延迟折叠（给用户看结果时间）
+      const t = setTimeout(() => setLiveOpen(false), 1500);
+      return () => clearTimeout(t);
+    }
+  }, [isStreaming, liveToolIds.length]);
+
   const lastIndex = messages.length - 1;
   const lastIsStreaming =
     messages.length > 0 && messages[lastIndex].role === "assistant" && messages[lastIndex].id === null;
@@ -59,7 +81,6 @@ export default function MessageList() {
       ))}
 
       {messages.map((m, i) => {
-        // data-msg-index：概览标尺定位锚点（v3 §3.4）
         const anchorProps = { "data-msg-index": i };
         if (m.role === "tool") {
           return (
@@ -78,14 +99,21 @@ export default function MessageList() {
         );
       })}
 
-      {/* 流式工具调用直播块 */}
+      {/* 流式工具调用直播块（T4：折叠改造——默认折叠，运行时展开，完成自动折叠） */}
       {liveToolIds.length > 0 && (
         <div className="mx-auto w-full max-w-[85%]">
           <div className="expand-down rounded-xl border border-dashed border-border bg-card px-3 py-2">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <Wrench className="size-3.5" /> 工具调用
-            </div>
-            {liveToolIds.map((id) => {
+            <button
+              type="button"
+              onClick={() => setLiveOpen((v) => !v)}
+              className="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              {liveOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+              <Wrench className="size-3.5" />
+              工具调用
+              <span className="rounded bg-muted px-1.5 text-[10px]">{liveToolIds.length}</span>
+            </button>
+            {liveOpen && liveToolIds.map((id) => {
               const tc = toolCalls[id];
               return (
                 <div key={id} className="mt-1.5 text-xs">
