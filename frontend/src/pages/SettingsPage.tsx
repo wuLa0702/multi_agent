@@ -57,6 +57,7 @@ const SYSTEM_SWITCHES: SwitchDef[] = [
   { key: "auto_update", label: "Skill 自动更新", desc: "市场技能有新版本时自动升级", value: false },
   { key: "stream_accel", label: "流式渲染加速", desc: "逐字渲染 vs 分块渲染（大模型长文更流畅）", value: true },
   { key: "hitl_enabled", label: "人工审批（HITL）", desc: "高风险操作（运行代码/修改文件/技能脚本）需人工确认后执行（高危三决策 / 中危两决策）；关闭则自动执行", value: false },
+  { key: "wiki_enabled", label: "Wiki 知识库接入", desc: "接入 llm_wiki_selfbuild 知识库：AI 回答可存档到 Wiki；右侧信息栏显示关联 Wiki 知识点（后端地址由后端配置，无需前端填写）", value: false },
 ];
 
 export default function SettingsPage() {

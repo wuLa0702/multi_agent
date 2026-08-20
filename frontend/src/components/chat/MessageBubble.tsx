@@ -6,8 +6,9 @@
  */
 
 import { useState } from "react";
-import { Bot, Copy, RefreshCw, ThumbsUp, ThumbsDown, Check, Paperclip } from "lucide-react";
+import { Bot, Copy, RefreshCw, ThumbsUp, ThumbsDown, Check, Paperclip, BookMarked } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api/client";
 import { showToast } from "@/components/shared/Toast";
 import StreamingMarkdown from "./StreamingMarkdown";
 import type { Message } from "@/lib/api/types";
@@ -95,6 +96,24 @@ function AssistantBubble({ message, streaming, onRegenerate }: Props) {
             aria-label="差评"
           >
             <ThumbsDown className="size-3" />
+          </button>
+          {/* T9：单条存 Wiki（只存该条 AI 回答，非整篇对话） */}
+          <button
+            type="button"
+            onClick={() => {
+              const title = message.content.slice(0, 50).replace(/[#*\n]/g, "").trim() || "AI回答";
+              api.exportToWiki({
+                path: `AI回答-${title}`,
+                content: message.content,
+                title,
+              })
+                .then((r) => showToast(`已存 Wiki: ${r.path}`, "success"))
+                .catch(() => showToast("存 Wiki 失败（wiki 不可达）", "error"));
+            }}
+            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+            aria-label="存 Wiki"
+          >
+            <BookMarked className="size-3" /> 存 Wiki
           </button>
         </div>
       </div>
