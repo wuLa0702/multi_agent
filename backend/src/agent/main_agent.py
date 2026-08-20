@@ -52,6 +52,8 @@ from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
 from src.agent.tools.ask_human import ask_human
 from src.agent.tools.publish_report import publish_report
+from src.agent.tools.report_generator import generate_report
+from src.agent.tools.wiki_writer import write_wiki
 from src.core.backend import create_backend
 from src.core.config import settings
 from src.core.paths import (
@@ -403,6 +405,10 @@ def _build_agent(thread_id: str):
         download_sandbox_file,
         # 技能域（Skill 体系 P1）：技能脚本执行闭环（读文件→沙箱→执行一步封装）
         run_skill_script,
+        # Wiki 知识库（2026-08-13）：Agent 运行时写入 wiki（wiki 不可达时工具降级）
+        write_wiki,
+        # 研报结构化生成（方案 v2.1 §2.5）：主 Agent 撰写 → 结构化 → 交付
+        generate_report,
     ]
     # HITL 工具（P0 设计 §5.1）：hitl_enabled 门控挂载——ask_human（需求澄清/
     # 中途确认，respond 决策）+ publish_report（输出审核交付闸门）。关 HITL 时
