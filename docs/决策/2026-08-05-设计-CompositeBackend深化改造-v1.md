@@ -316,6 +316,8 @@ subagents=[CompiledSubAgent(runnable=subagent_isolated, description="…", syste
 - **权衡**（如实标注）：编译子代理模型在编译时绑定（不随 `_configurable_model` 运行时切换）；
   多 provider 场景需按 provider 重建缓存。单 provider 场景无感
 - **开关**：`settings.subagent_isolation`（默认 False → P1 权限覆盖；True → P2 编译子代理）
+  ⚠️ **2026-08-20 容错落地**：开关已移除，改为 loader **统一预编译 + 容错包装**
+  （`_compile_guarded`：StateBackend + `guard.guard_subagent` 重试/错误摘要回传）
 - **学习点**：CompiledSubAgent 独立 backend 是 deepagents 原生机制——LangGraph 手写主图
   演进路线（02-hands-on-training）可在此基础上做「每子代理独立 StateBackend + 显式数据流」，
   与官方机制互为印证
@@ -779,7 +781,8 @@ _agents[thread_id] = create_deep_agent(
     # 策略层总开关：False = PolicyBackend 透明直通（测试隔离/性能对比/排查）
     backend_policy_enabled: bool = True
     # 子代理隔离：False(默认) = P1 权限覆盖（原生）；True = P2 编译子代理独立内存 backend
-    subagent_isolation: bool = False
+    # ⚠️ 2026-08-20 已并入默认路径（统一预编译 + guard 容错包装），字段从 config.py 移除
+    subagent_isolation: bool = False  # 已废弃（代码中删除）
 ```
 
 ### 6.8 `core/logging.py` 增量（audit logger 注册）

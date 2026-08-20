@@ -181,7 +181,8 @@ memory_workspace: bool = False
 # v3.0：策略层总开关（False = PolicyBackend 透明直通，测试/排查）
 backend_policy_enabled: bool = True
 # v3.0：子代理隔离（False 默认 = P1 权限覆盖；True = P2 编译子代理独立内存 backend）
-subagent_isolation: bool = False
+# ⚠️ 2026-08-20 容错落地：已并入默认路径（loader 统一预编译 + guard 容错包装），该开关移除
+subagent_isolation: bool = False  # 已废弃（代码中删除）
 ```
 
 **v3.0 代码增量**：`create_backend` 的 5 个路由全部经 `_wrap(inner, policy, thread_id)`
