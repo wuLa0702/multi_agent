@@ -5,7 +5,8 @@
  * 主界面清爽：顶部只留 ChatHeader + 消息 + 输入，过程信息收此栏。
  */
 import { useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ClipboardList } from "lucide-react";
+import { useChatStore } from "@/lib/stores/chatStore";
 import TodoPanel from "@/components/todo/TodoPanel";
 import { CostPanel } from "@/components/chat/CostPanel";
 
@@ -20,6 +21,21 @@ function load<T>(key: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+/** T7：任务进度区块（有任务显示 TodoPanel，无任务友好提示） */
+function TaskSection() {
+  const todos = useChatStore((s) => s.todos);
+  if (todos.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-1 py-4 text-xs text-muted-foreground">
+        <ClipboardList className="size-5 opacity-40" />
+        <span>该项目暂无任务</span>
+        <span className="text-[10px] opacity-60">历史任务已完成</span>
+      </div>
+    );
+  }
+  return <TodoPanel />;
 }
 
 export default function InfoPanel({ sessionId }: { sessionId: string | null }) {
@@ -85,7 +101,7 @@ export default function InfoPanel({ sessionId }: { sessionId: string | null }) {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <Section k="task" title="任务进度">
-          <TodoPanel />
+          <TaskSection />
         </Section>
         <Section k="cost" title="成本 / 告警">
           <CostPanel sessionId={sessionId} />

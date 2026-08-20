@@ -40,7 +40,7 @@ export default function TodoPanel() {
   const todos = useChatStore((s) => s.todos);
   const [collapsed, setCollapsed] = useState(false);
 
-  if (todos.length === 0) return null;
+  if (todos.length === 0) return null; // T7：空态由 InfoPanel 处理（"该项目暂无任务"）
 
   const done = todos.filter((t) => t.status === "completed").length;
   const total = todos.length;
