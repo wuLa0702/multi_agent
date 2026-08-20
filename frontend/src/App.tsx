@@ -4,6 +4,7 @@
  */
 
 import { useState } from "react";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import Sidebar from "@/components/layout/Sidebar";
 import ChatPage from "@/pages/ChatPage";
 import SkillsPage from "@/pages/SkillsPage";
@@ -14,7 +15,8 @@ export default function App() {
   const [activeView, setActiveView] = useState<ViewKey>("chat");
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <TooltipProvider delayDuration={300}>
+      <div className="flex h-screen overflow-hidden">
       <Sidebar activeView={activeView} onNavigate={setActiveView} />
 
       {/* 视图切换：key 强制重挂载 → 触发 view-enter 动效（方案 §4.3.1） */}
@@ -23,6 +25,7 @@ export default function App() {
         {activeView === "skills" && <SkillsPage />}
         {activeView === "settings" && <SettingsPage />}
       </div>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }
