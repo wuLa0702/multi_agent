@@ -429,8 +429,9 @@ def _build_agent(thread_id: str):
     return create_deep_agent(
         model=model,
         system_prompt=build_system_prompt(),  # 分层组装（核心+可选；动态记忆由 chat 注入）
-        # P2 子代理隔离：SUBAGENT_ISOLATION=True 时 loader 用同一 model 预编译子代理
-        subagents=load_subagents(model=model if settings.subagent_isolation else None),
+        # 子代理统一预编译 + 容错包装（loader._compile_guarded：StateBackend +
+        # 重试 + 错误摘要回传；2026-08-20 容错落地，原 SUBAGENT_ISOLATION 开关并入）
+        subagents=load_subagents(model=model),
         tools=internal_tools + mcp_tools,
         middleware=middleware,
         # HITL 审批（P1，2026-08-06 设计 §5.1）：hitl_enabled 门控——沙箱/文件/

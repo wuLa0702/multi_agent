@@ -110,24 +110,33 @@ system_prompt: B 代理。
         specs = load_subagents(tmp_path)
         assert [s["name"] for s in specs] == ["a", "b"]  # 文件名排序，顺序稳定
 
-    async def test_load_project_subagents(self, monkeypatch, seeded_registry) -> None:
-        """真实项目目录：子代理 YAML 全部加载（tools 映射 + model 字段经 DB 解析）。
+    async def test_load_project_subagents(self, monkeypatch, seeded_registry, mocker) -> None:
+        """真实项目目录：子代理 YAML 全部加载（统一编译 + 容错包装）。
 
-        2026-08-10 P0-2：新增 review_agent.yaml——断言更新为双子代理
-        （文件名排序：review_agent < search_agent），审核子代理单测见
-        tests/test_agent/test_review_agent.py。
+        2026-08-20 容错落地：load_subagents 返回 CompiledSubAgent（统一预编译），
+        tools/model/permissions 断言改在 create_deep_agent 入参上（编译期绑定）。
+        文件名排序：review_agent < search_agent。
         """
         from langchain_openai import ChatOpenAI
+
+        from src.agent.subagents.guard import GuardedSubAgent
 
         monkeypatch.setattr(
             loader,
             "get_chat_model",
             lambda model_id: ChatOpenAI(model="deepseek-v4-flash", api_key="x", base_url="https://x"),
         )
+        captured: list[dict] = []
+        mocker.patch(
+            "src.agent.subagents.loader.create_deep_agent",
+            side_effect=lambda **kwargs: captured.append(kwargs) or object(),
+        )
         specs = load_subagents()
         assert [s["name"] for s in specs] == ["review_agent", "search_agent"]
-        assert specs[1]["tools"][0].__name__ == "internet_search"
-        assert specs[1]["model"].model == "deepseek-v4-flash"
+        assert all(isinstance(s["runnable"], GuardedSubAgent) for s in specs), "统一挂容错包装"
+        search_kwargs = next(k for k in captured if k["name"] == "search_agent")
+        assert search_kwargs["tools"][0].__name__ == "internet_search"
+        assert search_kwargs["model"].model == "deepseek-v4-flash"
 
 
 class TestSubagentModelField:

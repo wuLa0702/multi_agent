@@ -192,8 +192,9 @@ class Settings(BaseSettings):
     # ── 安全分层（2026-08-04 深化 v3）──
     # 策略层总开关：False = PolicyBackend 透明直通（测试隔离/性能对比/排查）
     backend_policy_enabled: bool = True
-    # 子代理隔离：False(默认) = P1 权限覆盖（原生）；True = P2 编译子代理独立内存 backend
-    subagent_isolation: bool = False
+    # 子代理（2026-08-20 容错落地）：统一预编译 + 容错包装已并入默认路径
+    # （loader._compile_guarded：StateBackend + 重试 + 错误摘要回传）——
+    # 原 subagent_isolation 开关移除，无需配置项
 
     # ── 记忆抽取子代理（2026-08-05 记忆抽取子代理方案）──
     # True=子代理后台抽取（队列+多步+工具）；False=回退单次 LLM 抽取

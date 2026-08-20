@@ -14,15 +14,25 @@ from src.agent.subagents.loader import load_subagents
 
 
 class TestReviewAgentLoaded:
-    async def test_review_agent_in_project(self, monkeypatch, seeded_registry) -> None:
-        """真实项目目录：review_agent.yaml 加载成功（P0-2 挂载）。
+    async def test_review_agent_in_project(self, monkeypatch, seeded_registry, mocker) -> None:
+        """真实项目目录：review_agent.yaml 加载成功（P0-2 挂载，统一编译）。
 
-        断言：名称注册 / tools 空（纯判断）/ model 经 DB 解析 / permissions 全拒绝。
+        2026-08-20 容错落地：返回 CompiledSubAgent，tools/model/permissions 断言
+        改在 create_deep_agent 入参上（编译期绑定）。
         """
+        from langchain_openai import ChatOpenAI
+
+        from src.agent.subagents.guard import GuardedSubAgent
+
         monkeypatch.setattr(
             loader,
             "get_chat_model",
             lambda model_id: ChatOpenAI(model="deepseek-v4-flash", api_key="x", base_url="https://x"),
+        )
+        captured: list[dict] = []
+        mocker.patch(
+            "src.agent.subagents.loader.create_deep_agent",
+            side_effect=lambda **kwargs: captured.append(kwargs) or object(),
         )
         specs = load_subagents()
         names = [s["name"] for s in specs]
@@ -30,9 +40,11 @@ class TestReviewAgentLoaded:
         assert names == ["review_agent", "search_agent"]  # 文件名排序稳定
 
         rv = [s for s in specs if s["name"] == "review_agent"][0]
-        assert rv["tools"] == []  # 审核纯 LLM 判断，无工具（计划 §2.2）
-        assert rv["model"].model == "deepseek-v4-flash"  # P1-1 model 字段解析
-        perms = rv["permissions"]
+        assert isinstance(rv["runnable"], GuardedSubAgent), "子代理 runnable 应挂容错包装"
+        rv_kwargs = next(k for k in captured if k["name"] == "review_agent")
+        assert rv_kwargs["tools"] == []  # 审核纯 LLM 判断，无工具（计划 §2.2）
+        assert rv_kwargs["model"].model == "deepseek-v4-flash"  # P1-1 model 字段解析
+        perms = rv_kwargs["permissions"]
         assert "deny" in str(perms[0].mode)  # 只读产出，write 全拒绝（FilesystemPermission 对象）
 
     def test_review_prompt_has_revision_loop(self) -> None:
