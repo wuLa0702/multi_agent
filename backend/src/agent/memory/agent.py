@@ -136,16 +136,25 @@ async def write_store(memory_type: str, fact: str, related: str = "") -> str:
 
 
 async def write_wiki(page: str, content: str) -> str:
-    """写 Wiki（文档记忆，指定命名空间）——P2 接入，先日志占位。
+    """写 Wiki（文档记忆，沉淀知识性结论）——接 wiki_export_service REST 写通道（2026-08-15）。
+
+    memory_agent 判断"值得沉淀的知识性结论"时调用（prompt 引导，见 MEMORY_AGENT_PROMPT 5.5）；
+    wiki 不可达/失败 → 降级返回提示，不阻断任务（wiki 是旁路能力）。
 
     Args:
-        page: Wiki 页面名
-        content: 页面内容
+        page: wiki 页面路径（如 结论-{主题}）
+        content: 页面正文（Markdown，≤500 字）
 
     Returns:
-        写入结果（P2 前占位）
+        写入结果描述（成功含 wiki 路径；失败提示降级）
     """
-    return f"write_wiki({page})：P2 接入 Wiki 系统后可用（当前占位）。"
+    from src.agent.services.wiki_export_service import WikiExportError, export_to_wiki
+
+    try:
+        result = await export_to_wiki(page, content[:500], title=page)
+        return f"已写入 wiki：{result.get('path') or page}"
+    except WikiExportError as exc:
+        return f"wiki 写入失败（降级跳过）：{exc}"
 
 
 async def send_notification(message: str) -> str:

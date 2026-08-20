@@ -263,11 +263,11 @@ async def _prepare_new_messages(
         if instruction:
             lc_messages = [SystemMessage(content=instruction), *lc_messages]
 
-    # 2.6 长期记忆注入（P1 Store）：取最近记忆拼 SystemMessage（失败静默降级）
+    # 2.6 长期记忆注入（v3 检索，2026-08-15 修复"写了没读到"）：画像优先 + 时间衰减 + 窗口裁剪（失败静默降级）
     from src.agent.main_agent import get_store
-    from src.agent.memory.store import load_recent_memories
+    from src.agent.memory.store import load_recent_memories_v3
 
-    memories = await load_recent_memories(get_store())
+    memories = await load_recent_memories_v3(get_store())
     if memories:
         memory_text = "以下是你的长期记忆（供参考，可能与本对话无关）：\n" + "\n".join(memories)
         lc_messages = [SystemMessage(content=memory_text), *lc_messages]
