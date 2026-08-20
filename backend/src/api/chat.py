@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from redis.exceptions import RedisError
 from sse_starlette.sse import EventSourceResponse
 
+from src.agent.intent import classify_intent
 from src.agent.main_agent import (
     ChatContext,
     build_agent,
@@ -579,6 +580,34 @@ async def _build_done_event(
     )
 
 
+async def _fast_stream(
+    req: ChatStreamRequest,
+    run_id: str,
+    session_id: str,
+    started_at: float,
+) -> AsyncIterator[dict[str, str]]:
+    """快通道（方案 v2.1，2026-08-13）：简单问题单次 LLM 流式。
+
+    不建 deepagents agent、不挂搜索/子代理/publish_report 工具——模型没有工具，
+    天然不会过度拆解。产出 token 事件（done 由调用方 _build_done_event 补）。
+    """
+    from src.agent.main_agent import get_stream_semaphore
+    from src.llm.adapter import get_chat_model
+
+    model = get_chat_model()
+    messages = [
+        SystemMessage(
+            content="你是简洁助手。问题较简单：直接给出准确、简洁的回答，不要搜索、不要拆解步骤、不要过度展开。"
+        ),
+        HumanMessage(content=req.message or ""),
+    ]
+    async with get_stream_semaphore():
+        async for chunk in model.astream(messages):
+            text = getattr(chunk, "content", "") or ""
+            if text:
+                yield {"data": TokenEvent(text=text).model_dump_json()}
+
+
 async def _event_stream(
     req: ChatStreamRequest,
     session_id: str,
@@ -614,6 +643,14 @@ async def _event_stream(
                 run_id=run_id, session_id=session_id, resumed=is_resume
             ).model_dump_json()
         }
+
+        # 2.5 简单直连快通道（方案 v2.1，2026-08-13）：简单概念题直接 LLM 单轮流式答，
+        #     不建 agent、不挂搜索/子代理工具——避免"解释 LangGraph"被过度处理
+        if not is_resume and req.mode in ("default", "") and classify_intent(req.message or "") == "simple":
+            async for chunk in _fast_stream(req, run_id, session_id, started_at):
+                yield chunk
+            yield {"data": (await _build_done_event(conn, run_id, session_id, started_at)).model_dump_json()}
+            return
 
         # 3. Agent 流式执行（异常统一转 error 事件）
         full_text_parts: list[str] = []
