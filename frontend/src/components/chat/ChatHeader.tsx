@@ -5,7 +5,7 @@
  */
 
 import { useState } from "react";
-import { Search, Download, MoreHorizontal, Check, X, Bot } from "lucide-react";
+import { Search, Download, Trash2, Check, X, Bot } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import PageHeader from "@/components/common/PageHeader";
 import ModeSwitcher from "@/components/common/ModeSwitcher";
@@ -78,7 +78,7 @@ export default function ChatHeader({
               }).then((ok) => ok && onClearChat())
             }
           >
-            <MoreHorizontal className="size-4" />
+            <Trash2 className="size-4" />
           </HeaderBtn>
         </>
       }
