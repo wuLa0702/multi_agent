@@ -94,3 +94,40 @@ def test_guard_subagent_idempotent() -> None:
     guarded = GuardedSubAgent(inner, "search_agent")
 
     assert guard.guard_subagent(guarded, "search_agent") is guarded
+
+
+def test_compile_guarded_active_throw_returns_error_summary(mocker) -> None:
+    """真实编译路径 + 主动抛错：子代理模型调用抛超时 → guard 重试 1 次 → 错误摘要回传。
+
+    走 loader._compile_guarded（真实 create_deep_agent 编译）+ BaseChatModel.ainvoke
+    主动抛 TimeoutError——验证容错包装在生产路径上不冒泡、重试、附重试次数回传。
+    """
+    import asyncio
+
+    from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.messages import HumanMessage
+    from langchain_openai import ChatOpenAI
+
+    from src.agent.subagents import loader
+
+    model = ChatOpenAI(model="deepseek-v4-flash", api_key="x", base_url="https://x")
+    mocker.patch.object(
+        BaseChatModel, "ainvoke", autospec=True, side_effect=TimeoutError("模拟 LLM 超时")
+    )
+    spec = {
+        "name": "throwing_agent",
+        "description": "x",
+        "system_prompt": "p",
+        "tools": [],
+        "permissions": [],
+    }
+    compiled = loader._compile_guarded(spec, model)
+
+    result = asyncio.run(compiled["runnable"].ainvoke({"messages": [HumanMessage("hi")]}))
+
+    assert isinstance(compiled["runnable"], GuardedSubAgent), "编译路径应挂容错包装"
+    msg = result["messages"][0]
+    assert isinstance(msg, AIMessage), "错误摘要经 AIMessage 回传（主 Agent 可见）"
+    assert "TimeoutError" in msg.content
+    assert "已重试 1 次" in msg.content, "可重试异常应重试 1 次后仍失败才降级"
+    assert "不要重试" in msg.content
