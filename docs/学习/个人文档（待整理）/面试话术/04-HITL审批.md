@@ -131,3 +131,183 @@ HITL的技术实现具体是怎么做的？中断和恢复的原理是什么？
 
 ### 一句话记忆
 **三个实证坑：事件不产出→换回调、伪造快照静默新跑→加校验、call_id缺失→加fallback。**
+
+---
+
+## 四、核心概念辨析：super-step / checkpoint / checkpoint_id / run_id
+
+> 面试被追问"checkpoint 存的是什么？颗粒度多大？resume 传哪个 ID？"之前先吃透这里。
+> 依据：LangGraph checkpoint 官方语义（每 super-step 存一份快照）+ 本项目实现
+> （backend/src/api/chat.py、agent/hitl/hitl.py）。
+
+### 问题
+super-step、checkpoint、checkpoint_id、run_id 分别是什么？颗粒度怎么理解？resume 到底从哪恢复？
+
+### 标准版话术（总分总）
+
+【总·30秒】
+"三个概念别搞混：super-step 是执行段，checkpoint 是执行段结束时存的完整状态快照，checkpointer 是把它写进库的存储组件。checkpoint 的颗粒度不是每个节点一次、也不是每个对话一次，而是每个 super-step 一次。"
+
+【分·90秒】
+"拆开讲：
+
+**① super-step（超步，执行段）**
+- 从当前状态连续跑节点、直到'停'为止的一段执行
+- 停的条件：自然终止（没节点可跑了）或 撞上 interrupt（命中 interrupt_on，工具执行前暂停）
+- 不数节点——一个 super-step 可能跑 0/1/多个节点，全看什么时候停
+
+**② checkpoint（检查点/快照，状态数据本身）**
+- 每次 super-step 结束，checkpointer 存一份完整快照：消息历史 + channel 值 + 版本信息 + metadata + pending writes
+- 颗粒度 = 每个 super-step 一个 checkpoint_id；一次对话是一串 checkpoint（thread 串起）
+- '一个对话一个 checkpoint' 的直觉，其实是'thread 最新一个 checkpoint 代表当前状态'
+
+**③ checkpointer（AsyncSqliteSaver，存储机制）**
+- 负责把快照落库；resume 时按 checkpoint_id 精确加载某一份快照继续跑
+
+**④ ID 关系链路（从大到小）**
+- thread_id/session_id = 会话（整个聊天，跨多轮）
+- run_id = 会话里的一次对话（一条用户消息触发的一轮执行，本项目每次 chat 请求 uuid 生成）
+- checkpoint_id = 这一轮里的某个中间快照（super-step 粒度，resume 恢复键）
+- call_id = 具体哪个工具调用（多 action 顺序匹配键）"
+
+【总·20秒】
+"层级一句话：会话里有多次对话，一次对话里有多个 super-step，每个 super-step 结束落一个 checkpoint——resume 就是精确加载某一份 checkpoint 快照，不是重跑。"
+
+### 关系链路（背这张图）
+
+```
+thread_id/session_id（会话）
+  └─ run_id（一次对话流，uuid/次请求）
+       ├─ super-step①（执行段：跑到停）──> checkpoint①（快照）
+       ├─ super-step②（执行段：跑到停）──> checkpoint②（快照）
+       └─ … 直到自然终止或撞上 interrupt
+resume = 传 thread_id + checkpoint_id，加载那一个停点的快照继续
+```
+
+### 快照里有什么（追问"checkpoint 存的是什么"）
+
+| 字段 | 含义 |
+|------|------|
+| channel_values | 各状态通道当前值（消息列表/中间变量）|
+| channel_versions / versions_seen | 版本号，保证恢复时不重复、不丢更新 |
+| metadata | 时间戳等元信息 |
+| pending writes | 未写入的挂起更新（interrupt 现场）|
+
+### 一句话记忆
+**super-step 是"跑到停的执行段"，checkpoint 是"停点时存的完整快照"，checkpointer 是"写库的组件"；会话>对话>快照，resume 用 checkpoint_id 精确加载某一停点。**
+
+### 追问预案
+
+| 追问 | 答题要点 |
+|------|---------|
+| checkpoint 每个节点都存吗？ | 不，每个 super-step 存一次；一个 super-step 可能含多个（并行）节点，合起来存一份 |
+| 一次对话几个 checkpoint？ | 一串——每个 super-step 一个，最新那个代表当前状态 |
+| resume 传的是 run_id 还是 checkpoint_id？ | 本项目字段名是 resume_run_id，但语义上是 checkpoint_id（chat.py 里 checkpoint_exists + checkpoint_id=req.resume_run_id），别被字段名带偏 |
+| run_id 和 thread_id 什么关系？ | thread_id 是会话（跨轮），run_id 是会话里一轮执行（本项目每次 chat 流一个 uuid）|
+
+---
+
+## 五、恢复流程核心链路（代码级支撑）
+
+> 面试被问"审批通过后到底怎么恢复"时，从 6 跳链路里挑关键讲。
+> 源码位置：frontend/src/lib/stores/chatStore.ts、backend/src/api/chat.py、
+> backend/src/agent/main_agent.py、backend/src/agent/hitl/pending.py。
+
+### 本质一句话
+**resume = 拿 checkpoint_id 让 LangGraph 加载那一个停点的快照 + 用 Command(resume) 把审批决策喂回去**，被中断的工具在恢复后才真正执行。
+
+### 核心链路图（start 事件之后）
+
+```
+start 事件（resumed=true）← chat.py:612
+   │
+   ▼ _emit_agent_events（chat.py:420）
+   │  graph_input = Command(resume=decisions)   ← 关键①：决策喂回
+   │  checkpoint_id = req.resume_run_id          ← 关键②：恢复键
+   ▼ stream_agent_events（main_agent.py:614）
+   │  config = {thread_id, checkpoint_id, callbacks:[HitlCallback]}
+   │  input_payload = Command(resume=decisions)
+   ▼ agent.astream_events(input_payload, config) ← 关键③：LangGraph 加载快照继续
+   │  └ 框架内部：加载该 checkpoint → 被中断节点重跑 → consume 决策 → 工具真正执行
+   ▼ token / tool_call / approve 事件继续推 SSE
+```
+
+### 6 跳核心代码
+
+**Hop 0｜前端 resume 入口（审批卡确认 / 刷新弹窗殊途同归）**
+```ts
+// chatStore.ts:217
+async resume(runId: string) {
+  set({ pendingApprovals: [], pendingRunId: null });
+  localStorage.removeItem(PENDING_RUN_KEY);
+  startStream({ session_id: get().sessionId, resume_run_id: runId });
+}
+```
+
+**Hop 1｜后端 resume 准备——决策读出 + 快照校验**
+```python
+# chat.py:374-417  _resolve_resume_context
+is_resume = bool(req.resume_run_id)
+if is_resume:
+    resume_input = await consume(req.resume_run_id)   # Redis getdel 原子消费决策
+if is_resume and resume_input is None:
+    if not await checkpoint_exists(session_id, req.resume_run_id):
+        yield error(RESUME_NOT_FOUND); return          # 防伪造快照静默新跑
+```
+
+**Hop 2｜决策包成 Command(resume)，连同 checkpoint_id 交给框架**
+```python
+# chat.py:461-470  _emit_agent_events
+graph_input = Command(resume=resume_input) if resume_input else None
+async for event in stream_agent_events(
+    agent, lc_messages, context=chat_context,
+    checkpoint_id=req.resume_run_id,   # 恢复键：精确快照
+    hitl_callback=hitl_callback, run_id=run_id, graph_input=graph_input,
+):
+```
+
+**Hop 3｜真正执行：astream_events 以 Command(resume) 作输入**
+```python
+# main_agent.py:657-668  stream_agent_events
+config = _build_stream_config(context, checkpoint_id, hitl_callback)
+input_payload = graph_input if graph_input is not None else {"messages": messages}
+async for evt in agent.astream_events(input_payload, version="v2", context=context, config=config):
+    seq, event = _dispatch_stream_event(evt, session_id, seq)
+    if event is not None:
+        yield event
+```
+
+**Hop 4｜config：checkpoint_id 进 configurable（"从哪恢复"的钥匙）**
+```python
+# main_agent.py:508-511  _build_stream_config
+config = {"configurable": {"thread_id": context.session_id}}
+if checkpoint_id:
+    config["configurable"]["checkpoint_id"] = checkpoint_id
+```
+
+**Hop 5｜框架内部（黑盒，理解语义）**
+拿到 configurable.checkpoint_id → 从 SQLite 加载快照 → 含 interrupt 的节点重跑 →
+Command(resume) 的 decisions 成为 interrupt() 的返回值 → 挂起的工具真正执行 →
+继续出 token；又命中 interrupt_on → 再暂停产新 approve 事件。
+
+**Hop 6｜恢复后再中断也登记（finally 保证，防断点丢失）**
+```python
+# main_agent.py:672-686
+finally:
+    interrupted = await _register_interrupt_if_needed(hitl_callback, session_id)
+if interrupted is not None:
+    for action, review in _iter_action_reviews(interrupted["hitl_request"]):
+        yield _build_approve_event(
+            run_id=run_id,
+            checkpoint_id=interrupted["checkpoint_id"],   # 新 checkpoint_id
+            ...
+        )
+```
+
+### 支撑数据流（Redis 侧）
+consume()（pending.py:192）是恢复的数据源：getdel 原子读出 {"decisions": [...]}，
+形态正好是 Command(resume=...) 需要的输入。读后即删 → 防并发双读；
+主 key 过期（TTL 600s）→ 前端 404 提示重开。
+
+### 一句话记忆
+**consume 出决策 → Command(resume=决策) → astream_events(checkpoint_id) → 框架加载快照、重跑中断节点、真正执行工具。**
