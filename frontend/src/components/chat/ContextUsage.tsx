@@ -1,14 +1,21 @@
 /**
- * ContextUsage — 上下文用量（v3 §3.2 工具栏，📊 已用/总 token + 进度条）。
+ * ContextUsage — 上下文用量（v3 §3.2 工具栏 + 2026-08-20 T2 交互优化）。
+ *
+ * T2 改造：
+ * - Tab「累计/本轮」切换（默认累计）
+ * - 横向柱状图格式（文字 + 进度条，直观看用了多少/离上限差多少）
+ * - 问号 HelpTooltip 解释 token 含义
+ * - 上限滑杆设置保留
+ *
  * 2026-08-12 P3 交互优化：上限可调——点击齿轮弹出滑杆(64k~1M)+数字输入，localStorage 持久化。
- * 2026-08-04 评审改版（中间件存库方案）：TokenUsageMiddleware 图执行完
- * 自动写入 sessions.context_used → 前端直接查表 `GET /v1/context-usage?session_id=`
+ * 2026-08-04 评审改版：TokenUsageMiddleware 图执行完自动写入 sessions.context_used。
  */
 
 import { useEffect, useState } from "react";
 import { BarChart3, Settings2 } from "lucide-react";
 import { useChatStore } from "@/lib/stores/chatStore";
 import { api } from "@/lib/api/client";
+import { HelpTooltip } from "@/components/shared/HelpTooltip";
 
 const LIMIT_KEY = "multi-agent.contextLimit";
 const DEFAULT_LIMIT = 128_000;
@@ -25,6 +32,28 @@ function loadLimit(): number {
   }
 }
 
+/** 横向柱状图行（文字 + 进度条） */
+function BarRow({ label, value, max, tooltip }: { label: string; value: number; max: number; tooltip?: string }) {
+  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="flex items-center gap-1 text-muted-foreground">
+          {label}
+          {tooltip && <HelpTooltip content={tooltip} side="right" />}
+        </span>
+        <span className="font-mono text-foreground">{value.toLocaleString()}</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function ContextUsage() {
   const sessionId = useChatStore((s) => s.sessionId);
   const streamStatus = useChatStore((s) => s.streamStatus);
@@ -33,6 +62,7 @@ export default function ContextUsage() {
   const [used, setUsed] = useState(storeUsed);
   const [total, setTotal] = useState(loadLimit());
   const [editing, setEditing] = useState(false);
+  const [tab, setTab] = useState<"cumulative" | "round">("cumulative");
 
   // done 后同步 store 值
   useEffect(() => {
@@ -75,9 +105,10 @@ export default function ContextUsage() {
 
   return (
     <div className="relative">
+      {/* 工具栏紧凑条（保留原有入口） */}
       <div
         className="flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:bg-accent/40"
-        title={`上下文用量 ${(used / 1000).toFixed(1)}k / ${Math.round(total / 1000)}k（点击设置上限）`}
+        title={`上下文用量 ${(used / 1000).toFixed(1)}k / ${Math.round(total / 1000)}k（点击展开详情）`}
         onClick={() => setEditing((v) => !v)}
         data-testid="context-usage"
       >
@@ -92,40 +123,93 @@ export default function ContextUsage() {
         <Settings2 className="size-3 opacity-60" />
       </div>
 
-      {/* 上限设置弹层（P3 交互优化，2026-08-12） */}
+      {/* 展开详情面板（T2 改造：Tab + 横向柱状图 + 上限设置） */}
       {editing && (
         <div
-          className="absolute bottom-10 right-0 z-30 w-56 rounded-lg border border-border bg-popover p-3 shadow-md"
-          data-testid="context-limit-editor"
+          className="absolute bottom-10 right-0 z-30 w-64 rounded-lg border border-border bg-popover p-3 shadow-md"
+          data-testid="context-detail-panel"
         >
-          <div className="mb-1 text-xs font-medium">上下文上限（token）</div>
-          <input
-            type="range"
-            min={MIN_LIMIT}
-            max={MAX_LIMIT}
-            step={64_000}
-            value={total}
-            onChange={(e) => applyLimit(Number(e.target.value))}
-            className="w-full"
-            aria-label="上下文上限滑杆"
-          />
-          <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-            <span>{(total / 1000).toFixed(0)}k</span>
-            <span className="flex-1" />
+          {/* Tab 切换（累计/本轮） */}
+          <div className="mb-2 flex gap-1 rounded-md bg-muted p-0.5">
+            <button
+              type="button"
+              onClick={() => setTab("cumulative")}
+              className={`flex-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+                tab === "cumulative" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"
+              }`}
+            >
+              累计
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("round")}
+              className={`flex-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+                tab === "round" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"
+              }`}
+            >
+              本轮
+            </button>
+          </div>
+
+          {/* 横向柱状图 */}
+          {tab === "cumulative" ? (
+            <div className="space-y-2">
+              <BarRow
+                label="输入 token"
+                value={used}
+                max={total}
+                tooltip="本轮累计 LLM 接收的 token 数（上下文 + 用户消息），每次对话后累加"
+              />
+              <BarRow
+                label="最大 token"
+                value={total}
+                max={total}
+                tooltip="上下文窗口上限（默认 128k，可在下方滑杆调整，支持更大模型）"
+              />
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  成本
+                  <HelpTooltip content="成本 = 模型单价(元/千token) × 增量token；单价在设置页「模型管理」配置" side="right" />
+                </span>
+                <span className="font-mono text-foreground">{pct}%</span>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <BarRow label="输入 token" value={0} max={total} tooltip="本轮对话的输入 token（最新一轮 LLM 调用）" />
+              <BarRow label="输出 token" value={0} max={total} tooltip="本轮对话的输出 token（最新一轮 LLM 生成）" />
+              <div className="text-[10px] text-muted-foreground">本轮数据待后端 API 补充</div>
+            </div>
+          )}
+
+          {/* 上限设置 */}
+          <div className="mt-3 border-t border-border pt-2">
+            <div className="mb-1 text-[11px] font-medium">上下文上限</div>
             <input
-              type="number"
+              type="range"
               min={MIN_LIMIT}
               max={MAX_LIMIT}
               step={64_000}
               value={total}
               onChange={(e) => applyLimit(Number(e.target.value))}
-              className="h-6 w-20 rounded border border-border bg-background px-1 text-right text-xs"
-              aria-label="上下文上限输入"
+              className="w-full"
+              aria-label="上下文上限滑杆"
             />
-            <span>token</span>
-          </div>
-          <div className="mt-1 text-[10px] text-muted-foreground">
-            范围 {(MIN_LIMIT / 1000)}k ~ {(MAX_LIMIT / 1000_000)}M（为更大模型预留）
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+              <span>{(total / 1000).toFixed(0)}k</span>
+              <span className="flex-1" />
+              <input
+                type="number"
+                min={MIN_LIMIT}
+                max={MAX_LIMIT}
+                step={64_000}
+                value={total}
+                onChange={(e) => applyLimit(Number(e.target.value))}
+                className="h-6 w-20 rounded border border-border bg-background px-1 text-right text-xs"
+                aria-label="上下文上限输入"
+              />
+              <span>token</span>
+            </div>
           </div>
         </div>
       )}
