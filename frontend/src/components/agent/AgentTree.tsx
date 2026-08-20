@@ -9,6 +9,7 @@
 import { Network, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/lib/stores/chatStore";
+import EmptyState from "@/components/shared/EmptyState";
 
 export default function AgentTree() {
   const tree = useChatStore((s) => s.agentTree);
@@ -24,7 +25,7 @@ export default function AgentTree() {
         )}
       </div>
       {tree.length === 0 ? (
-        <div className="mt-6 text-center text-xs text-neutral-400">暂无子 Agent 委派</div>
+        <EmptyState compact icon={Network} title="暂无子 Agent 委派" />
       ) : (
         <div className="space-y-1">
           {/* 根：主 Agent */}

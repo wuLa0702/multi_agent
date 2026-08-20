@@ -217,7 +217,8 @@ export type SSEEvent =
   | SummarizeEvent
   | DoneEvent
   | ErrorEvent
-  | CostAlertEvent;
+  | CostAlertEvent
+  | TodosEvent;
 
 /** 成本告警事件（SSE，分级告警 5/10/20；2026-08-12 F3） */
 export interface CostAlertEvent {

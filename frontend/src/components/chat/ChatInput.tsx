@@ -7,7 +7,7 @@
  */
 
 import { useRef, useState } from "react";
-import { Paperclip, Send, Square, MoreHorizontal, Loader2, BookUp, BookDown } from "lucide-react";
+import { Paperclip, Send, MoreHorizontal, Loader2, BookUp, BookDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api/client";
 import { useChatStore } from "@/lib/stores/chatStore";
@@ -132,7 +132,7 @@ export default function ChatInput({
         </div>
       )}
 
-      {/* 第一行：工具栏（v2 §3.2） */}
+      {/* 第一行：工具栏（v2 §3.2；P2-7 间距统一 8px / 按钮高 28px） */}
       {(showAttach || showAgentMode || showModel || showContextUsage) && (
         <div className="mb-2 flex items-center gap-2">
           {showAttach && (
@@ -162,7 +162,7 @@ export default function ChatInput({
                 type="button"
                 disabled={busy}
                 onClick={() => fileRef.current?.click()}
-                className="press flex h-8 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                className="press flex h-7 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
                 title="附加文件（mock）"
                 aria-label="附加文件"
               >
@@ -197,28 +197,28 @@ export default function ChatInput({
             type="button"
             disabled={busy || wikiSaving}
             onClick={handleSaveToWiki}
-            className="press flex h-8 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            className="press flex h-7 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
             title="保存最后一条回复到 wiki 知识库"
             aria-label="保存到 wiki"
           >
             <BookUp className="size-3.5" />
             {wikiSaving ? "保存中…" : "存 wiki"}
           </button>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             <input
               value={wikiPath}
               onChange={(e) => setWikiPath(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleReadFromWiki()}
               placeholder="wiki路径"
               disabled={busy}
-              className="h-8 w-24 rounded-lg border border-border bg-background px-2 text-xs text-muted-foreground outline-none focus-visible:border-ring disabled:opacity-50"
+              className="h-7 w-24 rounded-lg border border-border bg-background px-2 text-xs text-muted-foreground outline-none focus-visible:border-ring disabled:opacity-50"
               aria-label="wiki 页面路径"
             />
             <button
               type="button"
               disabled={busy || wikiLoading}
               onClick={handleReadFromWiki}
-              className="press flex h-8 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+              className="press flex h-7 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
               title="从 wiki 读取页面并注入对话"
               aria-label="从 wiki 拉取"
             >
@@ -233,7 +233,7 @@ export default function ChatInput({
               type="button"
               disabled={busy}
               onClick={() => showToast("更多选项：清空上下文 / 导出对话（mock）", "info")}
-              className="press flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground hover:text-foreground disabled:opacity-50"
+              className="press flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground hover:text-foreground disabled:opacity-50"
               title="更多选项"
               aria-label="更多选项"
             >

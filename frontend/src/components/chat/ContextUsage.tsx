@@ -107,7 +107,7 @@ export default function ContextUsage() {
     <div className="relative">
       {/* 工具栏紧凑条（保留原有入口） */}
       <div
-        className="flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:bg-accent/40"
+        className="flex h-7 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground hover:bg-accent/40"
         title={`上下文用量 ${(used / 1000).toFixed(1)}k / ${Math.round(total / 1000)}k（点击展开详情）`}
         onClick={() => setEditing((v) => !v)}
         data-testid="context-usage"

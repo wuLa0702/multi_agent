@@ -47,7 +47,7 @@ export default function AgentModeSelector({ mode, onChange, disabled }: Props) {
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
         title={current.desc}
-        className="press flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground disabled:opacity-50"
+        className="press flex h-7 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground disabled:opacity-50"
         aria-label="代理模式"
       >
         <Bot className="size-3.5 text-primary" />

@@ -17,17 +17,20 @@ interface HelpTooltipProps {
 export function HelpTooltip({ content, className, side = "top" }: HelpTooltipProps) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "inline-flex shrink-0 items-center justify-center text-muted-foreground/60 hover:text-foreground transition-colors",
-            className
-          )}
-          aria-label="说明"
-        >
-          <HelpCircle className="size-3.5" />
-        </button>
+      {/* base-ui：用 render 自定义触发元素（无 asChild） */}
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className={cn(
+              "inline-flex shrink-0 items-center justify-center text-muted-foreground/60 hover:text-foreground transition-colors",
+              className
+            )}
+            aria-label="说明"
+          />
+        }
+      >
+        <HelpCircle className="size-3.5" />
       </TooltipTrigger>
       <TooltipContent side={side} className="max-w-xs text-xs leading-relaxed">
         {content}
