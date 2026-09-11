@@ -88,3 +88,40 @@ async def test_memory_injection_not_accumulated(tmp_db_path, mock_chat_llm) -> N
 
     memory_msgs = [m for m in msgs if "长期记忆" in str(m.content)]
     assert len(memory_msgs) == 1, f"记忆注入应只 1 份（固定 id 覆盖），实际 {len(memory_msgs)}"
+
+
+async def test_degraded_without_checkpointer_uses_db_history(tmp_db_path, mock_chat_llm) -> None:
+    """降级路径：未挂 Checkpointer → 仍由 DB 重建全量历史（不丢上下文）。
+
+    C01 修复按 `has_checkpointer()` 分流：无 Checkpointer（测试/脚本未跑 lifespan）
+    时图无状态，必须由 DB 提供历史，否则模型看不到上下文。
+    """
+    from src.agent import main_agent
+
+    session_id = "sess-c01-degraded"
+    await _new_session(session_id)
+
+    # 预置一轮历史（旧问题/旧回答）
+    conn = await core_db.get_connection()
+    try:
+        await _append(conn, session_id, "user", "旧问题")
+        await _append(conn, session_id, "assistant", "旧回答")
+    finally:
+        await conn.close()
+
+    # 临时关闭 checkpointer（模拟未跑 lifespan 的降级环境）
+    saved = main_agent._checkpointer
+    main_agent._checkpointer = None
+    try:
+        conn = await core_db.get_connection()
+        try:
+            req = ChatStreamRequest(session_id=session_id, message="新问题")
+            lc_messages = await _prepare_new_messages(conn, repo, req, session_id)
+        finally:
+            await conn.close()
+    finally:
+        main_agent._checkpointer = saved
+
+    contents = [m.content for m in lc_messages]
+    assert "旧问题" in contents and "旧回答" in contents, f"降级模式应含 DB 全量历史：{contents}"
+    assert "新问题" in contents, "应含本条新消息"
