@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api/client";
 import type { CostAlertListResponse, CostSummaryResponse } from "@/lib/api/types";
 import { Badge } from "@/components/ui/badge";
 import { HelpTooltip } from "@/components/shared/HelpTooltip";
 import { Settings2 } from "lucide-react";
 
+/** 成本金额显示：<¥0.01 显示"<¥0.01"，hover 精确值（v6 评审 P0-3 成本精度） */
+function formatCost(cost: number): string {
+  if (cost < 0.01) return "<¥0.01";
+  return `¥${cost.toFixed(2)}`;
+}
+
 /** 会话成本展示（F2 + T8 优化，2026-08-20）：成本汇总 + 告警 + 问号tooltip + 跳转配置 */
 export function CostPanel({ sessionId }: { sessionId: string | null }) {
+  const navigate = useNavigate();
   const [summary, setSummary] = useState<CostSummaryResponse | null>(null);
   const [alerts, setAlerts] = useState<CostAlertListResponse["items"]>([]);
   const [missing, setMissing] = useState(false);
@@ -35,13 +43,18 @@ export function CostPanel({ sessionId }: { sessionId: string | null }) {
 
   return (
     <div className="space-y-1.5 rounded border px-3 py-2 text-xs" data-testid="cost-panel">
-      {/* 成本总额 + tooltip */}
+      {/* 成本总额 + tooltip（hover 显示精确值，P0-3） */}
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-1 text-muted-foreground">
           成本
           <HelpTooltip content="成本 = 模型单价(元/千token) × 增量token；单价在设置页「模型管理」配置" side="right" />
         </span>
-        <span className="font-medium">¥{summary ? summary.total_cost.toFixed(4) : "…"}</span>
+        <span
+          className="font-medium"
+          title={summary ? `¥${summary.total_cost.toFixed(4)}` : undefined}
+        >
+          {summary ? formatCost(summary.total_cost) : "…"}
+        </span>
       </div>
 
       {/* Token 用量 + tooltip */}
@@ -63,10 +76,10 @@ export function CostPanel({ sessionId }: { sessionId: string | null }) {
         </div>
       )}
 
-      {/* 一键跳转配置 */}
+      {/* 一键跳转配置（v6 评审 §3.1 方案A：react-router navigate → 设置页模型单价区定位） */}
       <button
         type="button"
-        onClick={() => window.dispatchEvent(new CustomEvent("navigate", { detail: "settings" }))}
+        onClick={() => navigate("/settings?section=model-pricing")}
         className="flex w-full items-center justify-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
       >
         <Settings2 className="size-3" />

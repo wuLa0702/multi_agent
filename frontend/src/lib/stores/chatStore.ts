@@ -36,6 +36,9 @@ export interface ToolCall {
   arguments: Record<string, unknown>;
   status: "running" | "success" | "error";
   result?: string | null;
+  /** 耗时（v6 评审 P2-8）：首次 running 记录开始，终态记录结束（前端计时） */
+  started_at?: string;
+  ended_at?: string;
 }
 
 export interface AgentNode {
@@ -76,6 +79,7 @@ interface ChatState {
   resume(runId: string): Promise<void>;
   approve(): Promise<void>;
   reject(note?: string): Promise<void>;
+  approveWithEdit(edited: Record<string, unknown>): Promise<void>;
   cancel(): void;
   loadHistory(sessionId: string): Promise<void>;
   clearChat(): void;
@@ -107,7 +111,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     set({ streamStatus: "connecting" });
 
     const callbacks = {
-      onEvent: (event: Parameters<typeof streamChat>[1]["onEvent"]) => handleEvent(set, get, event),
+      onEvent: (event: SSEEvent) => handleEvent(set, get, event),
       onHttpError: (status: number, body: { detail?: string; error?: string; code?: string }) => {
         pushNotice({
           kind: "error",
@@ -513,6 +517,9 @@ function upsertToolCall(
     arguments: event.arguments,
     status: event.status,
     result: event.result ?? null,
+    // P2-8 耗时：新调用记录开始时间；终态记录结束时间（resume 重放保留已有时间戳）
+    started_at: existing?.started_at ?? new Date().toISOString(),
+    ended_at: event.status === "running" ? undefined : existing?.ended_at ?? new Date().toISOString(),
   };
   set({ toolCalls: calls });
 }

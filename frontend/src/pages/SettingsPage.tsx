@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   KeyRound,
   Plug,
@@ -63,6 +64,8 @@ const SYSTEM_SWITCHES: SwitchDef[] = [
 export default function SettingsPage() {
   const [menu, setMenu] = useState<SettingKey>("account");
   const [mockOn, setMockOn] = useState(isMockEnabled());
+  const [searchParams] = useSearchParams();
+  const [flashPricing, setFlashPricing] = useState(false); // ?section=model-pricing 定位高亮
   const providers = useChatStore((s) => s.providers);
   const loadProviders = useChatStore((s) => s.loadProviders);
   const { theme, setTheme } = useTheme();
@@ -104,6 +107,21 @@ export default function SettingsPage() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // v6 评审 P0-2 方案A：/settings?section=model-pricing → 切到「账户与密钥」并滚动定位模型单价区 + 高亮
+  useEffect(() => {
+    if (searchParams.get("section") !== "model-pricing") return;
+    setMenu("account");
+    setFlashPricing(true);
+    const scrollT = setTimeout(() => {
+      document.querySelector('[data-section="model-pricing"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
+    const flashT = setTimeout(() => setFlashPricing(false), 2500);
+    return () => {
+      clearTimeout(scrollT);
+      clearTimeout(flashT);
+    };
+  }, [searchParams]);
 
   /** 开关变更 → 后端持久化（mock 模式同步 localStorage 供 mock 流读取） */
   const handleSwitchChange = (key: string, value: boolean) => {
@@ -158,7 +176,12 @@ export default function SettingsPage() {
           {menu === "account" && (
             <div className="space-y-6">
               <AccountSection providers={providers} />
-              <ModelPriceList />
+              <div
+                data-section="model-pricing"
+                className={cn("rounded-lg transition-shadow", flashPricing && "ring-2 ring-primary/50")}
+              >
+                <ModelPriceList />
+              </div>
               <div className="rounded-lg border border-border p-3" data-testid="mock-toggle">
                 <div className="text-sm font-medium">开发模式（mock 假数据）</div>
                 <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">

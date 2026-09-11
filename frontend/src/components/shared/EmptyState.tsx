@@ -5,12 +5,24 @@ interface EmptyStateProps {
   title: string;
   desc?: string;
   action?: { label: string; onClick: () => void };
+  /** 紧凑版（P2-7）：窄面板/窄栏用，图标小号居中文字 */
+  compact?: boolean;
 }
 
 /**
  * 视觉化空状态组件 — SVG 插画 + 标题 + 描述 + 可选操作按钮
+ * compact 变体：窄容器（侧栏/面板区块）用的小号空态，保持全站空态风格统一。
  */
-export default function EmptyState({ icon: Icon, title, desc, action }: EmptyStateProps) {
+export default function EmptyState({ icon: Icon, title, desc, action, compact = false }: EmptyStateProps) {
+  if (compact) {
+    return (
+      <div className="flex flex-col items-center gap-1 py-4 text-xs text-muted-foreground">
+        <Icon className="size-5 opacity-40" />
+        <span>{title}</span>
+        {desc && <span className="text-[10px] opacity-60">{desc}</span>}
+      </div>
+    );
+  }
   return (
     <div className="flex-1 flex items-center justify-center">
       <div className="text-center max-w-sm px-6">

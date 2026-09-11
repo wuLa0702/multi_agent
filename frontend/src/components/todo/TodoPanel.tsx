@@ -7,7 +7,6 @@
 
 import { useState } from "react";
 import { Check, Circle, ClipboardList } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useChatStore } from "@/lib/stores/chatStore";
 import type { TodoItem } from "@/lib/api/types";
 
@@ -40,7 +39,7 @@ export default function TodoPanel() {
   const todos = useChatStore((s) => s.todos);
   const [collapsed, setCollapsed] = useState(false);
 
-  if (todos.length === 0) return null; // T7：空态由 InfoPanel 处理（"该项目暂无任务"）
+  if (todos.length === 0) return null; // T7：空态由 AgentDetailPanel 任务进度区块处理（"该项目暂无任务"）
 
   const done = todos.filter((t) => t.status === "completed").length;
   const total = todos.length;

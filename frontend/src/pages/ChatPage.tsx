@@ -12,9 +12,8 @@ import { useUiModeStore } from "@/lib/stores/uiModeStore";
 import SessionList from "@/components/history/SessionList";
 import ChatHeader, { exportChatAsMd } from "@/components/chat/ChatHeader";
 import ChatMessages from "@/components/chat/ChatMessages";
-import InfoPanel from "@/components/layout/InfoPanel";
 import ChatInput from "@/components/chat/ChatInput";
-import AgentPanel from "@/components/agent/AgentPanel";
+import AgentDetailPanel from "@/components/agent/AgentDetailPanel";
 import PageHeader from "@/components/common/PageHeader";
 import { showToast } from "@/components/shared/Toast";
 import { showConfirm } from "@/components/ui/confirm-dialog";
@@ -34,6 +33,7 @@ export default function ChatPage() {
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const resumePromptShownRef = useRef(false);
   const autoUpgrade = useUiModeStore((s) => s.autoUpgrade);
+  const streamStatus = useChatStore((s) => s.streamStatus);
 
   // 模式自动检测（v5.0 §3.1/§3.2）：subagent 事件 → 子代理模式；todos → 任务规划；防抖 500ms 单向升级
   const subagentCount = useChatStore((s) => s.agentTree.length);
@@ -46,6 +46,18 @@ export default function ChatPage() {
     }, 500);
     return () => clearTimeout(t);
   }, [subagentCount, todoCount, autoUpgrade]);
+
+  // P1-6 会话自动标题（2026-08-20）：流结束后刷新会话列表——后端首条消息后台生成标题，
+  // 完成后拉列表让新标题上屏（否则一直显示"新会话"直到刷新）
+  const wasStreamingRef = useRef(false);
+  useEffect(() => {
+    const wasStreaming = wasStreamingRef.current;
+    const isStreaming = streamStatus === "streaming" || streamStatus === "connecting";
+    wasStreamingRef.current = isStreaming;
+    if (wasStreaming && streamStatus === "idle") {
+      void loadList().catch(() => undefined);
+    }
+  }, [streamStatus, loadList]);
 
   useEffect(() => {
     void loadList().catch(() => undefined);
@@ -106,7 +118,6 @@ export default function ChatPage() {
               showToast("重命名失败", "error");
             }
           }}
-          onSearch={() => showToast("对话内搜索（后端未实现，mock）", "info")}
           onExport={() => {
             if (messages.length === 0) {
               showToast("暂无内容可导出", "info");
@@ -130,11 +141,8 @@ export default function ChatPage() {
         </div>
       </main>
 
-      {/* 右侧信息栏（P1a 交互优化：任务进度/成本收纳，可折叠） */}
-      <InfoPanel sessionId={sessionId} />
-
-      {/* 第四栏：Agent 详情面板（v3 §3.5，可开关可拖动） */}
-      <AgentPanel open={agentPanelOpen} onClose={() => setAgentPanelOpen(false)} />
+      {/* 第四栏：Agent 详情面板（v6 评审 P0-1：合并运行信息 + Agent 详情，可开关可拖动） */}
+      <AgentDetailPanel open={agentPanelOpen} onClose={() => setAgentPanelOpen(false)} />
 
     </div>
   );

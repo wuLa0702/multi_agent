@@ -28,15 +28,18 @@ export default function ModeSwitcher() {
   return (
     <div className="relative">
       <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            className="flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
-            aria-label={current.tooltip}
-          >
-            <CurrentIcon className="size-4" />
-          </button>
+        {/* base-ui：用 render 自定义触发元素（无 asChild） */}
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={() => setOpen((o) => !o)}
+              className="flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+              aria-label={current.tooltip}
+            />
+          }
+        >
+          <CurrentIcon className="size-4" />
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-xs">
           {current.tooltip}
@@ -51,22 +54,24 @@ export default function ModeSwitcher() {
               const Icon = m.icon;
               return (
                 <Tooltip key={m.key}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMode(m.key, true); // 手动切换 → 优先级最高
-                        setOpen(false);
-                      }}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition hover:bg-accent",
-                        m.key === mode && "font-medium text-primary",
-                      )}
-                    >
-                      <Icon className="size-3.5" />
-                      {m.label}
-                      {m.key === mode && <span className="ml-auto">✓</span>}
-                    </button>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode(m.key, true); // 手动切换 → 优先级最高
+                          setOpen(false);
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition hover:bg-accent",
+                          m.key === mode && "font-medium text-primary",
+                        )}
+                      />
+                    }
+                  >
+                    <Icon className="size-3.5" />
+                    {m.label}
+                    {m.key === mode && <span className="ml-auto">✓</span>}
                   </TooltipTrigger>
                   <TooltipContent side="left" className="text-xs">
                     {m.tooltip}
