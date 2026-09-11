@@ -35,6 +35,7 @@ Thumbs.db
 .cat-cafe/
 .claude/hooks/
 .claude/skills/
+.claude/worktrees/
 .codex/
 .gemini/
 .kimi/
