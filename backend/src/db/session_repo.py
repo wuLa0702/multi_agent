@@ -197,3 +197,24 @@ async def list_messages(
     rows = await cursor.fetchall()
     # DESC 取（最新在前）后反转回 id 升序，保持「会话内自然顺序」契约
     return [_row_to_message(r) for r in reversed(rows)]
+
+
+async def count_turns(conn: aiosqlite.Connection, session_id: str) -> int:
+    """会话对话轮次（user/assistant 成对数量）。
+
+    C01 修复（2026-09-11）：记忆抽取的「短对话跳过」判定需要真实轮次——
+    增量输入模式下输入消息数不再等于历史轮次，故由 DB 统计。
+
+    Args:
+        conn: SQLite 连接
+        session_id: 会话 ID
+
+    Returns:
+        轮次 = (user + assistant 消息数) // 2（空会话 → 0）
+    """
+    cursor = await conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE session_id = ? AND role IN ('user', 'assistant')",
+        (session_id,),
+    )
+    row = await cursor.fetchone()
+    return (row[0] if row else 0) // 2

@@ -32,6 +32,7 @@ from src.agent.intent import classify_intent
 from src.agent.main_agent import (
     ChatContext,
     build_agent,
+    has_checkpointer,
     stream_agent_events,
     stream_agent_tokens,
 )
@@ -232,10 +233,21 @@ async def _resolve_session(conn, req: ChatStreamRequest) -> str:
     return session_id
 
 
+# 注入消息的固定 id（C01 修复，2026-09-11）：Checkpointer 的 reducer 按 id 去重——
+# 固定 id → 每轮**覆盖同一槽位**，避免记忆/模式 SystemMessage 逐轮堆叠。
+_MEMORY_MSG_ID = "__memory_injection__"
+_MODE_MSG_ID = "__mode_instruction__"
+
+
 async def _prepare_new_messages(
     conn, repo, req: ChatStreamRequest, session_id: str
 ) -> list[BaseMessage]:
-    """新消息模式准备：user 落库 + 自动标题 + 组历史 + 模式/记忆注入。
+    """新消息模式准备：user 落库 + 自动标题 + 组输入 + 模式/记忆注入。
+
+    C01 修复（2026-09-11，co-creator 拍板）：**执行历史由图状态承载**——
+    挂了 Checkpointer 时只传**增量**（本条 user 消息），历史由 Checkpointer 累积；
+    未挂（测试/脚本降级）→ 由 DB 重建全量历史。修复前每轮重传全量无 id 历史，
+    被 reducer 反复追加（见 `docs/决策/2026-09-11-评估-会话与消息上下文核验-v1.md`）。
 
     Returns:
         LangChain 消息列表（含注入的 SystemMessage）
@@ -251,26 +263,29 @@ async def _prepare_new_messages(
     if session_row is not None and session_row.title == "新会话":
         asyncio.create_task(_generate_title_in_background(session_id, req.message or ""))
 
-    # 2. 组历史（含本条 user 消息）→ LangChain 格式
-    history = await repo.list_messages(conn, session_id, limit=PAGINATION_LIMIT_MAX)
-    lc_messages = _history_to_langchain(history)
+    # 2. 组输入：有 Checkpointer → 只传增量（图管执行历史）；无 → DB 全量重建（降级）
+    if has_checkpointer():
+        lc_messages: list[BaseMessage] = [HumanMessage(content=req.message or "")]
+    else:
+        history = await repo.list_messages(conn, session_id, limit=PAGINATION_LIMIT_MAX)
+        lc_messages = _history_to_langchain(history)
 
-    # 2.5 代理模式注入（P1 先浅后深：仅请求级 SystemMessage）
+    # 2.5 代理模式注入（P1 先浅后深：仅请求级 SystemMessage；固定 id 防堆叠）
     if req.mode != "default":
         from src.agent.prompts import MODE_INSTRUCTIONS
 
         instruction = MODE_INSTRUCTIONS.get(req.mode)
         if instruction:
-            lc_messages = [SystemMessage(content=instruction), *lc_messages]
+            lc_messages = [SystemMessage(content=instruction, id=_MODE_MSG_ID), *lc_messages]
 
-    # 2.6 长期记忆注入（v3 检索，2026-08-15 修复"写了没读到"）：画像优先 + 时间衰减 + 窗口裁剪（失败静默降级）
+    # 2.6 长期记忆注入（v3 检索，2026-08-15 修复"写了没读到"）：画像优先 + 时间衰减 + 窗口裁剪（失败静默降级；固定 id 防堆叠）
     from src.agent.main_agent import get_store
     from src.agent.memory.store import load_recent_memories_v3
 
     memories = await load_recent_memories_v3(get_store())
     if memories:
         memory_text = "以下是你的长期记忆（供参考，可能与本对话无关）：\n" + "\n".join(memories)
-        lc_messages = [SystemMessage(content=memory_text), *lc_messages]
+        lc_messages = [SystemMessage(content=memory_text, id=_MEMORY_MSG_ID), *lc_messages]
     return lc_messages
 
 
@@ -477,7 +492,7 @@ async def _trigger_memory_after(
     req: ChatStreamRequest,
     session_id: str,
     assistant_text: str,
-    lc_messages: list[BaseMessage],
+    turn_count: int,
     is_resume: bool,
 ) -> None:
     """会话结束记忆后台写入（done 前触发不等待，内部全容错）。
@@ -490,7 +505,8 @@ async def _trigger_memory_after(
         req: 流式对话请求
         session_id: 会话 ID
         assistant_text: assistant 全文
-        lc_messages: 输入消息（turn_count 计算用）
+        turn_count: 会话对话轮次（C01 修复 2026-09-11：由 DB 统计，不再用
+            输入消息数——增量输入模式下 lc_messages 不含全量历史）
         is_resume: 是否 resume（resume 不重复写记忆）
     """
     if is_resume or not assistant_text:
@@ -509,11 +525,11 @@ async def _trigger_memory_after(
         )
     else:
         # 降级路径：现状单次 LLM 抽取（extract_memory_typed 保留）
-        # v3.1：turn_count = 历史消息轮次（user+assistant 成对）——短对话跳过
+        # v3.1：turn_count 为会话对话轮次（user+assistant 成对）——短对话跳过
         asyncio.create_task(
             _save_memory_in_background(
                 req.message or "", assistant_text,
-                turn_count=len(lc_messages) // 2,
+                turn_count=turn_count,
             )
         )
 
@@ -680,7 +696,10 @@ async def _event_stream(
         )
 
         # 5. 长期记忆后台写入（done 前触发不等待——2026-08-04 优化）
-        await _trigger_memory_after(req, session_id, assistant_text, lc_messages, is_resume)
+        #    turn_count 由 DB 统计（C01 修复：增量输入下 lc_messages 不含全量历史）
+        await _trigger_memory_after(
+            req, session_id, assistant_text, await repo.count_turns(conn, session_id), is_resume
+        )
 
         # 5.5 成本软告警事件（2026-08-11 成本控制 §5.6）：本 run 有超阈值告警 → yield
         #     中间件落 cost_alerts 已去重；这里 run 内发一次（前端 pushNotice）

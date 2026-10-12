@@ -310,6 +310,40 @@ async def checkpoint_exists(thread_id: str, checkpoint_id: str) -> bool:
     return True
 
 
+def has_checkpointer() -> bool:
+    """当前是否挂了 Checkpointer（决定「谁负责恢复对话历史」，C01 修复 2026-09-11）。
+
+    挂了 Checkpointer 时**执行历史由图状态承载**，chat.py 只传增量；未挂
+    （测试/脚本未跑 lifespan）→ 降级由 DB 重建全量历史。
+
+    Returns:
+        True=图持久化执行历史（新消息模式只传增量）；False=降级模式（传 DB 全量历史）
+    """
+    return _checkpointer is not None
+
+
+async def delete_thread_checkpoints(thread_id: str) -> bool:
+    """删除某会话（thread）的全部断点（S01：删除会话联动清理，2026-09-11）。
+
+    ⚠️ 只删**执行状态**断点；长期 Store（跨会话记忆）**不删**——记忆独立于
+    会话生命周期（co-creator 拍板）。checkpointer 未初始化 → 视为无需清理。
+
+    Args:
+        thread_id: 会话 ID（== thread_id）
+
+    Returns:
+        True=已删除或无需清理；False=删除失败（已降级记录，不抛）
+    """
+    if _checkpointer is None:
+        return True
+    try:
+        await _checkpointer.adelete_thread(thread_id)
+        return True
+    except Exception:  # noqa: BLE001 —— 断点清理是旁路，失败不阻断会话删除
+        logger.warning("断点清理失败（会话删除继续）：thread=%s", thread_id, exc_info=True)
+        return False
+
+
 # Store 长期记忆（P1，2026-08-04）：SqliteStore 持久化（评审选型拍板），
 # 生命周期由 lifespan 管理（与 checkpointer 同模式）；未初始化 → 降级无记忆。
 _store = None

@@ -158,6 +158,51 @@ async def test_delete_calls_rebuild_and_cleanup(
 
 
 @pytest.mark.asyncio
+async def test_delete_cleans_checkpoints_but_keeps_store(
+    app_env_dev, tmp_db_path, session_id
+) -> None:
+    """S01（2026-09-11 拍板）：删除会话连带删**断点**；**长期记忆（Store）保留**。"""
+    from langgraph.checkpoint.base import Checkpoint
+
+    from src.agent import main_agent
+    from src.agent.memory.store import load_recent_memories_v3, save_typed_memory
+
+    assert main_agent.has_checkpointer(), "测试环境应已初始化 checkpointer（conftest autouse）"
+
+    # 准备：写入一个断点 + 一条长期记忆
+    cp: Checkpoint = {
+        "v": 1,
+        "ts": "2026-09-11T00:00:00Z",
+        "id": f"cp-{session_id}",
+        "channel_values": {"messages": []},
+        "channel_versions": {},
+        "versions_seen": {},
+        "pending_sends": [],
+    }
+    await main_agent._checkpointer.aput(
+        {"configurable": {"thread_id": session_id, "checkpoint_ns": ""}},
+        cp,
+        {"source": "loop", "step": 1, "writes": None},
+        {},
+    )
+    await save_typed_memory(main_agent.get_store(), "facts", "项目使用 SQLite 存断点")
+    assert await main_agent.checkpoint_exists(session_id, f"cp-{session_id}") is True
+
+    # 删除会话
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.delete(f"/v1/sessions/{session_id}")
+    assert resp.status_code == 200
+
+    # 断点应已清理
+    assert await main_agent.checkpoint_exists(session_id, f"cp-{session_id}") is False, (
+        "删除会话应连带删除该会话执行断点"
+    )
+    # 长期记忆应保留（跨会话共用，独立于会话生命周期）
+    memories = await load_recent_memories_v3(main_agent.get_store())
+    assert any("SQLite" in m for m in memories), "长期记忆不应随会话删除"
+
+
+@pytest.mark.asyncio
 async def test_list_messages_paginates_with_cursor(
     app_env_dev, tmp_db_path, messages_fixture, session_id
 ) -> None:

@@ -61,7 +61,12 @@ async def update_session(
 
 
 async def delete_session(session_id: str) -> bool:
-    """删除会话 + 联动：缓存图重建 / 工作区清理 / 沙箱销毁（幂等）。"""
+    """删除会话 + 联动：缓存图重建 / 工作区清理 / 沙箱销毁 / 断点清理（幂等）。
+
+    S01（2026-09-11 co-creator 拍板）：「删除会话」**连带删除该会话执行断点**
+    （Checkpoint，`delete_thread_checkpoints` 旁路降级不阻断）；**长期记忆
+    （Store）不删**——跨会话记忆独立于会话生命周期。
+    """
     conn = await core_db.get_connection()
     try:
         deleted = await session_repo.delete_session(conn, session_id)
@@ -69,6 +74,7 @@ async def delete_session(session_id: str) -> bool:
             main_agent.rebuild_agent(session_id)
             cleanup_workspace(session_id, older_than_days=0)
             sandbox_pool.destroy(session_id)
+            await main_agent.delete_thread_checkpoints(session_id)  # S01：断点联动
         return deleted
     finally:
         await conn.close()
