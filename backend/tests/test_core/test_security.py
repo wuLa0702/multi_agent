@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import pytest
 
-from src.tools.impl.fetch import _validate_url, fetch_url
 from src.core.permissions import validate_workspace_path
+from src.tools.impl.fetch import fetch_url
+from src.tools.validators import validate_url
 
 
 class TestValidateWorkspacePath:
@@ -72,17 +73,17 @@ class TestFetchUrlInjection:
     """D3 URL 注入校验（用例 7-8 + 2026-08-12 security_audit 收口）。"""
 
     def test_valid_url(self) -> None:
-        assert _validate_url("https://api.deepseek.com/pricing") is None
+        assert validate_url("https://api.deepseek.com/pricing") is None
 
     def test_javascript_protocol_rejected(self) -> None:
-        assert _validate_url("javascript:alert(1)") is not None
+        assert validate_url("javascript:alert(1)") is not None
 
     def test_file_protocol_rejected(self) -> None:
-        assert _validate_url("file:///etc/passwd") is not None
+        assert validate_url("file:///etc/passwd") is not None
 
     def test_injection_chars_rejected(self) -> None:
-        assert _validate_url("https://x.com/a;rm -rf") is not None
-        assert _validate_url("https://x.com/\"onerror=alert") is not None
+        assert validate_url("https://x.com/a;rm -rf") is not None
+        assert validate_url("https://x.com/\"onerror=alert") is not None
 
     def test_fetch_url_invalid_degrades(self) -> None:
         """注入 URL → 降级提示（不中断）。"""
@@ -91,7 +92,7 @@ class TestFetchUrlInjection:
 
     def test_security_audit_decorator_logs(self, audit_records) -> None:
         """security_audit 装饰器：校验失败自动审计（安全评审 2.5 收口）。"""
-        assert _validate_url("javascript:alert(1)") is not None
+        assert validate_url("javascript:alert(1)") is not None
         rec = audit_records[-1]
         assert "blocked" in rec.getMessage()
         assert "fetch_url" in rec.getMessage()

@@ -18,15 +18,10 @@ from langchain_core.runnables import RunnableConfig
 from src.core.config import settings
 from src.sandbox.adapter import OpenSandboxAdapter
 from src.sandbox.pool import SandboxFullError, sandbox_pool
+from src.tools.validators import validate_command, validate_sandbox_path
 
 # 沙箱适配器（惰性：import 不创建沙箱，调用时才连本地 docker / 云端）
 sandbox_adapter = OpenSandboxAdapter()
-
-# 危险命令前缀黑名单（§3.4 命令约束）：防 agent 误操作/恶意指令
-_BLOCKED_COMMAND_PREFIXES = (
-    "rm -rf /", "mkfs", "shutdown", "reboot", "halt",
-    "dd if=/dev/zero", "chmod -R 777 /", ":(){ :|:& };:",
-)
 
 
 def _thread_id_from(config: RunnableConfig | None) -> str:
@@ -45,40 +40,6 @@ def _thread_id_from(config: RunnableConfig | None) -> str:
     if config:
         return str(config.get("configurable", {}).get("thread_id") or "default")
     return "default"
-
-
-def _validate_command(command: str) -> str | None:
-    """命令校验（§3.4）：危险前缀拒绝，返回错误提示；None = 通过。
-
-    Args:
-        command: 待执行 shell 命令
-
-    Returns:
-        拒绝原因（字符串）或 None（放行）
-    """
-    stripped = command.strip()
-    for prefix in ("sudo ", "env "):
-        if stripped.startswith(prefix):
-            stripped = stripped[len(prefix):].lstrip()
-    for bad in _BLOCKED_COMMAND_PREFIXES:
-        if stripped.startswith(bad):
-            return f"命令被沙箱安全策略拒绝（危险操作：{bad}…），请换一种方式。"
-    return None
-
-
-def _validate_sandbox_path(filename: str) -> str | None:
-    """沙箱内路径校验（§3.3 + 00-security）：禁 ../ 逃逸与绝对路径。
-
-    Args:
-        filename: workspace 相对文件名（如 "main.py"、"sub/x.py"）
-
-    Returns:
-        拒绝原因（字符串）或 None（放行）
-    """
-    parts = filename.replace("\\", "/").split("/")
-    if filename.startswith("/") or any(p == ".." for p in parts):
-        return "沙箱路径不合法：仅允许 workspace 相对路径，禁 ../ 与绝对路径。"
-    return None
 
 
 def _truncate_output(text: str) -> str:
@@ -108,6 +69,10 @@ def run_code_in_sandbox(
     Returns:
         执行 stdout（截断）；失败/资源已满时返回错误提示字符串
     """
+    # 补漏（阶段 1.2）：此前 filename 完全未校验（违反 CLAUDE.md 核心约束 #5）
+    blocked = validate_sandbox_path(filename)
+    if blocked:
+        return blocked  # 审计由 @security_audit 统一记
     if not settings.sandbox_url:
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
     if not settings.sandbox_pool_enabled:
@@ -158,11 +123,9 @@ def run_command_in_sandbox(
     """
     if not settings.sandbox_url:
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
-    blocked = _validate_command(command)
+    blocked = validate_command(command)
     if blocked:
-        from src.tools.audit import log_security_blocked
-        log_security_blocked("run_command_in_sandbox", blocked)
-        return blocked
+        return blocked  # 审计由 @security_audit 统一记（不再调用点手写，防散落漏记）
     try:
         sandbox = sandbox_pool.get_sandbox(_thread_id_from(config))
         out = sandbox_adapter.run_command(
@@ -193,11 +156,9 @@ def upload_workspace_file(
     """
     if not settings.sandbox_url:
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
-    blocked = _validate_sandbox_path(filename)
+    blocked = validate_sandbox_path(filename)
     if blocked:
-        from src.tools.audit import log_security_blocked
-        log_security_blocked("upload_workspace_file", blocked)
-        return blocked
+        return blocked  # 审计由 @security_audit 统一记
     try:
         sandbox = sandbox_pool.get_sandbox(_thread_id_from(config))
         sandbox_adapter.upload_file(sandbox, f"workspace/{filename}", content)
@@ -222,11 +183,9 @@ def download_sandbox_file(
     """
     if not settings.sandbox_url:
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
-    blocked = _validate_sandbox_path(filename)
+    blocked = validate_sandbox_path(filename)
     if blocked:
-        from src.tools.audit import log_security_blocked
-        log_security_blocked("download_sandbox_file", blocked)
-        return blocked
+        return blocked  # 审计由 @security_audit 统一记
     try:
         sandbox = sandbox_pool.get_sandbox(_thread_id_from(config))
         return _truncate_output(
