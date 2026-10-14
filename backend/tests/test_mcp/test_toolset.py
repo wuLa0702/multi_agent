@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from src.mcp import registry
+from src.tools import registry
 
 
 def test_tools_for_main_matches_legacy_manifest() -> None:

@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from src.agent.main_agent import rebuild_agent
 from src.agent.services import skill_service
 from src.core import db as core_db
-from src.mcp.client import get_mcp_client_manager
+from src.tools.channels.mcp_client import get_mcp_client_manager
 from src.schemas.skill import (
     SKILL_TYPE_MCP,
     SKILL_TYPE_MD,
@@ -27,8 +27,8 @@ from src.schemas.skill import (
     MarketplaceListResponse,
     SkillUpdateRequest,
 )
-from src.skills import installer
-from src.skills.marketplace import get_market_item_detail, search_marketplace
+from src.tools.market import installer
+from src.tools.market.marketplace import get_market_item_detail, search_marketplace
 
 router = APIRouter(prefix="/v1/skills", tags=["skills"])
 

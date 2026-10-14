@@ -8,7 +8,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from src.agent.tools.fetch_tool import clean_html, fetch_url
+from src.tools.impl.fetch import clean_html, fetch_url
 
 
 class TestCleanHtml:
@@ -75,6 +75,6 @@ class TestFetchUrl:
 
 def test_fetch_url_registered() -> None:
     """注册表含 fetch_url（决策 #1：搜索发现 + 抓取获取 双工具）。"""
-    from src.mcp.registry import get_tool
+    from src.tools.registry import get_tool
 
     assert callable(get_tool("fetch_url"))

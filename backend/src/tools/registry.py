@@ -1,4 +1,4 @@
-"""工具定义唯一真相源（蓝图 §4：mcp/registry.py）。
+"""工具定义唯一真相源（蓝图 §4：tools/registry.py）。
 
 本模块是"工具是什么"的**唯一登记处**：一条 `ToolSpec` = 一个工具的实现 + 元数据。
 三个消费方全部从 `TOOL_REGISTRY` 派生，杜绝"两处清单漂移"（阶段 0.1）：
@@ -18,19 +18,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from src.agent.tools.ask_human import ask_human
-from src.agent.tools.fetch_tool import fetch_url
-from src.agent.tools.publish_report import publish_report
-from src.agent.tools.report_generator import generate_report
-from src.agent.tools.sandbox_tool import (
+from src.tools.impl.ask_human import ask_human
+from src.tools.impl.fetch import fetch_url
+from src.tools.impl.publish_report import publish_report
+from src.tools.impl.report import generate_report
+from src.tools.impl.sandbox import (
     download_sandbox_file,
     run_code_in_sandbox,
     run_command_in_sandbox,
     upload_workspace_file,
 )
-from src.agent.tools.search import internet_search
-from src.agent.tools.skill_tool import run_skill_script
-from src.agent.tools.wiki_writer import write_wiki
+from src.tools.impl.search import internet_search
+from src.tools.impl.skill import run_skill_script
+from src.tools.impl.wiki import write_wiki
 from src.core.retry import retry_tool
 
 HITL_DOMAIN = "hitl"

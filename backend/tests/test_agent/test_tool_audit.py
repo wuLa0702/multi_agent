@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import ToolMessage
 
-from src.agent.middlewares.tool_audit import ToolAuditMiddleware
+from src.tools.audit import ToolAuditMiddleware
 
 
 def _make_request(name: str, args: dict | None = None, session_id: str = "s1"):
@@ -57,7 +57,7 @@ async def test_tool_audit_never_blocks(monkeypatch) -> None:
     """T6：审计 logger 打炸（monkeypatch 抛异常）→ 工具仍正常执行。"""
     middleware = ToolAuditMiddleware()
     monkeypatch.setattr(
-        "src.agent.middlewares.tool_audit.audit_logger.info",
+        "src.tools.audit.audit_logger.info",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit boom")),
     )
 

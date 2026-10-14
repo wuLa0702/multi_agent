@@ -1,10 +1,10 @@
-"""工具注册表单测：mcp/registry.py（工具名 → 实现函数映射）。"""
+"""工具注册表单测：tools/registry.py（工具名 → 实现函数映射）。"""
 
 from __future__ import annotations
 
 import pytest
 
-from src.mcp import registry
+from src.tools import registry
 
 
 def test_registry_contains_known_tools() -> None:

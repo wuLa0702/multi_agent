@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.mcp.registry import TOOL_REGISTRY  # noqa: E402
+from src.tools.registry import TOOL_REGISTRY  # noqa: E402
 
 # deepagents 内置文件工具描述（固定常量——FilesystemMiddleware 工具）
 _BUILTIN_FILE_TOOLS: dict[str, str] = {

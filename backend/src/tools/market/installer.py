@@ -88,7 +88,7 @@ async def _resolve_mcp_connection(item: SkillMarketItem) -> tuple[str, str]:
     其他来源（manual / 第三方直连 URL）：直接用条目自带 url + 空 headers。
     """
     if item.source == SKILL_SOURCE_SMITHERY:
-        from src.skills.marketplace import create_smithery_connection
+        from src.tools.market.marketplace import create_smithery_connection
 
         version = item.version or item.name
         conn = await create_smithery_connection(version)
@@ -278,7 +278,7 @@ def install_skill_directory(
         FileExistsError: 技能已存在（先卸载）
         ValueError: 路径逃逸 / 技能目录校验失败
     """
-    from src.skills.templates import validate_skill_dir
+    from src.tools.market.templates import validate_skill_dir
 
     target = get_skill_md_dir() / name
     if target.exists():

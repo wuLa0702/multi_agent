@@ -1,7 +1,7 @@
 """声明式子 Agent YAML 加载器（蓝图决策 1/2：subagents/*.yaml）。
 
 将 agent/subagents/*.yaml 解析为 deepagents CompiledSubAgent（统一预编译）：
-- tools 字段：名字符串 → 经 mcp.registry 查表映射为实际函数
+- tools 字段：名字符串 → 经 tools.registry 查表映射为实际函数
 - permissions 字段（P1）：YAML 显式声明优先；缺省走 core.permissions 模板；
   模板无 → 不注入键（继承父级规则，graph.py:663 spec.get("permissions", permissions)）
 - model 字段（P1-1，2026-08-06）：按任务选模型——YAML 声明 model_name，
@@ -32,7 +32,7 @@ from src.agent.subagents.guard import guard_subagent
 from src.core.model_registry import get_registry
 from src.core.permissions import build_subagent_permissions
 from src.llm.adapter import get_chat_model
-from src.mcp.registry import get_tool
+from src.tools.registry import get_tool
 
 SUBAGENTS_DIR = Path(__file__).resolve().parent
 

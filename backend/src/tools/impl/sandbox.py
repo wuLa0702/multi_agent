@@ -6,7 +6,7 @@
 - upload_workspace_file / download_sandbox_file：workspace ↔ 沙箱文件同步
   （sandbox:/workspace/ 约定 + 路径校验防逃逸）
 - 会话定位：RunnableConfig 参数由框架注入，取 thread_id（stream_agent_tokens 封装）
-- 注册进 mcp.registry；本地 dev 连 docker（8080），prod 连云端
+- 注册进 tools.registry；本地 dev 连 docker（8080），prod 连云端
 """
 
 from __future__ import annotations
@@ -160,7 +160,7 @@ def run_command_in_sandbox(
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
     blocked = _validate_command(command)
     if blocked:
-        from src.agent.middlewares.tool_audit import log_security_blocked
+        from src.tools.audit import log_security_blocked
         log_security_blocked("run_command_in_sandbox", blocked)
         return blocked
     try:
@@ -195,7 +195,7 @@ def upload_workspace_file(
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
     blocked = _validate_sandbox_path(filename)
     if blocked:
-        from src.agent.middlewares.tool_audit import log_security_blocked
+        from src.tools.audit import log_security_blocked
         log_security_blocked("upload_workspace_file", blocked)
         return blocked
     try:
@@ -224,7 +224,7 @@ def download_sandbox_file(
         return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
     blocked = _validate_sandbox_path(filename)
     if blocked:
-        from src.agent.middlewares.tool_audit import log_security_blocked
+        from src.tools.audit import log_security_blocked
         log_security_blocked("download_sandbox_file", blocked)
         return blocked
     try:

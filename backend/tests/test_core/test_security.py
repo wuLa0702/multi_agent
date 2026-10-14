@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.tools.fetch_tool import _validate_url, fetch_url
+from src.tools.impl.fetch import _validate_url, fetch_url
 from src.core.permissions import validate_workspace_path
 
 
@@ -101,7 +101,7 @@ class TestAuditBlocked:
     """D5 安全拦截事件（用例 9-10）。"""
 
     def test_blocked_event_logged(self, audit_records) -> None:
-        from src.agent.middlewares.tool_audit import ToolAuditMiddleware
+        from src.tools.audit import ToolAuditMiddleware
 
         mw = ToolAuditMiddleware()
         mw._audit_blocked("fetch_url", "注入 URL")

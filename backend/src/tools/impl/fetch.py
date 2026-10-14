@@ -14,7 +14,7 @@ from html import unescape
 
 import httpx
 
-from src.agent.middlewares.tool_audit import security_audit
+from src.tools.audit import security_audit
 from src.core.retry import retry_tool
 
 # ── 抓取限制（决策 §3.1：安全 + 防膨胀）──

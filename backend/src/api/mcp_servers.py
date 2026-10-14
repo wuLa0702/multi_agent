@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from src.agent.services import skill_service
 from src.core import db as core_db
-from src.mcp.client import get_mcp_client_manager
+from src.tools.channels.mcp_client import get_mcp_client_manager
 
 router = APIRouter(prefix="/v1/mcp-servers", tags=["mcp-servers"])
 

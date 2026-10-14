@@ -50,8 +50,8 @@ from src.llm.adapter import get_chat_model
 from src.core.logging import setup_logging
 from src.core.model_registry import get_registry
 from src.core.redis import close_redis, get_redis
-from src.mcp.client import get_mcp_client_manager
-from src.mcp.server import mcp as mcp_server
+from src.tools.channels.mcp_client import get_mcp_client_manager
+from src.tools.channels.mcp_server import mcp as mcp_server
 
 # 日志配置（UTF-8 + 双滚动 + 2 周保留，见 .claude/rules/04-logging.md）
 setup_logging()

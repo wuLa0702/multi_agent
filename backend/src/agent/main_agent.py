@@ -1,8 +1,8 @@
 """主 Agent：deepagents 对话编排（搜索子代理 + OpenSandbox 沙箱工具）。
 
 能力布局（蓝图 §4，与 agent_demo.py 同源）：
-- 业务工具定义：src/agent/tools/ 按域分包（search.py 搜索域 / sandbox_tool.py 沙箱域），
-  经 src/mcp/registry.py 注册表暴露
+- 业务工具定义：src/tools/impl/ 按域分包（search.py 搜索域 / sandbox.py 沙箱域），
+  经 src/tools/registry.py 注册表暴露
 - 声明式子代理：src/agent/subagents/*.yaml（loader.py 解析，tools 名查 registry）
 
 演进预留（接口文档 §2 重后端内聚）：
@@ -46,7 +46,7 @@ from src.agent.hitl.hitl import build_hitl_interrupt_on, should_mount_hitl_tools
 from src.agent.hitl.pending import register_interrupt
 from src.agent.middlewares.interpreter import build_interpreter_middleware
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
-from src.agent.middlewares.tool_audit import ToolAuditMiddleware
+from src.tools.audit import ToolAuditMiddleware
 from src.agent.rubrics.rubrics import build_rubric_middleware
 from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
@@ -62,8 +62,8 @@ from src.core.paths import (
 )
 from src.core.permissions import build_main_permissions
 from src.llm.adapter import get_chat_model
-from src.mcp.client import get_mcp_client_manager
-from src.mcp.registry import hitl_tools, tools_for_main
+from src.tools.channels.mcp_client import get_mcp_client_manager
+from src.tools.registry import hitl_tools, tools_for_main
 
 from src.agent.middlewares.trace import trace_event  # 推理层 trace（决策 #4：agent/middlewares/trace.py）
 
@@ -420,8 +420,8 @@ def _build_agent(thread_id: str):
     Returns:
         deepagents 编译后的 Agent（LangGraph CompiledStateGraph）
     """
-    # 工具 = 内部工具 + 外部 MCP 工具（lifespan 连接收集，见 src/mcp/client.py）
-    # 内部工具清单唯一来源 = mcp/registry.py（阶段 0.1：杜绝硬编码清单漂移）
+    # 工具 = 内部工具 + 外部 MCP 工具（lifespan 连接收集，见 src/tools/channels/mcp_client.py）
+    # 内部工具清单唯一来源 = tools/registry.py（阶段 0.1：杜绝硬编码清单漂移）
     internal_tools = tools_for_main()
     # HITL 工具（P0 设计 §5.1）：hitl_enabled 门控挂载——ask_human（需求澄清/
     # 中途确认，respond 决策）+ publish_report（输出审核交付闸门）。关 HITL 时

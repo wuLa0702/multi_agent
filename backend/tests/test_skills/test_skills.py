@@ -16,8 +16,8 @@ from types import SimpleNamespace
 import pytest
 
 from src.core.config import settings
-from src.agent.tools import skill_tool
-from src.skills.templates import create_skill_from_template, validate_skill_dir
+from src.tools.impl import skill
+from src.tools.market.templates import create_skill_from_template, validate_skill_dir
 
 
 # ── 模板生成（copytree，评审问题 1）──
@@ -90,9 +90,9 @@ def test_validate_skill_dir_problems(tmp_path) -> None:
 
 def test_install_skill_directory_writes_tree(monkeypatch, tmp_path) -> None:
     """多文件安装：落盘目录结构 + install_path 为目录。"""
-    monkeypatch.setattr("src.skills.installer.get_skill_md_dir", lambda: tmp_path / "skill_md")
+    monkeypatch.setattr("src.tools.market.installer.get_skill_md_dir", lambda: tmp_path / "skill_md")
 
-    from src.skills.installer import install_skill_directory
+    from src.tools.market.installer import install_skill_directory
 
     path = install_skill_directory(
         None,
@@ -109,9 +109,9 @@ def test_install_skill_directory_writes_tree(monkeypatch, tmp_path) -> None:
 
 def test_install_skill_directory_rejects_escape(monkeypatch, tmp_path) -> None:
     """路径逃逸（../ 与绝对路径）→ ValueError（00-security）。"""
-    monkeypatch.setattr("src.skills.installer.get_skill_md_dir", lambda: tmp_path / "skill_md")
+    monkeypatch.setattr("src.tools.market.installer.get_skill_md_dir", lambda: tmp_path / "skill_md")
 
-    from src.skills.installer import install_skill_directory
+    from src.tools.market.installer import install_skill_directory
 
     with pytest.raises(ValueError, match="路径不合法"):
         install_skill_directory(
@@ -121,9 +121,9 @@ def test_install_skill_directory_rejects_escape(monkeypatch, tmp_path) -> None:
 
 def test_install_skill_directory_validates(monkeypatch, tmp_path) -> None:
     """校验门禁：缺 frontmatter 必填字段 → ValueError。"""
-    monkeypatch.setattr("src.skills.installer.get_skill_md_dir", lambda: tmp_path / "skill_md")
+    monkeypatch.setattr("src.tools.market.installer.get_skill_md_dir", lambda: tmp_path / "skill_md")
 
-    from src.skills.installer import install_skill_directory
+    from src.tools.market.installer import install_skill_directory
 
     with pytest.raises(ValueError, match="校验失败"):
         install_skill_directory(None, "bad", {"SKILL.md": "无 frontmatter"})
@@ -137,16 +137,16 @@ def script_env(monkeypatch, tmp_path):
     skill_dir = tmp_path / "skill_md" / "research-report" / "scripts"
     skill_dir.mkdir(parents=True)
     (skill_dir / "build_report.py").write_text("print('骨架')", encoding="utf-8")
-    monkeypatch.setattr(skill_tool, "get_skill_md_dir", lambda: tmp_path / "skill_md")
+    monkeypatch.setattr(skill, "get_skill_md_dir", lambda: tmp_path / "skill_md")
     monkeypatch.setattr(settings, "sandbox_url", "http://localhost:8080")
     calls = {"run_script": 0}
     monkeypatch.setattr(
-        skill_tool.sandbox_adapter, "run_script",
+        skill.sandbox_adapter, "run_script",
         lambda sandbox, files, entry: calls.update(run_script=calls["run_script"] + 1)
         or f"out:{entry}",
     )
     monkeypatch.setattr(
-        skill_tool.sandbox_pool, "get_sandbox", lambda tid: SimpleNamespace(id="sb")
+        skill.sandbox_pool, "get_sandbox", lambda tid: SimpleNamespace(id="sb")
     )
     return calls
 
@@ -157,7 +157,7 @@ def test_run_skill_script_success(script_env) -> None:
     2026-08-10 参数改名：args → script_args（langchain 1.x 工具转换保留字
     冲突 v__args，评估跑数实证 run_skill_script() got 'v__args'）。
     """
-    out = skill_tool.run_skill_script(
+    out = skill.run_skill_script(
         "research-report", "build_report.py", script_args="sample_data.json"
     )
     assert out == "out:build_report.py sample_data.json"
@@ -166,21 +166,21 @@ def test_run_skill_script_success(script_env) -> None:
 
 def test_run_skill_script_not_found(script_env) -> None:
     """脚本不存在 → 友好提示（不中断 run）。"""
-    out = skill_tool.run_skill_script("research-report", "missing.py")
+    out = skill.run_skill_script("research-report", "missing.py")
     assert "技能脚本不存在" in out
 
 
 def test_run_skill_script_rejects_path_escape(script_env) -> None:
     """路径逃逸 → 拒绝提示（00-security）。"""
     for bad in ("../x.py", "/etc/passwd"):
-        out = skill_tool.run_skill_script("research-report", bad)
+        out = skill.run_skill_script("research-report", bad)
         assert "路径不合法" in out
 
 
 def test_run_skill_script_no_url(script_env, monkeypatch) -> None:
     """sandbox_url 空 → 降级提示。"""
     monkeypatch.setattr(settings, "sandbox_url", "")
-    assert "沙箱不可用" in skill_tool.run_skill_script("research-report", "build_report.py")
+    assert "沙箱不可用" in skill.run_skill_script("research-report", "build_report.py")
 
 
 # ── 上下文工程第一批-P0：#3 技能拆分约定核对（入口 ≤2KB）──

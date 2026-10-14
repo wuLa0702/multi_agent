@@ -5,7 +5,7 @@
   adapter 每次模型调用查询（字典查，零开销）
 - 查询一律只读缓存；配置变更走管理接口后 reload（预留）
 
-模式参考：src/mcp/registry.py（工具注册表：名 → 实现）。
+模式参考：src/tools/registry.py（工具注册表：名 → 实现）。
 """
 
 from __future__ import annotations

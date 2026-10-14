@@ -73,7 +73,7 @@ class SandboxPool:
         """
         if not settings.sandbox_pool_enabled:
             # 非池化兼容：只创建不托管（生命周期由调用方 try/finally 自管，
-            # 见 sandbox_tool 非池化分支——评审问题 1）
+            # 见 tools/impl/sandbox.py 非池化分支——评审问题 1）
             return self._adapter.create_sandbox()
         with self._lock:
             self._sweep_locked()
@@ -164,5 +164,5 @@ class SandboxPool:
         return str(getattr(sandbox, "id", ""))  # 防御：实例属性随 SDK 版本
 
 
-# 进程内共享池单例（sandbox_tool 工具与 sessions 删除联动共用同一实例）
+# 进程内共享池单例（tools/impl/sandbox.py 工具与 sessions 删除联动共用同一实例）
 sandbox_pool = SandboxPool()

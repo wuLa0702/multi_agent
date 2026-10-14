@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from fastmcp.client import Client, FastMCPTransport
 
-from src.mcp.server import mcp
+from src.tools.channels.mcp_server import mcp
 
 
 @pytest.mark.asyncio
@@ -28,7 +28,7 @@ async def test_server_lists_internal_tools() -> None:
 @pytest.mark.asyncio
 async def test_server_call_internet_search(mocker) -> None:
     """正常：调用 internet_search 工具返回搜索实现结果（内部 mock）。"""
-    mocker.patch("src.mcp.server._internet_search", return_value="mock 搜索结果")
+    mocker.patch("src.tools.channels.mcp_server._internet_search", return_value="mock 搜索结果")
 
     async with Client(FastMCPTransport(mcp)) as client:
         result = await client.call_tool("internet_search", {"query": "测试"})
@@ -41,7 +41,7 @@ async def test_server_call_internet_search(mocker) -> None:
 @pytest.mark.asyncio
 async def test_server_call_sandbox(mocker) -> None:
     """正常：调用 run_code_in_sandbox 工具返回沙箱结果（内部 mock）。"""
-    mocker.patch("src.mcp.server._run_code_in_sandbox", return_value="sandbox output")
+    mocker.patch("src.tools.channels.mcp_server._run_code_in_sandbox", return_value="sandbox output")
 
     async with Client(FastMCPTransport(mcp)) as client:
         result = await client.call_tool("run_code_in_sandbox", {"code": "print(1)"})

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from src.mcp.client import McpClientManager
+from src.tools.channels.mcp_client import McpClientManager
 
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_echo_server.py"
 

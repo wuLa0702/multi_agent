@@ -23,8 +23,8 @@ from src.agent.hitl.hitl import (
     build_hitl_interrupt_on,
     should_mount_hitl_tools,
 )
-from src.agent.tools.ask_human import ask_human
-from src.agent.tools.publish_report import publish_report
+from src.tools.impl.ask_human import ask_human
+from src.tools.impl.publish_report import publish_report
 from src.agent import main_agent
 from src.agent.main_agent import (
     _build_approve_event,
