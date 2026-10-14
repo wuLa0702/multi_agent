@@ -48,7 +48,8 @@ def test_get_agent_session_cache(mocker) -> None:
         type(main_agent._configurable_model),
         main_agent.TokenUsageMiddleware,
         main_agent.ToolAuditMiddleware,
-    ], "中间件栈应含模型切换 + 用量统计 + 工具审计"
+        main_agent.ToolGatewayMiddleware,
+    ], "中间件栈应含模型切换 + 用量统计 + 工具审计 + 调度中心（校验）"
     assert kwargs["context_schema"] is main_agent.ChatContext
     assert kwargs["backend"] is not None, "v2.0 会话级 backend 应挂载（文件根隔离）"
     assert kwargs["permissions"][0].mode == "deny", "P0 上层声明式规则应挂载（/skills/** 写 deny）"

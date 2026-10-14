@@ -47,6 +47,7 @@ from src.agent.hitl.pending import register_interrupt
 from src.agent.middlewares.interpreter import build_interpreter_middleware
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.tools.audit import ToolAuditMiddleware
+from src.tools.gateway import ToolGatewayMiddleware
 from src.agent.rubrics.rubrics import build_rubric_middleware
 from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
@@ -437,6 +438,9 @@ def _build_agent(thread_id: str):
         TokenUsageMiddleware(),
         # 工具调用审计（P1）：MCP/沙箱逃逸面统一审计，只记不拦
         ToolAuditMiddleware(),
+        # 调度中心（阶段 1.1）：调用前统一 args_schema 校验；失败降级为
+        # 错误 ToolMessage 不中断 run。顺序：审计在外（先留痕），网关在内（校验+短路）
+        ToolGatewayMiddleware(),
     ]
     # 解释器（P2，2026-08-05 解耦）：挂载逻辑在 middlewares/interpreter.py——
     # main_agent 只做编排，不内嵌中间件构建细节（顺序保持 ToolAudit 在前，
