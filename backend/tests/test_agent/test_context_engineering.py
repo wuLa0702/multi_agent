@@ -118,8 +118,8 @@ def test_audit_tool_descriptions_includes_builtin() -> None:
     from scripts.audit_tool_descriptions import audit_tool_descriptions
 
     stats = audit_tool_descriptions()
-    assert "internet_search" in stats, "MCP 注册工具"
+    assert "internet_search" in stats, "注册表工具"
     assert "read_file" in stats, "内置文件工具"
-    assert stats["read_file"]["source"] == "internal"
-    assert stats["internet_search"]["source"] == "mcp"
+    assert stats["read_file"]["source"] == "builtin"
+    assert stats["internet_search"]["source"] == "registry"
     assert stats["total_chars"] > 0

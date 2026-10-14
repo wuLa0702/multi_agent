@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import inspect
 import sys
 from pathlib import Path
 
@@ -33,15 +34,18 @@ def audit_tool_descriptions() -> dict:
     """统计全部工具描述长度（token 估算：字符数/4）。
 
     Returns:
-        {"tool_name": {"desc_len": N, "chars": M, "source": "internal|mcp"},
+        {"tool_name": {"desc_len": N, "chars": M, "source": "registry|builtin"},
          "total_chars": X}
     """
     result: dict = {}
-    for name, tool in TOOL_REGISTRY.items():
-        desc = getattr(tool, "description", "")
-        result[name] = {"desc_len": len(desc) // 4, "chars": len(desc), "source": "mcp"}
+    for name, spec in TOOL_REGISTRY.items():
+        # LLM 真正看到的是**工具函数的 docstring**（LangChain 用它做 description）。
+        # 此前读 getattr(tool, "description") 一直取空（普通函数没这个属性），
+        # 2026-10-14 修正为读 docstring（retry 包装经 @wraps 保留 __doc__）。
+        desc = inspect.getdoc(spec.fn) or spec.description
+        result[name] = {"desc_len": len(desc) // 4, "chars": len(desc), "source": "registry"}
     for name, desc in _BUILTIN_FILE_TOOLS.items():
-        result[name] = {"desc_len": len(desc) // 4, "chars": len(desc), "source": "internal"}
+        result[name] = {"desc_len": len(desc) // 4, "chars": len(desc), "source": "builtin"}
     result["total_chars"] = sum(v["chars"] for v in result.values() if isinstance(v, dict))
     return result
 
