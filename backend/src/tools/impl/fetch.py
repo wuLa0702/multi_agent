@@ -14,8 +14,8 @@ from html import unescape
 
 import httpx
 
-from src.tools.audit import security_audit
 from src.core.retry import retry_tool
+from src.tools.validators import validate_url
 
 # ── 抓取限制（决策 §3.1：安全 + 防膨胀）──
 _FETCH_TIMEOUT_SECONDS = 10.0  # 兜底常量（settings.tool_timeout_seconds 优先，P1-d）
@@ -26,25 +26,6 @@ _UA = "Mozilla/5.0 (compatible; multi-agent-fetch/1.0)"
 # HTML 标签/脚本/样式清洗
 _TAG_RE = re.compile(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>|<[^>]+>")
 _WS_RE = re.compile(r"\s+")
-
-# URL 注入校验（安全机制 D3）：纯 http/https + 无注入字符（空格/引号/分号/<>）
-_SAFE_URL_RE = re.compile(r"^https?://[^\s\"'<>;]+$")
-
-
-@security_audit(tool="fetch_url")
-def _validate_url(url: str) -> str | None:
-    """URL 严格校验（D3）：http/https + 无注入字符（security_audit 统一审计）。
-
-    Args:
-        url: 目标 URL
-
-    Returns:
-        None=合法；str=拦截原因（security_audit 自动记审计）
-    """
-    if not _SAFE_URL_RE.match(url):
-        return "URL 注入/协议非法"
-    return None
-
 
 def clean_html(html: str, max_chars: int = _MAX_BODY_CHARS) -> str:
     """HTML → 纯文本（去 script/style/标签，压缩空白，截断）。
@@ -64,8 +45,6 @@ def clean_html(html: str, max_chars: int = _MAX_BODY_CHARS) -> str:
 
 @retry_tool(retries=2, extra_exceptions=(httpx.HTTPStatusError,))
 def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
-    from src.core.config import settings  # 超时统一（P1-d）：settings.tool_timeout_seconds
-    timeout = settings.tool_timeout_seconds
     """受控抓取网页正文（服务端执行，自动过工具审计）。
 
     Args:
@@ -81,7 +60,10 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> str:
     P1 容错（2026-08-12 批次2.5 R-4）：网络瞬时故障（超时/连接/5xx）**上抛给
     @retry_tool 重试**（读操作幂等）——重试耗尽才降级；HTTP 4xx/非法 URL 就地降级。
     """
-    if _validate_url(url) is not None:
+    from src.core.config import settings  # 超时统一（P1-d）：settings.tool_timeout_seconds
+
+    timeout = settings.tool_timeout_seconds
+    if validate_url(url) is not None:
         return f"链接格式非法（仅支持纯 http/https URL）：{url}"
     try:
         resp = httpx.get(
