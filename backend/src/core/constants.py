@@ -9,6 +9,7 @@
 分组说明：
 - PAGINATION_*：分页契约（对齐 参考-后端接口 §3.4：limit 默认 50，上限 200）
 - TRUNCATE_*：日志/事件字段截断（main_agent _truncate 默认 300，ToolAudit 同口径）
+- TIMESTAMP_FORMAT：工具参数标准格式（全项目唯一标准，见 docs/规则/工具中心规范.md）
 """
 
 from __future__ import annotations
@@ -19,3 +20,8 @@ PAGINATION_LIMIT_DEFAULT = 50  # 分页默认每页条数
 
 # ── 截断（防上下文膨胀 + 密钥纪律）──
 TRUNCATE_LIMIT = 300  # 事件字段/审计截断长度（main_agent _truncate、ToolAudit 同口径）
+
+# ── 工具参数标准格式（工具中心职责边界 §3.2：标准写常量，工具层只执行不自定）──
+# 时间参数对外只接受这一种格式；内部任意转化（阶段 1.3 参数归一时首次消费）。
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%S%z"  # ISO 8601 带时区
+

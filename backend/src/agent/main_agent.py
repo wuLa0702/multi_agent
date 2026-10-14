@@ -50,10 +50,6 @@ from src.agent.middlewares.tool_audit import ToolAuditMiddleware
 from src.agent.rubrics.rubrics import build_rubric_middleware
 from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
-from src.agent.tools.ask_human import ask_human
-from src.agent.tools.publish_report import publish_report
-from src.agent.tools.report_generator import generate_report
-from src.agent.tools.wiki_writer import write_wiki
 from src.core.backend import create_backend
 from src.core.config import settings
 from src.core.paths import (
@@ -67,13 +63,7 @@ from src.core.paths import (
 from src.core.permissions import build_main_permissions
 from src.llm.adapter import get_chat_model
 from src.mcp.client import get_mcp_client_manager
-from src.agent.tools.sandbox_tool import (
-    download_sandbox_file,
-    run_code_in_sandbox,
-    run_command_in_sandbox,
-    upload_workspace_file,
-)
-from src.agent.tools.skill_tool import run_skill_script
+from src.mcp.registry import hitl_tools, tools_for_main
 
 from src.agent.middlewares.trace import trace_event  # 推理层 trace（决策 #4：agent/middlewares/trace.py）
 
@@ -431,24 +421,13 @@ def _build_agent(thread_id: str):
         deepagents 编译后的 Agent（LangGraph CompiledStateGraph）
     """
     # 工具 = 内部工具 + 外部 MCP 工具（lifespan 连接收集，见 src/mcp/client.py）
-    # 沙箱域工具（P1 挂载：命令执行 + 文件同步，能力计划 §3.2/§3.3）
-    internal_tools = [
-        run_code_in_sandbox,
-        run_command_in_sandbox,
-        upload_workspace_file,
-        download_sandbox_file,
-        # 技能域（Skill 体系 P1）：技能脚本执行闭环（读文件→沙箱→执行一步封装）
-        run_skill_script,
-        # Wiki 知识库（2026-08-13）：Agent 运行时写入 wiki（wiki 不可达时工具降级）
-        write_wiki,
-        # 研报结构化生成（方案 v2.1 §2.5）：主 Agent 撰写 → 结构化 → 交付
-        generate_report,
-    ]
+    # 内部工具清单唯一来源 = mcp/registry.py（阶段 0.1：杜绝硬编码清单漂移）
+    internal_tools = tools_for_main()
     # HITL 工具（P0 设计 §5.1）：hitl_enabled 门控挂载——ask_human（需求澄清/
     # 中途确认，respond 决策）+ publish_report（输出审核交付闸门）。关 HITL 时
     # 不挂载，避免模型调用永远抛错/无审批出口的工具。
     if should_mount_hitl_tools(settings.hitl_enabled):
-        internal_tools += [ask_human, publish_report]
+        internal_tools += hitl_tools()
     mcp_tools = get_mcp_client_manager().get_tools()
     model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用
     middleware = [
