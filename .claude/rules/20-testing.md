@@ -4,10 +4,13 @@
 ```
 backend/tests/
 ├── conftest.py          # 共享 Fixture（mock LLM / tmp_path / :memory:）
+├── fixtures/            # 共享测试数据
 ├── test_agent/          # Agent 核心：Graph/State/子 Agent
 ├── test_api/            # API：SSE 流式 / 事件协议
+├── test_core/           # 底座：重试 / 安全 / 常量
 ├── test_mcp/            # MCP 网关
-└── test_sandbox/        # 沙箱适配层
+├── test_sandbox/        # 沙箱适配层
+└── test_skills/         # Skill 市场与安装
 ```
 
 ## 原则

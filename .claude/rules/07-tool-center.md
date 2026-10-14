@@ -2,11 +2,11 @@
 
 > 📋 **规范来源**：`docs/决策/2026-10-14-设计-工具中心职责边界-v1.md`（评审稿）
 > 📌 **双位置**：本文件 `.claude/rules/`（**权威，自动加载**）＋ `docs/规则/工具中心规范.md`（镜像，内容一致，冲突以本文件为准）
-> 📌 **适用范围**：`backend/src/agent/tools/`、`backend/src/mcp/`、工具参数与输出
+> 📌 **适用范围**：`backend/src/tools/impl/`、`backend/src/tools/`、工具参数与输出
 
 ## 1. 工具定义（唯一真相源）
 
-- **唯一登记处** = `mcp/registry.py::TOOL_REGISTRY`；新增工具**只改这一处**
+- **唯一登记处** = `tools/registry.py::TOOL_REGISTRY`；新增工具**只改这一处**
 - 一条 `ToolSpec`：`name / fn / domain / description` 必填；`is_idempotent / risk_level / size / fallback_to / requires_approval` 按需
 - 消费方全部从该表派生，**禁止再出现第二份工具清单**：
 

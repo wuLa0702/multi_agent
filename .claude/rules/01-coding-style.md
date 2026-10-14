@@ -30,7 +30,7 @@ def plan(self, goal: str, context: dict[str, Any]) -> list[Task]:
 
 - 自定义异常类，不直接 `raise Exception`
 - 异常分级（可重试/不可重试），统一 `core/errors.py`
-- LLM 调用超时 + 重试（`llm/retry.py`）
+- LLM 调用超时 + 重试（适配封装 `llm/adapter.py`；重试装饰器 `core/retry.py`）
 
 ## 代码组织
 

@@ -18,7 +18,7 @@ Python 3.11+ · FastAPI (ASGI/SSE) · LangGraph + langchain-deepagents · FastMC
 ## 目录结构（后端）
 > 完整项目结构（前后端唯一真相源）见 `docs/架构/多agent项目-架构目录.md` §2 目录树。
 > 本文件不再内嵌结构树——结构变更只改架构文档一处。
-依赖单向：`api → agent → {mcp, sandbox, memory, db}`，禁止反向。
+依赖单向：`api → agent → {tools, sandbox, memory, db}`，禁止反向。
 
 ## 核心约束
 1. **密钥只进 `.env.dev` / `.env.prod`**（已 gitignore），永不入库、不进聊天
@@ -48,7 +48,7 @@ pytest backend/tests
 ```
 
 ## 开发纪律
-- 核心逻辑（Agent 编排/Graph/State）手写，样板代码 AI 提速（见 `.claude/rules/02-hands-on-training.md`）
+- 代码由 **AI 全量编写** + co-creator 审查（见 `.claude/rules/02-hands-on-training.md`，2026-10-14 改为完全不手写）
 - Bug 先定位根因再修；先红后绿；提交前先给计划等确认
 - 踩坑记入 `docs/踩坑/`；修改架构决策先更新架构文档版本表
 

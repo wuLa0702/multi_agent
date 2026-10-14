@@ -15,7 +15,7 @@ async def chat_stream(req: ChatRequest): ...
 - 响应含 `status` 字段；错误统一 `ErrorResponse`（error/detail/code）
 
 ## SSE 事件协议（多 Agent 关键）
-- 事件类型固定（与前端对齐，v3 定稿）：`token` / `tool_call` / `approve` / `summarize` / `subagent` / `done` / `error`
+- 事件类型固定（与前端对齐；2026-10-14 按 `schemas/events.py` 校正）：`start` / `token` / `tool_call` / `subagent` / `approve` / `cost_alert` / `done` / `error`
 - 事件 payload 用 Pydantic 模型序列化，前后端共享 types
 - resume 断点：Checkpointer 持久化，中断可恢复
 
