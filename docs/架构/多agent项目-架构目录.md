@@ -1,11 +1,12 @@
 # 多 Agent 项目 — 前后端架构目录 v2（拍板版）
 
 > 📋 **规范**：遵循 `docs/规则/文档规范.md`
-> 📌 **更新时间**：2026-08-12
+> 📌 **更新时间**：2026-10-15
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.12 | 2026-10-15 | **SQLite → PostgreSQL 全量迁移**（工作单 `docs/决策/2026-10-15-计划-PG迁移-v1.md`）：§2 落地状态对照表 `core/db.py` → **`db/connection.py`**（连接池单例，唯一连接出口）、`db/schema.py · repository.py` 保持；§2.1 能力表「mcp_servers 表（SQLite）」→ PostgreSQL；§3 基础设施新增 `postgres` 服务（pgvector/pgvector:pg16，宿主 5433，业务表 `public` / 断点记忆表 `langgraph` 同库不同 schema）；§6.1 决策 #7 数据库由「Redis + SQLite」改为「**Redis + PostgreSQL（+ pgvector）**」；§5 工程经验「Checkpointer（SQLite）」表述同步 |
 > | v2.11 | 2026-08-12 | §2 落地状态对照表新增 `agent/services/` 数据服务层（2026-08-12 结构重构：api→agent 能力子域→db 跨层收敛，api 禁直调 db/）|
 > | v2.10 | 2026-08-11 | §6.1 决策记录：新增决策 #10「项目定位目标」——研究型多 Agent 平台，双版本目标表述（技术 A / 业务 B，详见追问链 §1.1），后续开发朝该目标补齐 |
 > | v2.9 | 2026-08-06 | §2 目录结构同步结构优化 v2.3/v2.4：mcp/tools/ 迁入 agent/tools/（工具是 Agent 能力非协议层职责）、agent/hitl/ + agent/rubrics/ 子目录化（agent/ 根只留 main_agent.py）、mcp 收敛纯协议层（registry/client/server） |
@@ -70,7 +71,7 @@
 │   ┌─────▼─────┐ ┌──────▼──────┐ ┌─────▼───────┐        │
 │   │ MCP 网关  │ │ 沙箱 ✅     │ │ 记忆/存储    │        │
 │   │ FastMCP   │ │ OpenSandbox │ │ Redis(短期)  │        │
-│   │ 外部系统  │ │ 本地替身待定 │ │ SQLite(长期) │        │
+│   │ 外部系统  │ │ 本地替身待定 │ │ PG(长期)    │        │
 │   └───────────┘ └─────────────┘ └─────────────┘        │
 │   LangSmith 监控(trace/eval) · 结构化日志 · 配置中心      │
 └─────────────────────────────────────────────────────────┘
@@ -90,7 +91,7 @@ flowchart TB
     G <-->|工具调用| M[MCP 网关]
     M --> E1[外部系统]
     G -->|代码执行| SB[OpenSandbox ✅]
-    G -->|读写| MEM[记忆: Redis+SQLite ✅]
+    G -->|读写| MEM[记忆: Redis+PostgreSQL ✅]
     A -->|trace/eval| LS[LangSmith]
 ```
 
@@ -219,7 +220,7 @@ multi-agent-project/
 > | sandbox/health · breaker · download | ⏳ | 演进预留（adapter 内已含超时语义）|
 > | llm/adapter.py | ✏️ | 单 provider 内聚（timeout/retry 含），providers/retry 多厂商时再拆 |
 > | core/config · paths · logging · errors | ✅ | 已落地 |
-> | core/db.py · redis.py | ✏️ | 蓝图未列但已落地（SQLite 连接 / Redis 连接池，chat 依赖）|
+> | db/connection.py · core/redis.py | ✏️ | 蓝图未列但已落地（**PG 连接池单例** / Redis 连接池，chat 依赖）；原 `core/db.py` 随 2026-10-15 PG 迁移删除 |
 > | core/langsmith · security · middlewares | ⏳ | 演进预留（LangSmith 经 .env 注入，无需独立模块）|
 > | db/schema.py · repository.py | ✏️ | 项目既定规范「SQL 集中 schema.py + DAO」；蓝图 ORM 理想化 |
 > | db/models · repositories | ⏳ | ORM 化演进预留 |
@@ -242,7 +243,7 @@ multi-agent-project/
 |------|---------|------|---------------|---------|
 | **代码工具 tool** | `backend/src/agent/tools/`（search.py / sandbox_tool.py）+ 注册 `mcp/registry.py` | Python 函数 | 直接挂载为工具，Agent 可**调用**（函数式工具） | 手写代码 + 注册表登记（需改代码） |
 | **SKILL.md 技能 skill** | `data/skills/skill_md/{名称}/SKILL.md`（本地文件；`core/paths.py` 的 `get_skill_md_dir()`） | 说明书（YAML frontmatter + Markdown 正文） | 渐进披露注入提示词，Agent 按说明执行 | 市场安装（Skill Market）或手写文件——**无需改代码**，Agent 重启自动扫描 |
-| **远程 MCP 工具** | `mcp_servers` 表（SQLite，一行一个 server 连接配置） | 远程服务（Smithery 等托管，本地只存 URL + 鉴权 headers） | `McpClientManager` 连接后注入 Agent，调用时走网络 | Skill Market 市场一键安装（自动建连接） |
+| **远程 MCP 工具** | `mcp_servers` 表（PostgreSQL，一行一个 server 连接配置） | 远程服务（Smithery 等托管，本地只存 URL + 鉴权 headers） | `McpClientManager` 连接后注入 Agent，调用时走网络 | Skill Market 市场一键安装（自动建连接） |
 | **子代理 subagent** | `backend/src/agent/subagents/*.yaml` | 专职角色声明（prompt + tools 清单） | `task` 工具委派 | 写 YAML 文件（tools 名查 registry） |
 
 补充：
@@ -259,7 +260,7 @@ multi-agent-project/
 | **日志** | 结构化日志 + 请求追踪 ID 贯穿全链 | 多 Agent 并发下靠 tracing ID 串起一次请求的完整调用链 |
 | **配置** | Pydantic BaseSettings + .env（多 provider：deepseek/豆包/智谱） | 当前项目已验证模式 📌 |
 | **启动脚本** | `scripts/dev.sh` 一键起三件（后端/前端/沙箱） | 新机器 5 分钟可跑；`docker compose up` 本地=云端一致 |
-| **持久化** | Redis（短期）+ SQLite/向量库（长期） | 当前项目教训：**纯 MemorySaver 无持久化 → 冷启动全丢，后来补 SQLite 很痛** 📌 |
+| **持久化** | Redis（短期）+ PostgreSQL/pgvector（长期） | 当前项目教训：**纯 MemorySaver 无持久化 → 冷启动全丢，后来补持久化很痛** 📌（SQLite → 2026-10-15 迁 PG）|
 | **测试** | pytest + mock LLM + 分层目录 | 当前项目 149 测试是回归安全网，多 Agent 更复杂更需要 📌 |
 | **错误处理** | 异常分级 + 统一错误响应（200/400/403/404/500） | 当前项目 api/errors.py 模式 📌 |
 | **安全** | 工具路径前缀校验 + PII 拦截中间件 | 当前项目安全规则直接迁移 📌 |
@@ -332,11 +333,11 @@ docker compose --env-file .env.prod up -d
 
 ### B. Agent 状态机（最大的一笔经验）
 
-> 当前项目图结构演进：`纯 MemorySaver → +SQLite 持久化 → +approve 人工审批 → +summarizer 压缩`（devlog-2026-07-27 📌）
+> 当前项目图结构演进：`纯 MemorySaver → +SQLite 持久化 → +approve 人工审批 → +summarizer 压缩 → +PG 持久化（2026-10-15）`（devlog-2026-07-27 📌）
 
 | 踩坑 | 教训 | 新项目第一天就做 |
 |------|------|------------------|
-| 无持久化，冷启动对话全丢 | 持久化是地基不是可选 | Checkpointer（SQLite）从第一个 commit 就有 |
+| 无持久化，冷启动对话全丢 | 持久化是地基不是可选 | Checkpointer 从第一个 commit 就有（SQLite → 2026-10-15 迁 PostgreSQL） |
 | 工具调用直接放行 | 高影响操作必须人批 | approve/interrupt 节点内置在主图 |
 | 长对话 token 爆 | 压缩必须内置且**绝不对任务清单做摘要** | summarizer 节点 + write_todos 原文保留 |
 | 旧摘要残留 Bug（P3 遗留） | 压缩状态要可追踪 | 压缩事件协议前后端对齐（EVENT_SUMMARIZE） |
@@ -393,7 +394,7 @@ docker compose --env-file .env.prod up -d
 | 4 | 业务演示场景 | ✅ **暂缓**：先开发技术架构，业务后接（架构与业务解耦，业务可快速拓展） | 子 Agent YAML/MCP 工具集留到业务定后填充；技术栈先行不阻塞 |
 | 5 | **前端框架** | ✅ **方案 A：沿用 React 19 + shadcn/ui + Tailwind 4**（复用本项目 wiki-ui-v2 组件） | frontend/ 目录按 React 展开：组件/图谱(vis-network)/流式(ai SDK) 复用；图谱可视化沿用 |
 | 6 | **沙箱** | ✅ **OpenSandbox**（阿里开源，github.com/alibaba/OpenSandbox，Apache 2.0）——**本地开发连本地 Docker 起 server，生产连云端**（v2.5 修正） | sandbox/ 层为 OpenSandbox 适配（adapter + opensandbox 实现，多语言 SDK + 统一 API）；本地 `scripts/dev.sh` 一键起 compose 资源（redis + opensandbox），SANDBOX_URL 指 localhost:8080；生产 .env.prod 切云端地址；含 MCP Server 集成；⚠️ 云端部署细节以官方 README 为准 |
-| 7 | 数据库 | ✅ **Redis + SQLite** | 短期记忆 Redis、长期 SQLite；向量检索后续可加 |
+| 7 | 数据库 | ✅ **Redis + PostgreSQL（+ pgvector）**（v2.12 修正，2026-10-15 PG 迁移） | 短期记忆 Redis、长期/断点/记忆 PostgreSQL；向量检索能力由 pgvector 提供（镜像已预装，RAG 分支启用） |
 | 8 | **部署** | ✅ **提交项目触发 runner 远程部署**；先本地验证基础论证 | 新增 CI runner 部署流程；**路径自适应**（见 4.3）：本机/云/其他机器均可运行，路径与读取不写死常量 |
 | 9 | **环境策略** | ✅ **配置驱动切换**：本地一套 + 生产一套，**.env.dev / .env.prod 双配置**；**本地开发连本地 Docker（redis 6398 + opensandbox 8080），生产连云端**（v2.5 修正） | 同一份代码 + 同一份 docker-compose.yml，只换 .env 指向不同 REDIS_URL / SANDBOX_URL / LLM keys；本地连本地方便审查调试（v2.5 拍板，本机性能足够），生产连云端环境一致最小化差异 |
 | 10 | **项目定位目标**（2026-08-11 拍板）| ✅ **研究型多 Agent 平台**：面向深度研究类任务（行业研究 / 公司尽调 / 竞品分析）的多 Agent 协作框架——信息收集 → 多 Agent 分析 → 质量评估 → 报告生成完整链路；**双版本目标表述**（技术 A / 业务 B）见 `docs/学习/面试/2026-08-11-学习-项目追问链-v1.md` §1.1；**后续开发朝该目标补齐** | 架构以"研究链路 + 评估 + 人在回路"为主线；未达标能力（成本核算/预算控制已设计未实现、Rubric grader 国产模型验证未过）按目标逐项补齐；场景是载体，技术深度是卖点（Harness/框架向）|
