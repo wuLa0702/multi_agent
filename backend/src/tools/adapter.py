@@ -11,10 +11,18 @@
 | LLM | `ToolMessage.content` | `render(result)` 的中文文本（不塞 JSON） |
 | 程序（审计 / SSE / 编排） | `ToolMessage.artifact` | `result.data`（结构化旁路） |
 
-**为什么必须显式包在最外层**：`response_format` 默认值是 `"content"`，**不会**
-从返回类型注解推断（`langchain_core/tools/convert.py`）。若函数直接返回
-`(content, artifact)` 元组而不声明 `content_and_artifact`，元组会被当成 content
-`_stringify` 成 `"('文本', {...})"` 塞给 LLM。所以这一步不能省。
+**为什么必须显式包在最外层**：`response_format` 默认值是 `"content"`，且**不会**
+从返回类型注解推断（`langchain_core/tools/convert.py`）。不声明就直接返回信封，
+结构化内容会被序列化成一整段文本塞进 `ToolMessage.content`、`artifact` 恒为 `None`
+（2026-10-15 实测）：
+
+| 返回值 | 不包（默认 `content`） | 包了（本模块） |
+|---|---|---|
+| `ToolResult(status="ok", message="出锅", data={"eggs": 3})` | `content="ToolResult(status='ok', message='出锅', data={'eggs': 3}, error_code='', retryable=False, tool='cook')"`；`artifact=None` | `content="出锅"`；`artifact={"eggs": 3}` |
+| `("文本", {"eggs": 3})` | `content='["文本", {"eggs": 3}]'`；`artifact=None` | —（本模块只接受 `ToolResult`） |
+
+要害是 `status` 退化成文本里的一个字段，下游无法程序化判断成功 / 降级 / 失败——
+恰是阶段 2 要消灭的问题。
 
 **为什么用 `functools.wraps`**：框架据函数签名与 docstring 推断 `args_schema`
 （参数名 / 类型 / 默认值 / 描述）与 `description`。`wraps` 让 `__wrapped__` 指向
