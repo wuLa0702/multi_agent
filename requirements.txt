@@ -10,9 +10,11 @@ sse-starlette>=2.0
 
 # Agent 层
 langgraph>=1.0          # 实际 1.2.10；>=0.2 过旧（0.5 起 API 大改）
-# Checkpointer 断点持久化（P0，版本锁定——计划文档 C.4-1）
-langgraph-checkpoint==4.1.1
-langgraph-checkpoint-sqlite==3.1.0
+# Checkpointer 断点持久化（P0）：PG 版（2026-10-15 PG 迁移，替代 SQLite saver）
+# ⚠️ 原锁版 langgraph-checkpoint==4.1.1 已被顶掉——langgraph-checkpoint-postgres
+#    硬要求 langgraph-checkpoint>=4.3.0（实测解析 3.2.0 → checkpoint 4.3.0）
+langgraph-checkpoint>=4.3.0
+langgraph-checkpoint-postgres>=3.2   # AsyncPostgresSaver（async 执行路径必需）
 langchain>=1.0          # 实际 1.3.14；0.3 过旧（langchain-core 1.x 契约）
 langchain-core>=1.0     # 实际 1.5.3（chat messages/middleware 走 1.x）
 langchain-openai>=1.0   # 实际 1.4.1（OpenAI 兼容协议）
@@ -28,7 +30,8 @@ opensandbox>=0.1
 
 # 记忆/存储
 redis>=5.0              # 实际 8.1.0（redis.asyncio，成本缓存 redis 后端）
-aiosqlite>=0.20         # 实际 0.22.1
+psycopg[binary,pool]>=3.2   # PG 驱动（psycopg 3；实测 3.3.6）
+                        # binary：Windows 免装 libpq；pool：db/connection.py 连接池用
 
 # 基建
 pydantic>=2.8           # 实际 2.13.4
@@ -43,4 +46,7 @@ pyyaml>=6.0             # 子代理 YAML 声明式
 # - langsmith：src 无直接 import（tracing 配置由 langchain 传递依赖提供）
 # - python-dotenv：src 无直接 import（pydantic-settings 传递依赖处理 .env）
 # - fakeredis：测试用 AsyncFakeRedis 手写替身（test_hitl/test_cost），未装
+# 已移除（2026-10-15 PG 迁移）：
+# - langgraph-checkpoint-sqlite / aiosqlite：SQLite 持久化整体下线改 PG，
+#   禁两套持久化与两套 PG 驱动并存（工作单 §3）
 searchpin>=1.0.8  # 默认搜索引擎（免费，懒加载，未装则降级博查）

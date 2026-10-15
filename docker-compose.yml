@@ -1,20 +1,31 @@
 # ============================================================
 # multi-agent 统一编排（v2.5 环境策略：本地连本地 Docker，生产连云端）
 #
+# ⚠️ 固定 compose 项目名（2026-10-15 PG 迁移踩坑）：
+#   项目名默认取「所在目录名」——在 .claude/worktrees/<分支名>/ 下跑 compose 时，
+#   资源会落到「分支名」项目下（独立 volume + 独立 network），导致本项目的
+#   postgres 与 redis/opensandbox 分处两个网络、彼此无法按服务名互访。
+#   显式声明 name 后，无论从主路径还是任何 worktree 运行，资源都归到同一个
+#   项目（multi_agent），network/volume 复用、服务间可互通。
+#
 # 用法：
-#   本地开发：  docker compose --env-file .env.dev up -d redis opensandbox
+#   本地开发：  docker compose --env-file .env.dev up -d redis postgres opensandbox
 #   云端部署：  docker compose --env-file .env.prod up -d
 #   一键启动：  scripts/dev.sh（检查 Docker → 起资源 → 起后端）
 #
 # 说明：
 #   - backend 服务：FastAPI + Agent 应用（Dockerfile 待 v3 搭建时补）
+#   - postgres：pgvector/pgvector:pg16（业务库 + LangGraph 断点/记忆库），
+#     对外端口 5433（避开本机可能已有的 5432），密码从 ${POSTGRES_PASSWORD} 读（不入库）
 #   - opensandbox：官方 server 镜像，需访问宿主机 Docker daemon
 #     （server 用 Docker runtime 动态创建沙箱容器 → 挂载 docker.sock）
-#   - 资源限额适配 2核4g：redis 256m / opensandbox 512m / backend 1g
+#   - 资源限额适配 2核4g：redis 256m / postgres 512m / opensandbox 512m / backend 1g
 #   - 沙箱镜像需预拉：opensandbox/code-interpreter:v1.1.0（见下方注释）
 #   - 本地 redis 对外端口 6398（避开 Clowder 生产 6399 / 默认 6379），
 #     与 .env.dev 的 REDIS_URL=redis://localhost:6398/0 对齐
 # ============================================================
+
+name: multi_agent
 
 services:
   # ── 短期记忆（Redis）──
@@ -39,6 +50,39 @@ services:
         limits:
           memory: 256m
           cpus: "0.5"
+    networks:
+      - multi-agent-net
+
+  # ── PostgreSQL（业务库 + LangGraph 断点/记忆库，2026-10-15 PG 迁移）──
+  # pgvector/pgvector:pg16：PG 16 + pgvector 预装（后续 RAG 向量检索无需换镜像）
+  # 业务库与 LangGraph 断点/记忆库同实例同库、不同 schema
+  # （langgraph schema 由 saver.setup() 自建，不在 schema.py 里预建）
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: multi-agent-postgres
+    restart: unless-stopped
+    environment:
+      - "POSTGRES_USER=${POSTGRES_USER:-multi_agent}"
+      # 🔴 密码只从 .env 读，不写死（规则 00-security）；未设置时直接报错拒启
+      - "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set in .env.dev / .env.prod}"
+      - "POSTGRES_DB=${POSTGRES_DB:-multi_agent}"
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # PG 官方镜像默认 /dev/shm 仅 64m，并行查询易 OOM；2核4g 下给 128m
+    shm_size: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-multi_agent} -d ${POSTGRES_DB:-multi_agent}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
     networks:
       - multi-agent-net
 
@@ -98,6 +142,7 @@ services:
 
 volumes:
   redis-data:
+  postgres-data:
   opensandbox-store:
 
 networks:
