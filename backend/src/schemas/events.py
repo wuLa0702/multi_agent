@@ -63,9 +63,21 @@ class DoneEvent(SSEEvent):
 class ToolCallEvent(SSEEvent):
     """工具调用事件（契约 v3 定稿，2026-08-05 落地）：前端驱动"工具调用进度条"。
 
+    **两个状态字段，各管一件事**（阶段 2.3.2，勿混用）：
+
+    | 字段 | 语义 | 取值 |
+    |---|---|---|
+    | `status` | **生命周期**：这次调用跑完没有 | `running` / `completed` / `error` |
+    | `result_status` | **结果三态**：拿到的结果完不完整 | `ok` / `degraded` / `error` / `None` |
+
+    `degraded`（结果被截断 / 走了兜底）塞不进生命周期字段——调用是"跑完了"的，
+    只是结果不完整，故独立一个字段承载。取不到信封时 `result_status=None`（不猜）。
+
     Attributes:
         tool: 工具名（如 run_code_in_sandbox）
-        status: running / completed / error
+        status: 生命周期 running / completed / error
+        result_status: 工具输出三态 ok / degraded / error（无信封时 None）
+        error_code: 归一错误码（`ToolErrorCode`，仅失败时有值）
         input: 入参截断 ≤300（密钥纪律，同 ToolAudit 脱敏）
         output: 结果截断 ≤300
         id: 事件序号（前端去重/排序）
@@ -73,7 +85,12 @@ class ToolCallEvent(SSEEvent):
 
     type: Literal["tool_call"] = "tool_call"
     tool: str = Field(description="工具名")
-    status: Literal["running", "completed", "error"] = Field(description="工具调用状态")
+    status: Literal["running", "completed", "error"] = Field(description="生命周期状态")
+    result_status: Literal["ok", "degraded", "error"] | None = Field(
+        default=None,
+        description="工具输出三态（degraded=结果不完整）；无信封时 None",
+    )
+    error_code: str = Field(default="", description="归一错误码（仅失败时有值）")
     input: str = Field(default="", description="入参（截断 ≤300，脱敏）")
     output: str | None = Field(default=None, description="结果（截断 ≤300）")
     id: int = Field(description="事件序号（流内自增，前端去重/排序）")

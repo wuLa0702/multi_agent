@@ -553,6 +553,41 @@ def _build_stream_config(
     return config
 
 
+def _tool_outcome(output: Any) -> tuple[str, str | None, str]:
+    """工具输出 → `(生命周期 status, 结果三态, 归一错误码)`（阶段 2.3.2）。
+
+    三态取自工具输出的 **artifact 结构化通道**（阶段 2 双通道落地，
+    见 `tools/adapter.py::artifact_of`）——`ToolMessage.status` 只有
+    success/error，`degraded` 会被它压成 success，故必须从 artifact 取。
+
+    Args:
+        output: `on_tool_end` 的 `data.output`（真实链路为 `ToolMessage`）
+
+    Returns:
+        `(status, result_status, error_code)`：
+        有信封 → 生命周期按三态映射（`error`→`error`，其余 `completed`），
+        三态与错误码原样带出；无信封（非 ToolMessage，如测试替身）→
+        三态 `None` + 空错误码 + `completed`，**不猜**
+    """
+    artifact = getattr(output, "artifact", None)
+    if not isinstance(artifact, dict):
+        return "completed", None, ""
+    result_status = artifact.get("status") or None
+    error_code = str(artifact.get("error_code") or "")
+    lifecycle = "error" if result_status == "error" else "completed"
+    return lifecycle, result_status, error_code
+
+
+def _tool_output_text(output: Any) -> str:
+    """工具输出 → 给前端展示的文本。
+
+    真实链路 `data.output` 是 `ToolMessage`——取 `.content`（给 LLM 的中文文本），
+    而不是 `str(ToolMessage)`（那是 repr，前端会显示一坨对象字面量）。
+    """
+    content = getattr(output, "content", None)
+    return content if isinstance(content, str) else str(output)
+
+
 def _dispatch_stream_event(
     evt: dict, session_id: str | None, seq: int
 ) -> tuple[int, dict | None]:
@@ -580,6 +615,9 @@ def _dispatch_stream_event(
             "type": "tool_call",
             "tool": evt.get("name", ""),
             "status": "running",
+            # 形状与 on_tool_end 一致（前端不必判键存在）；结果还没出来 → 三态留空
+            "result_status": None,
+            "error_code": "",
             "input": _truncate(str(evt.get("data", {}).get("input", ""))),
             "output": None,
             "id": seq,
@@ -587,12 +625,16 @@ def _dispatch_stream_event(
     elif event_type == "on_tool_end":
         trace_event(session_id, evt)  # 推理层 trace
         seq += 1
+        output = evt.get("data", {}).get("output", "")
+        lifecycle, result_status, error_code = _tool_outcome(output)
         return seq, {
             "type": "tool_call",
             "tool": evt.get("name", ""),
-            "status": "completed",
+            "status": lifecycle,
+            "result_status": result_status,
+            "error_code": error_code,
             "input": "",
-            "output": _truncate(str(evt.get("data", {}).get("output", ""))),
+            "output": _truncate(_tool_output_text(output)),
             "id": seq,
         }
     elif event_type in ("on_chain_start", "on_chain_end") and evt.get(

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import pytest
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessageChunk, ToolMessage
 
 from src.agent.main_agent import _truncate, stream_agent_events
 
@@ -36,6 +36,27 @@ def _tool_start(name: str, input: str) -> dict:
 
 def _tool_end(name: str, output: str) -> dict:
     return {"event": "on_tool_end", "name": name, "data": {"output": output}}
+
+
+def _tool_end_msg(name: str, status: str, error_code: str = "", content: str = "文本") -> dict:
+    """真实链路形态的 on_tool_end：output 是带 artifact 信封的 ToolMessage。"""
+    return {
+        "event": "on_tool_end",
+        "name": name,
+        "data": {
+            "output": ToolMessage(
+                content=content,
+                tool_call_id="tc1",
+                name=name,
+                artifact={
+                    "status": status,
+                    "error_code": error_code,
+                    "retryable": False,
+                    "data": None,
+                },
+            )
+        },
+    }
 
 
 def _subagent_start(name: str) -> dict:
@@ -113,3 +134,58 @@ def test_truncate() -> None:
     assert _truncate("短文本") == "短文本"
     assert len(_truncate("x" * 500)) <= 301
     assert _truncate("x" * 500).endswith("…")
+
+
+class TestToolOutcome:
+    """工具三态落 SSE 事件（阶段 2.3.2）：生命周期与结果三态**各管一件事**。"""
+
+    @pytest.mark.parametrize(
+        ("result_status", "error_code", "expect_lifecycle"),
+        [
+            ("ok", "", "completed"),
+            ("degraded", "", "completed"),  # 跑完了，只是结果不完整
+            ("error", "rate_limited", "error"),
+            ("error", "not_configured", "error"),
+        ],
+    )
+    async def test_result_status_and_lifecycle(
+        self, result_status: str, error_code: str, expect_lifecycle: str
+    ) -> None:
+        """有信封：三态与错误码带出；生命周期按三态映射（degraded 不算 error）。"""
+        out = await _collect(
+            [_tool_end_msg("fetch_url", result_status, error_code)]
+        )
+
+        evt = out[0]
+        assert evt["status"] == expect_lifecycle
+        assert evt["result_status"] == result_status
+        assert evt["error_code"] == error_code
+
+    async def test_degraded_is_visible(self) -> None:
+        """回归锁：`degraded` 必须能从 SSE 看到——它正是 ToolMessage.status 盖不住的那档。"""
+        out = await _collect([_tool_end_msg("download_sandbox_file", "degraded")])
+
+        assert out[0]["status"] == "completed", "调用本身跑完了"
+        assert out[0]["result_status"] == "degraded", "但结果不完整，必须如实告知前端"
+
+    async def test_no_envelope_yields_none(self) -> None:
+        """无信封（测试替身 / 旧形态输出）→ 三态 None，生命周期 completed（不猜）。"""
+        out = await _collect([_tool_end("fetch_url", "plain text output")])
+
+        assert out[0]["status"] == "completed"
+        assert out[0]["result_status"] is None
+        assert out[0]["error_code"] == ""
+
+    async def test_output_uses_message_content_not_repr(self) -> None:
+        """output 取 ToolMessage.content，不是其 repr（否则前端看到一坨对象字面量）。"""
+        out = await _collect([_tool_end_msg("fetch_url", "ok", content="抓取到的正文")])
+
+        assert out[0]["output"] == "抓取到的正文"
+        assert "ToolMessage" not in str(out[0]["output"])
+
+    async def test_start_event_has_no_result_status(self) -> None:
+        """事中（running）不该有三态——结果还没出来，填了就是编。"""
+        out = await _collect([_tool_start("fetch_url", "{}")])
+
+        assert out[0]["status"] == "running"
+        assert out[0]["result_status"] is None
