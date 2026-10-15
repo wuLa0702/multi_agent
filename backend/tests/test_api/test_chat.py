@@ -297,3 +297,9 @@ async def test_chat_stream_v3_default_off_token_only(
 
     events = parse_sse(body)
     assert all(e["type"] in ("start", "token", "done") for e in events), "默认开关应只出 token"
+
+# ── 按需声明：本模块测试需要 agent 单例 + 断点/记忆库（同上）──
+@pytest.fixture(autouse=True)
+def _needs_agent(reset_agent_singleton) -> None:
+    """本模块每个用例都要重置 agent 缓存并重建 checkpointer / store。"""
+    return None

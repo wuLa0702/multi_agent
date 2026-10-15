@@ -87,3 +87,9 @@ async def test_health_database_down_degraded(mocker) -> None:
     assert body["status"] == "degraded"
     assert body["redis"] == "connected"
     assert body["database"] == "disconnected"
+
+# ── 按需声明：本模块测试需要数据库（2026-10-15 起 pg_schema 不再 autouse）──
+@pytest.fixture(autouse=True)
+def _needs_db(pg_schema) -> None:
+    """本模块每个用例都要独立 PG schema（隔离 + 用完即删）。"""
+    return None

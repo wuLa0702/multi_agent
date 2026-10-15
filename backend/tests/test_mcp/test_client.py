@@ -151,3 +151,9 @@ async def test_connect_all_no_servers(conn) -> None:
         assert manager.get_client() is None
     finally:
         manager.reset()
+
+# ── 按需声明：本模块测试需要数据库（2026-10-15 起 pg_schema 不再 autouse）──
+@pytest.fixture(autouse=True)
+def _needs_db(pg_schema) -> None:
+    """本模块每个用例都要独立 PG schema（隔离 + 用完即删）。"""
+    return None

@@ -63,3 +63,9 @@ async def test_seed_defaults_marks_first_model_default(conn) -> None:
         defaults = [m for m in p.models if m.is_default]
         assert len(defaults) == 1, f"{p.slug} 应恰有一个默认模型"
         assert defaults[0].name == p.models[0].name
+
+# ── 按需声明：本模块测试需要数据库（2026-10-15 起 pg_schema 不再 autouse）──
+@pytest.fixture(autouse=True)
+def _needs_db(pg_schema) -> None:
+    """本模块每个用例都要独立 PG schema（隔离 + 用完即删）。"""
+    return None

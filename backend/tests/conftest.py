@@ -78,15 +78,17 @@ async def _drop_schema(schema: str) -> None:
         await conn.close()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 async def pg_schema() -> AsyncIterator[str]:
-    """每用例独立 PG schema（隔离 + 用完即删）。
+    """每用例独立 PG schema（隔离 + 用完即删）——**按需请求**，非 autouse。
 
     流程：关掉上个用例的池（幂等）→ 建池并把 search_path 指向新 schema
     → 建表 → 用例结束关池 + DROP SCHEMA CASCADE。
 
-    测试**不需要显式请求**本 fixture（autouse）；旧 `tmp_db_path` 已废弃——
-    PG 无内存模式，隔离靠 schema 而非临时文件。
+    ⚠️ **按需请求**（2026-10-15 修订）：此前为 autouse，导致连纯函数测试
+    （validators / render / adapter / error_map…）也要起 PG，全量耗时翻 5 倍
+    （50s → 254s）。现改为只有真正用到数据库的测试才拉它——直接请求本夹具，
+    或经 `reset_agent_singleton` / `seeded_registry` 间接获得。
 
     Yields:
         本用例独占的 schema 名（checkpointer/store 需沿用同一 schema）
@@ -179,13 +181,16 @@ def mock_chat_llm(mocker, fake_deep_agent_model: FakeDeepAgentModel) -> FakeDeep
     return fake_deep_agent_model
 
 
-@pytest.fixture(autouse=True)
-async def reset_agent_singleton(pg_schema, tmp_path):
-    """每个测试重置 agent 缓存 + 初始化 checkpointer（P0）+ store（P1）。
+@pytest.fixture
+async def reset_agent_singleton(pg_schema):
+    """重置 agent 缓存 + 初始化 checkpointer（P0）+ store（P1）——**按需请求**。
 
     Checkpointer/Store 生命周期模拟 lifespan：每测试在本用例的 PG schema 内
     重建（隔离干净、不污染真实库），结束后关闭连接并复位。
     v2.0：_agent 单例 → _agents 会话级缓存（全清）。
+
+    ⚠️ **按需请求**（2026-10-15 修订）：此前为 autouse，与 `pg_schema` 一起
+    把 PG 强加给每个测试。凡用到 agent / 断点 / 记忆的测试请显式请求本夹具。
 
     Args:
         pg_schema: 本用例独占 schema（checkpointer/store 与之同 schema）

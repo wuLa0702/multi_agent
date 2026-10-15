@@ -16,6 +16,8 @@ C01 修复（co-creator 拍板：**Checkpointer 管 Agent 路径执行历史**�
 
 from __future__ import annotations
 
+import pytest
+
 from src.agent.main_agent import ChatContext, build_agent, stream_agent_events
 from src.api.chat import ChatStreamRequest, _prepare_new_messages
 from src.db import connection as db_conn
@@ -116,3 +118,11 @@ async def test_degraded_without_checkpointer_uses_db_history(mock_chat_llm) -> N
     contents = [m.content for m in lc_messages]
     assert "旧问题" in contents and "旧回答" in contents, f"降级模式应含 DB 全量历史：{contents}"
     assert "新问题" in contents, "应含本条新消息"
+
+
+# ── 按需声明：本模块走真实链路（DB + Checkpointer/Store）──
+@pytest.fixture(autouse=True)
+def _needs_agent(reset_agent_singleton) -> None:
+    """本模块每个用例都要独立 schema + 重建 checkpointer / store。"""
+    return None
+

@@ -85,3 +85,9 @@ class TestSessionPersistRetry:
             _, body = await _post_stream(client, {"message": "hi"})
         assert calls["n"] == 2
         assert parse_sse(body)[0]["type"] == "start"
+
+# ── 按需声明：本模块测试需要 agent 单例 + 断点/记忆库（同上）──
+@pytest.fixture(autouse=True)
+def _needs_agent(reset_agent_singleton) -> None:
+    """本模块每个用例都要重置 agent 缓存并重建 checkpointer / store。"""
+    return None
