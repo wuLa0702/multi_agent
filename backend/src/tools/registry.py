@@ -7,9 +7,16 @@
 - 子代理 YAML 查表 → `get_tool()`
 - 未来 MCP 协议化暴露清单 → 同一张表
 
-元数据口径见 `docs/决策/2026-10-14-设计-工具中心职责边界-v1.md`：
-domain 支撑分层归纳；is_idempotent / fallback_to 支撑重试与降级；
-risk_level / requires_approval 支撑审批；size 支撑大/小工具划分。
+元数据口径见 `docs/决策/2026-10-14-设计-工具中心职责边界-v1.md`。
+**当前消费方（2026-10-15 批次 2/3 后实测）**：
+
+| 字段 | 谁在读 |
+|---|---|
+| `domain` / `mount_main` | `tools_for_main()` / `hitl_tools()`（挂载清单） |
+| `requires_approval` / `allowed_decisions` | `build_hitl_interrupt_on()`（审批配置，批次 2） |
+| `is_idempotent` | `_apply_retry()`（重试门控，批次 3） |
+| `fallback_to` | `fallback_for()` → 审计事后行（批次 3） |
+| `risk_level` / `size` | **无消费方**——人读的分类标签，如实标注不假装接线 |
 
 **三层结构**（阶段 4 批次 3 定稿）：
 
@@ -115,9 +122,13 @@ class ToolSpec:
         is_idempotent: 幂等性——重复执行是否安全（写操作 False）。
             **同时是重试的门控**：`retry` 只允许配在幂等工具上
         retry: 自动重试参数（None = 不重试）。幂等读操作才配——见 `RetryPolicy`
-        risk_level: 风险级（low / medium / high）——审批依据
-        size: 粒度（small=可自由编排 / big=强事务整体动作）
-        fallback_to: 降级备选工具名（显式声明，不靠猜）
+        risk_level: 风险级（low / medium / high）——**人读的分类标签，当前无消费方**。
+            ⚠️ 审批**不**由它推导（批次 2 方案 A 拍板）：同为 high 的工具按钮集可以不同
+            （`run_code_in_sandbox` 允许 edit、`run_command_in_sandbox` 不允许），
+            故按钮集由 `allowed_decisions` 显式声明，见该字段说明
+        size: 粒度（small=可自由编排 / big=强事务整体动作）——**人读的分类标签，当前无消费方**
+        fallback_to: 降级备选工具名（显式声明，不靠猜）。
+            消费方：`fallback_for()` → 审计事后行（只读声明，**不执行降级**）
         requires_approval: 是否需 HITL 审批
         allowed_decisions: 审批时**允许人类做哪些决策**（`requires_approval=True`
             时必填，见下方不变量）。取值：`approve`（通过执行）/ `edit`（人类改参数
