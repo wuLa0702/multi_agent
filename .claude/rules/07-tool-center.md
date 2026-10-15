@@ -7,7 +7,8 @@
 ## 1. 工具定义（唯一真相源）
 
 - **唯一登记处** = `tools/registry.py::TOOL_REGISTRY`；新增工具**只改这一处**
-- 一条 `ToolSpec`：`name / fn / domain / description` 必填；`is_idempotent / risk_level / size / fallback_to / requires_approval` 按需
+- 一条 `ToolSpec`：`name / fn / domain / description` 必填；
+  `is_idempotent / retry / risk_level / size / fallback_to / requires_approval / allowed_decisions` 按需
 - 消费方全部从该表派生，**禁止再出现第二份工具清单**：
 
 | 消费方 | 派生函数 |
@@ -15,8 +16,13 @@
 | 主 Agent 挂载 | `tools_for_main()` |
 | HITL 门控（编排层按 `hitl_enabled` 追加） | `hitl_tools()` |
 | 子代理 YAML 查表 | `get_tool(name)` |
+| 审批配置（`interrupt_on`） | `build_hitl_interrupt_on()`（读 `requires_approval` / `allowed_decisions`） |
+| 重试包装 | `_apply_retry()`（读 `is_idempotent` 门控 + `RetryPolicy` 参数） |
+| 审计"该换谁" | `fallback_for()`（读 `fallback_to`，只读声明不执行降级） |
 
 - **禁止**在 `main_agent.py` 等处硬编码工具清单
+- **禁止**把工具固有属性写进实现文件（重试参数、审批按钮集等）——属性声明在登记表，
+  实现文件保持"纯实现"。违反者即"同一件事写两遍"，两侧迟早对不上
 
 ## 2. 输入规范（写工具参数 schema 时必守）
 
@@ -43,7 +49,16 @@
 | 幂等的实现（去重表 / 唯一键） | 工具实现 / 业务层 |
 | 降级到哪个备选 | 编排层（按 `fallback_to` / `domain`） |
 
-> 注册表只**声明**（`is_idempotent` / `risk_level` / `fallback_to`），不**执行**这些策略。
+> 注册表只**声明**、**不在运行时做决策**——但**允许在派生时组装**：装配时刻
+> （import 期）它是唯一真相源（如按 `is_idempotent` 决定是否包重试包装），
+> 运行时刻它不参与任何策略判断。两者别混。
+
+> 📌 **2026-10-15 修订（co-creator 确认批次 2/3 方向）**：登记表消费方从 3 个扩到 6 个
+> （审批配置 / 重试包装 / 审计备选），并把「工具固有属性不得写进实现文件」立为禁止项。
+> 依据（实测）：批次 2 前审批表与登记表**已经开始打架**（`upload_workspace_file` /
+> `download_sandbox_file` 登记表漏声明 `requires_approval`、而实际在审批——由等价锁抓出）；
+> 批次 3 前重试参数写在 `impl/search.py` / `impl/fetch.py` 装饰器上，与 `is_idempotent`
+> 互不相干（第三处"同一件事写两遍"）。
 
 > 📌 **2026-10-15 修订（co-creator 确认）**：出站脱敏落点由 `llm/adapter.py` 改为
 > `llm/redact.py` + **模型调用边界中间件**。依据（实测）：`LLMAdapter.chat()` 只被
