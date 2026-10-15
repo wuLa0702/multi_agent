@@ -22,8 +22,8 @@ import httpx
 
 from src.core.config import settings
 from src.core.errors import ToolErrorCode
-from src.tools.error_map import classify_exception
-from src.tools.result import ToolResult
+from src.tools.contract.error_map import classify_exception
+from src.tools.contract.result import ToolResult
 
 logger = logging.getLogger(__name__)
 

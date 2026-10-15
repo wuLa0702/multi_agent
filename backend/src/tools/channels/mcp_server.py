@@ -12,7 +12,7 @@ from fastmcp import FastMCP
 
 from src.tools.impl.sandbox import run_code_in_sandbox as _run_code_in_sandbox
 from src.tools.impl.search import internet_search as _internet_search
-from src.tools.result import render
+from src.tools.contract.result import render
 
 mcp = FastMCP("multi-agent")
 

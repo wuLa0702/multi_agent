@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from src.core.errors import ToolErrorCode
-from src.tools.result import ToolResult
+from src.tools.contract.result import ToolResult
 from src.wiki.export_service import WikiExportError, export_to_wiki
 
 _TOOL_NAME = "write_wiki"

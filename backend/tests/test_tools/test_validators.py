@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from src.tools import validators
+from src.tools.guardrails import validators
 
 
 # ── validate_url ──

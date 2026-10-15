@@ -63,7 +63,7 @@ def test_interpreter_disabled_middleware_stack_unchanged(mocker) -> None:
 
     _, kwargs = mock_create.call_args
     middleware_types = [type(m) for m in kwargs["middleware"]]
-    from src.tools.audit import ToolAuditMiddleware
+    from src.tools.guardrails.audit import ToolAuditMiddleware
 
     assert ToolAuditMiddleware in middleware_types
     assert all("CodeInterpreter" not in type(m).__name__ for m in kwargs["middleware"])
@@ -127,7 +127,7 @@ def test_interpreter_enabled_passes_ptc_and_order(mocker, monkeypatch) -> None:
     assert interpreter[0].kwargs["ptc"] == ["internet_search"]
     assert interpreter[0].kwargs["mode"] == "turn"
     # 顺序断言（评审问题 2.2 预案）：ToolAudit 在 CodeInterpreter 之前（外层先审计）
-    from src.tools.audit import ToolAuditMiddleware
+    from src.tools.guardrails.audit import ToolAuditMiddleware
 
     audit_idx = next(i for i, m in enumerate(middleware)
                      if isinstance(m, ToolAuditMiddleware))

@@ -41,7 +41,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
-from src.tools.result import ToolResult, render
+from src.tools.contract.result import ToolResult, render
 
 
 def as_lc_tool(fn: Callable[..., ToolResult], *, name: str) -> BaseTool:

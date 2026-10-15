@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from src.tools.result import ToolResult
+from src.tools.contract.result import ToolResult
 
 _TOOL_NAME = "publish_report"
 

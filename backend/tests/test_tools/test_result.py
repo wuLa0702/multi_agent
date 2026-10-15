@@ -9,7 +9,7 @@ import dataclasses
 
 import pytest
 
-from src.tools.result import ToolResult, render
+from src.tools.contract.result import ToolResult, render
 
 
 class TestToolResultContract:

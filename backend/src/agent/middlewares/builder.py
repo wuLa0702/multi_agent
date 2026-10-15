@@ -42,8 +42,8 @@ from src.agent.middlewares.interpreter import build_interpreter_middleware
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.agent.rubrics.rubrics import build_rubric_middleware
 from src.llm.redact import RedactMiddleware
-from src.tools.audit import ToolAuditMiddleware
-from src.tools.gateway import ToolGatewayMiddleware
+from src.tools.guardrails.audit import ToolAuditMiddleware
+from src.tools.guardrails.gateway import ToolGatewayMiddleware
 
 
 def build_middlewares(model_middleware: Callable[..., Any] | Any) -> list[Any]:

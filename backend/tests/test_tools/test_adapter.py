@@ -11,8 +11,8 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
-from src.tools.adapter import as_lc_tool
-from src.tools.result import ToolResult, render
+from src.tools.contract.adapter import as_lc_tool
+from src.tools.contract.result import ToolResult, render
 
 
 def _sample(code: str, max_chars: int = 100, flag: bool = False) -> ToolResult:

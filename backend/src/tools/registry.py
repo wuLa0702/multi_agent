@@ -45,7 +45,7 @@ import httpx
 from langchain_core.tools import BaseTool
 
 from src.core.retry import DEFAULT_DELAYS, DEFAULT_RETRIES, retry_tool
-from src.tools.adapter import as_lc_tool
+from src.tools.contract.adapter import as_lc_tool
 from src.tools.impl.ask_human import ask_human
 from src.tools.impl.fetch import fetch_url
 from src.tools.impl.publish_report import publish_report
@@ -59,7 +59,7 @@ from src.tools.impl.sandbox import (
 from src.tools.impl.search import internet_search
 from src.tools.impl.skill import run_skill_script
 from src.tools.impl.wiki import write_wiki
-from src.tools.result import exhausted_result
+from src.tools.contract.result import exhausted_result
 
 HITL_DOMAIN = "hitl"
 
@@ -72,7 +72,7 @@ class RetryPolicy:
     写操作重试有幂等风险（`run_skill_script` v1.2 评审即因此排除）。
 
     **为什么本类放 registry 而不是 `core/retry.py`**：`wrap()` 要注入
-    `exhausted_result`（`tools/result.py`），而 `core/` 是底座层、禁依赖业务目录
+    `exhausted_result`（`tools/contract/result.py`），而 `core/` 是底座层、禁依赖业务目录
     （06-structure-optimization §2）——故「策略声明」留在登记表，底座只提供
     `retry_tool` 机制本身。
 
@@ -308,7 +308,7 @@ def _apply_retry(spec: ToolSpec) -> ToolSpec:
 
 
 def _with_output_adapter(spec: ToolSpec) -> ToolSpec:
-    """实现函数 → 挂载形态 `BaseTool`（输出适配包在最外层，见 `tools/adapter.py`）。
+    """实现函数 → 挂载形态 `BaseTool`（输出适配包在最外层，见 `tools/contract/adapter.py`）。
 
     只做一件事：把 `spec.fn`（实现）换成「执行后拆分 content / artifact」的
     langchain 工具。**幂等/重试等策略不在此处**——`_IMPL_SPECS` 里已显式挂好，

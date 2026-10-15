@@ -22,8 +22,8 @@ from src.core.config import settings
 from src.core.errors import ToolErrorCode
 from src.sandbox.adapter import OpenSandboxAdapter
 from src.sandbox.pool import SandboxFullError, sandbox_pool
-from src.tools.result import ToolResult
-from src.tools.validators import validate_command, validate_sandbox_path
+from src.tools.contract.result import ToolResult
+from src.tools.guardrails.validators import validate_command, validate_sandbox_path
 
 # 沙箱适配器（惰性：import 不创建沙箱，调用时才连本地 docker / 云端）
 sandbox_adapter = OpenSandboxAdapter()

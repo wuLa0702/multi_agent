@@ -89,7 +89,7 @@ class ToolErrorCode:
 
     与上面的异常类**同源不同层**：异常类负责「抛」，本组错误码负责「装」——
     工具不抛异常，一律降级返回，错误语义经
-    `tools/result.py::ToolResult.error_code` 传给下游（审计 / SSE / 编排）。
+    `tools/contract/result.py::ToolResult.error_code` 传给下游（审计 / SSE / 编排）。
 
     用常量类而非 `enum.StrEnum`：`error_code` 声明为 `str`，而 StrEnum 成员的
     `__hash__` 取**成员名**（`TIMEOUT`）而非值（`timeout`），与裸字符串混用做

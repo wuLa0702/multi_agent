@@ -48,8 +48,8 @@ def test_get_agent_session_cache(mocker) -> None:
     # 显式导入而非复用 builder 输出，才不是同义反复——本断言锁的是"链里有什么、什么顺序"）
     from src.agent.middlewares.token_usage import TokenUsageMiddleware
     from src.llm.redact import RedactMiddleware
-    from src.tools.audit import ToolAuditMiddleware
-    from src.tools.gateway import ToolGatewayMiddleware
+    from src.tools.guardrails.audit import ToolAuditMiddleware
+    from src.tools.guardrails.gateway import ToolGatewayMiddleware
 
     _, kwargs = mock_create.call_args
     middleware_types = [type(m) for m in kwargs["middleware"]]

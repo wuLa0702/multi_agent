@@ -11,8 +11,8 @@ from __future__ import annotations
 from src.agent.middlewares.builder import build_middlewares
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
 from src.llm.redact import RedactMiddleware
-from src.tools.audit import ToolAuditMiddleware
-from src.tools.gateway import ToolGatewayMiddleware
+from src.tools.guardrails.audit import ToolAuditMiddleware
+from src.tools.guardrails.gateway import ToolGatewayMiddleware
 
 
 def _model_mw() -> object:

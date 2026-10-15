@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from src.core.errors import is_retryable_tool_error
-from src.tools.error_map import classify_exception
+from src.tools.contract.error_map import classify_exception
 
 ToolStatus = Literal["ok", "degraded", "error"]
 

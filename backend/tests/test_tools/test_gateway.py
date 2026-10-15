@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from langchain_core.messages import ToolMessage
 from pydantic import BaseModel
 
-from src.tools.gateway import ToolGatewayMiddleware
+from src.tools.guardrails.gateway import ToolGatewayMiddleware
 
 
 class _Args(BaseModel):

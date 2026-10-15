@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from src.core.errors import RetryableError, ToolErrorCode
-from src.tools.error_map import classify_exception, code_for_http_status
+from src.tools.contract.error_map import classify_exception, code_for_http_status
 
 
 def _status_error(status: int) -> httpx.HTTPStatusError:

@@ -539,7 +539,7 @@ def _tool_outcome(output: Any) -> tuple[str, str | None, str, bool]:
     """工具输出 → `(生命周期 status, 结果三态, 归一错误码, 可重试)`（阶段 2.3.2/4 批次 3）。
 
     三态取自工具输出的 **artifact 结构化通道**（阶段 2 双通道落地，
-    见 `tools/adapter.py::artifact_of`）——`ToolMessage.status` 只有
+    见 `tools/contract/adapter.py::artifact_of`）——`ToolMessage.status` 只有
     success/error，`degraded` 会被它压成 success，故必须从 artifact 取。
     `retryable` 同源：它是"这次失败能不能救"的运行时事实（阶段 4 批次 3 接的
     真实读者，此前写了无人读）。

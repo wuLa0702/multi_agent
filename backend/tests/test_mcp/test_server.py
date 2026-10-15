@@ -32,7 +32,7 @@ async def test_server_call_internet_search(mocker) -> None:
     阶段 2.2.1 起内部实现返回 `ToolResult` 信封（不再返回裸字符串），
     MCP 包装层负责 `render()` 成文本——故 mock 也要给信封。
     """
-    from src.tools.result import ToolResult
+    from src.tools.contract.result import ToolResult
 
     mocker.patch(
         "src.tools.channels.mcp_server._internet_search",
@@ -50,7 +50,7 @@ async def test_server_call_internet_search(mocker) -> None:
 @pytest.mark.asyncio
 async def test_server_renders_error_envelope_as_text(mocker) -> None:
     """错误态：信封经 MCP 出去是**带前缀的中文文本**，不是对象、不是 JSON。"""
-    from src.tools.result import ToolResult
+    from src.tools.contract.result import ToolResult
 
     mocker.patch(
         "src.tools.channels.mcp_server._internet_search",
@@ -76,7 +76,7 @@ async def test_server_call_sandbox(mocker) -> None:
 
     阶段 2.2.3 起内部实现返回 `ToolResult` 信封（不再返回裸字符串）。
     """
-    from src.tools.result import ToolResult
+    from src.tools.contract.result import ToolResult
 
     mocker.patch(
         "src.tools.channels.mcp_server._run_code_in_sandbox",

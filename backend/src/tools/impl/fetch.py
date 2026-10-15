@@ -18,9 +18,9 @@ from html import unescape
 import httpx
 
 from src.core.errors import ToolErrorCode
-from src.tools.error_map import classify_exception, code_for_http_status
-from src.tools.result import ToolResult
-from src.tools.validators import validate_url
+from src.tools.contract.error_map import classify_exception, code_for_http_status
+from src.tools.contract.result import ToolResult
+from src.tools.guardrails.validators import validate_url
 
 _TOOL_NAME = "fetch_url"
 

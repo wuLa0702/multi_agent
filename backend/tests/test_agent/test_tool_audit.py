@@ -14,7 +14,7 @@ import httpx
 import pytest
 from langchain_core.messages import ToolMessage
 
-from src.tools.audit import ToolAuditMiddleware
+from src.tools.guardrails.audit import ToolAuditMiddleware
 
 
 def _make_request(name: str, args: dict | None = None, session_id: str = "s1"):
@@ -264,7 +264,7 @@ class TestFailurePaths:
         """T6：审计 logger 打炸 → 工具仍正常执行（两行都炸也不阻断）。"""
         middleware = ToolAuditMiddleware()
         monkeypatch.setattr(
-            "src.tools.audit.audit_logger.info",
+            "src.tools.guardrails.audit.audit_logger.info",
             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit boom")),
         )
 
@@ -277,7 +277,7 @@ class TestFailurePaths:
         """审计自身炸了，也不能把工具的真实异常盖掉（异常必须原样传出）。"""
         middleware = ToolAuditMiddleware()
         monkeypatch.setattr(
-            "src.tools.audit.audit_logger.info",
+            "src.tools.guardrails.audit.audit_logger.info",
             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit boom")),
         )
 

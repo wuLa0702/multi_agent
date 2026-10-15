@@ -9,7 +9,7 @@ import pytest
 
 from src.core.permissions import validate_workspace_path
 from src.tools.impl.fetch import fetch_url
-from src.tools.validators import validate_url
+from src.tools.guardrails.validators import validate_url
 
 
 class TestValidateWorkspacePath:
@@ -104,7 +104,7 @@ class TestAuditBlocked:
     """D5 安全拦截事件（用例 9-10）。"""
 
     def test_blocked_event_logged(self, audit_records) -> None:
-        from src.tools.audit import ToolAuditMiddleware
+        from src.tools.guardrails.audit import ToolAuditMiddleware
 
         mw = ToolAuditMiddleware()
         mw._audit_blocked("fetch_url", "注入 URL")

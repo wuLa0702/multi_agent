@@ -10,7 +10,7 @@ Word 渲染（沙箱 python-docx）为增强，当前以结构化 Markdown 交�
 from __future__ import annotations
 
 from src.core.errors import ToolErrorCode
-from src.tools.result import ToolResult
+from src.tools.contract.result import ToolResult
 
 _TOOL_NAME = "generate_report"
 
