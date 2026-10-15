@@ -1,16 +1,20 @@
 """write_wiki 工具：Agent 运行时把内容写入 wiki 知识库（P1.5/P1，2026-08-13）。
 
-走 REST（wiki_export_service 调 wiki POST /v1/pages/{path}）——Agent 工具通道
+走 REST（`wiki/export_service` 调 wiki POST /v1/pages/{path}）——Agent 工具通道
 （MCP 需 wiki 侧暴露 wiki_write，暂用 REST 直连，双通道语义见 wiki 设计 §3）。
 
 失败降级为错误信息，不中断 run。输出为 `ToolResult` 信封（阶段 2.2.8）。
+
+2026-10-15（修 P13）：原先 import `src.agent.services.wiki_export_service`
+（编排层）——**能力层反向依赖上层**，违反 06 §2。客户端已下沉为 `src/wiki/`
+能力域，此处改为向下取用。
 """
 
 from __future__ import annotations
 
-from src.agent.services.wiki_export_service import WikiExportError, export_to_wiki
 from src.core.errors import ToolErrorCode
 from src.tools.result import ToolResult
+from src.wiki.export_service import WikiExportError, export_to_wiki
 
 _TOOL_NAME = "write_wiki"
 

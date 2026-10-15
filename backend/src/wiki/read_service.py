@@ -2,7 +2,9 @@
 
 wiki（llm_wiki_selfbuild）已提供 `GET /v1/pages/{path}`（PageDetailResponse），
 本服务封装 REST 调用：前端「从 wiki 拉取」→ multi_agent 后端 → wiki 读取。
-与写通道（wiki_export_service）对称——双向打通，走 REST 手动通道不走 MCP。
+与写通道（`export_service`）对称——双向打通，走 REST 手动通道不走 MCP。
+
+2026-10-15：随写通道一并从 `agent/services/` 下沉到 `wiki/` 能力域（修 P13）。
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from __future__ import annotations
 import httpx
 
 from src.core.config import settings
-from src.agent.services.wiki_export_service import WikiExportError
+from src.wiki.export_service import WikiExportError
 
 
 class WikiPageNotFoundError(WikiExportError):

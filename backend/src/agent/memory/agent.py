@@ -136,7 +136,7 @@ async def write_store(memory_type: str, fact: str, related: str = "") -> str:
 
 
 async def write_wiki(page: str, content: str) -> str:
-    """写 Wiki（文档记忆，沉淀知识性结论）——接 wiki_export_service REST 写通道（2026-08-15）。
+    """写 Wiki（文档记忆，沉淀知识性结论）——接 `wiki/export_service` REST 写通道（2026-08-15）。
 
     memory_agent 判断"值得沉淀的知识性结论"时调用（prompt 引导，见 MEMORY_AGENT_PROMPT 5.5）；
     wiki 不可达/失败 → 降级返回提示，不阻断任务（wiki 是旁路能力）。
@@ -148,7 +148,7 @@ async def write_wiki(page: str, content: str) -> str:
     Returns:
         写入结果描述（成功含 wiki 路径；失败提示降级）
     """
-    from src.agent.services.wiki_export_service import WikiExportError, export_to_wiki
+    from src.wiki.export_service import WikiExportError, export_to_wiki
 
     try:
         result = await export_to_wiki(page, content[:500], title=page)

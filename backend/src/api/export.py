@@ -1,8 +1,10 @@
 """导出/读取 REST 路由（wiki 双向通道，2026-08-13）：写 POST /v1/export/wiki + 读 GET /v1/export/wiki/pages/{path}。
 
-前端「保存到 wiki」→ POST /v1/export/wiki → wiki_export_service 调 wiki /v1/pages；
-前端「从 wiki 拉取」→ GET /v1/export/wiki/pages/{path} → wiki_read_service 调 wiki GET。
+前端「保存到 wiki」→ POST /v1/export/wiki → `wiki/export_service` 调 wiki /v1/pages；
+前端「从 wiki 拉取」→ GET /v1/export/wiki/pages/{path} → `wiki/read_service` 调 wiki GET。
 走 REST（用户手动操作），不走 MCP（MCP 是 Agent 工具通道）。
+
+2026-10-15：两服务由 `agent/services/` 下沉至 `wiki/` 能力域（修 P13 分层违规）。
 """
 
 from __future__ import annotations
@@ -10,11 +12,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from src.agent.services.wiki_export_service import WikiExportError, export_to_wiki
-from src.agent.services.wiki_read_service import (
-    WikiPageNotFoundError,
-    get_page_from_wiki,
-)
+from src.wiki.export_service import WikiExportError, export_to_wiki
+from src.wiki.read_service import WikiPageNotFoundError, get_page_from_wiki
 
 router = APIRouter(prefix="/v1/export", tags=["export"])
 

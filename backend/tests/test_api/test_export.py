@@ -63,7 +63,7 @@ def test_read_wiki_page_ok(read_client):
 def test_read_wiki_page_not_found(read_client, monkeypatch):
     """页面不存在 → 404（业务错误，非重试）。"""
 
-    from src.agent.services.wiki_read_service import WikiPageNotFoundError
+    from src.wiki.read_service import WikiPageNotFoundError
 
     async def _nf(path):
         raise WikiPageNotFoundError(f"wiki 页面不存在：{path}")

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.services.wiki_export_service import WikiExportError
 from src.core.errors import ToolErrorCode
+from src.wiki.export_service import WikiExportError
 from src.tools.impl import wiki as wiki_mod
 from src.tools.impl.wiki import write_wiki
 
