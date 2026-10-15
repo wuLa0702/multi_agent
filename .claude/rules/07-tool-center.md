@@ -37,10 +37,16 @@
 
 | 事项 | 归属 |
 |------|------|
-| 出站脱敏（发远程 LLM 前） | `llm/adapter.py` |
+| 出站脱敏（发远程 LLM 前） | `llm/redact.py`（纯函数 + 中间件）——**接入点＝模型调用边界** `RedactMiddleware`（覆盖主对话）＋ `LLMAdapter.chat()`（覆盖标题/记忆等辅助调用） |
 | 高威胁操作审批流 | `agent/hitl/` |
 | `trace_id` 生成与贯穿 | 请求入口中间件 |
 | 幂等的实现（去重表 / 唯一键） | 工具实现 / 业务层 |
 | 降级到哪个备选 | 编排层（按 `fallback_to` / `domain`） |
 
 > 注册表只**声明**（`is_idempotent` / `risk_level` / `fallback_to`），不**执行**这些策略。
+
+> 📌 **2026-10-15 修订（co-creator 确认）**：出站脱敏落点由 `llm/adapter.py` 改为
+> `llm/redact.py` + **模型调用边界中间件**。依据（实测）：`LLMAdapter.chat()` 只被
+> 「生成会话标题」「记忆抽取」两处使用，**主 Agent 对话走 `get_chat_model()` →
+> langchain agent loop，不经过 adapter**——只挂 adapter 会让主对话（用户内容流向
+> 远程 LLM 的主通道）完全不被脱敏。
