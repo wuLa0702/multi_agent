@@ -6,6 +6,7 @@
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.15 | 2026-10-15 | **§2 MCP 工具治理落地**：§2 目录树 `db/` 子树补 `mcp_meta_repository`；§2.1 能力落地表「远程 MCP 工具」行更新为**连接表 + 治理表**双表，并写明"未登记不挂载 + 市场安装自动登记"两条路径 |
 > | v2.14 | 2026-10-15 | **§2 工具中心一级收拢**：`tools/` 平铺的 6 个文件收进两个二级目录——`contract/`（`result`·`adapter`·`error_map`，工具"长什么样"）+ `guardrails/`（`validators`·`audit`·`gateway`，进/出边界的约束）；`registry.py` 留一级（门面）。纯移动（`git mv` 保历史）+ 40 处 import 路径同步，**零行为变更**（168 用例绿）|
 > | v2.13 | 2026-10-15 | **§2 目录树对齐实际（工具中心收拢遗留）**：`backend/src/` 子树重写——删去**已不存在的 `mcp/`**（registry/server/http_base/adapters/tools）与 `src/skills/`、`agent/planner·summarizer·approve`、`core/langsmith·security`，改为实际的 `tools/`（registry/adapter/result/error_map/audit/gateway/validators/impl/channels/market）+ `wiki/` + `agent/` 8 子域 + 四层标注；§2 落地状态对照表 4 行更新 + 2 行划删（📦 目录已不存在）＋ 新增 tools/ 与 wiki/ 两行；§2.1 能力表「代码工具」行改为 `tools/impl/` + `tools/registry.py`；**§1 依赖链 1 处 + §5 依赖链 1 处**由 `{mcp, sandbox, memory, db}` 改为 `{tools, wiki, sandbox, memory, db}`；§1 架构图两处过时框同步（前端 Vue3 → React 19；MCP 网关 → 工具中心）；tests/ 分层行补 test_skills/test_tools |
 > | v2.12 | 2026-10-15 | **SQLite → PostgreSQL 全量迁移**（工作单 `docs/决策/2026-10-15-计划-PG迁移-v1.md`）：§2 落地状态对照表 `core/db.py` → **`db/connection.py`**（连接池单例，唯一连接出口）、`db/schema.py · repository.py` 保持；§2.1 能力表「mcp_servers 表（SQLite）」→ PostgreSQL；§3 基础设施新增 `postgres` 服务（pgvector/pgvector:pg16，宿主 5433，业务表 `public` / 断点记忆表 `langgraph` 同库不同 schema）；§6.1 决策 #7 数据库由「Redis + SQLite」改为「**Redis + PostgreSQL（+ pgvector）**」；§5 工程经验「Checkpointer（SQLite）」表述同步 |
@@ -163,7 +164,7 @@ multi-agent-project/
 │   │   ├── db/                     # 【底座层】唯一 SQL 出口
 │   │   │   ├── connection.py       # PG 连接池单例（2026-10-15 迁移；原 core/db.py）
 │   │   │   ├── schema.py           # 表结构集中定义
-│   │   │   └── *_repository.py     # 各域仓储（session/model/settings/skill/cost）
+│   │   │   └── *_repository.py     # 各域仓储（session/model/settings/skill/cost/mcp_meta）
 │   │   └── schemas/                # 【底座层】Pydantic 数据模型（2026-08-03 由 models/ 更名）
 │   ├── tests/                      # 分层测试（实际结构，按被测模块分）
 │   │   ├── test_agent/ test_api/ test_core/ test_mcp/
@@ -238,7 +239,7 @@ multi-agent-project/
 |------|---------|------|---------------|---------|
 | **代码工具 tool** | 实现 `backend/src/tools/impl/*.py` ＋ **注册** `backend/src/tools/registry.py`（唯一登记处） | Python 函数 | 直接挂载为工具，Agent 可**调用**（函数式工具） | 写实现文件 + **登记一条 ToolSpec**（只改这一处） |
 | **SKILL.md 技能 skill** | `data/skills/skill_md/{名称}/SKILL.md`（本地文件；`core/paths.py` 的 `get_skill_md_dir()`） | 说明书（YAML frontmatter + Markdown 正文） | 渐进披露注入提示词，Agent 按说明执行 | 市场安装（Skill Market）或手写文件——**无需改代码**，Agent 重启自动扫描 |
-| **远程 MCP 工具** | `mcp_servers` 表（PostgreSQL，一行一个 server 连接配置） | 远程服务（Smithery 等托管，本地只存 URL + 鉴权 headers） | `McpClientManager` 连接后注入 Agent，调用时走网络 | Skill Market 市场一键安装（自动建连接） |
+| **远程 MCP 工具** | 连接 `mcp_servers` 表 + **治理 `mcp_tool_meta` 表**（PostgreSQL；一行一个工具的风险级/审批按钮/幂等重试）| 远程服务（Smithery 等托管，本地只存 URL + 鉴权 headers） | `McpClientManager` 连接 → 按治理元数据**过滤+包装**（未登记不挂载）→ 注入 Agent | Skill Market 安装 → **自动登记治理元数据**（按 MCP 注解推导默认）；手工配置需显式登记 |
 | **子代理 subagent** | `backend/src/agent/subagents/*.yaml` | 专职角色声明（prompt + tools 清单） | `task` 工具委派 | 写 YAML 文件（tools 名查 registry） |
 
 补充：
