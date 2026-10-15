@@ -16,6 +16,7 @@ import logging
 import time
 from collections.abc import Callable
 from functools import wraps
+from typing import Any
 
 import httpx
 
@@ -39,6 +40,7 @@ def retry_tool(
     retries: int = DEFAULT_RETRIES,
     delays: tuple[float, ...] = DEFAULT_DELAYS,
     extra_exceptions: tuple[type[Exception], ...] = (),
+    on_exhausted: Callable[[Exception], Any] | None = None,
 ) -> Callable:
     """工具函数重试装饰器（自动检测 sync/async，两种形态分别处理）。
 
@@ -48,11 +50,24 @@ def retry_tool(
         retries: 最大重试次数
         delays: 每次重试的退避秒数
         extra_exceptions: 调用方额外指定的可重试异常类型（方案 C）
+        on_exhausted: **重试耗尽时**把异常转成什么（默认 `None` → 返回降级错误字符串）。
+            给 `callable` 则由调用方决定返回值——工具层用它把耗尽转成
+            `ToolResult` 错误信封（阶段 2 输出契约）。**降级属业务决定，
+            故由工具层注入而非在本模块内构造**（`core/` 是底座层，
+            禁依赖 `tools/`，见 06-structure-optimization §2）。
 
     Returns:
-        包装后的工具函数（重试耗尽仍失败 → 降级错误字符串）
+        包装后的工具函数；重试耗尽 → `on_exhausted(last_exc)`，
+        未提供 `on_exhausted` 则返回降级错误字符串
     """
     retryable = _NETWORK_EXCEPTIONS + extra_exceptions
+
+    def _exhausted(last_exc: Exception | None) -> Any:
+        """重试耗尽收口：交给调用方的工厂，或退回默认降级字符串。"""
+        logger.error("工具重试耗尽：%s", last_exc)
+        if on_exhausted is not None:
+            return on_exhausted(last_exc)
+        return f"工具调用失败（{type(last_exc).__name__}）：{last_exc}。请稍后重试。"
 
     def decorator(func: Callable) -> Callable:
         if asyncio.iscoroutinefunction(func):
@@ -71,8 +86,7 @@ def retry_tool(
                                 func.__name__, attempt + 1, retries, type(exc).__name__,
                             )
                             await asyncio.sleep(delay)
-                logger.error("工具 %s 重试耗尽：%s", func.__name__, last_exc)
-                return f"工具调用失败（{type(last_exc).__name__}）：{last_exc}。请稍后重试。"
+                return _exhausted(last_exc)
 
             return async_wrapper
         else:
@@ -91,8 +105,7 @@ def retry_tool(
                                 func.__name__, attempt + 1, retries, type(exc).__name__,
                             )
                             time.sleep(delay)
-                logger.error("工具 %s 重试耗尽：%s", func.__name__, last_exc)
-                return f"工具调用失败（{type(last_exc).__name__}）：{last_exc}。请稍后重试。"
+                return _exhausted(last_exc)
 
             return sync_wrapper
 

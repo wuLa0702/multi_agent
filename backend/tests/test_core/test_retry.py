@@ -142,3 +142,54 @@ class TestRegistryIntegration:
             assert wrapped == spec.is_idempotent, (
                 f"{name}：重试包装({wrapped}) 与 is_idempotent({spec.is_idempotent}) 不一致"
             )
+
+
+class TestOnExhausted:
+    """重试耗尽的可插拔降级（阶段 2.2.1）：降级属业务决定，由调用方注入。"""
+
+    def test_default_returns_string(self) -> None:
+        """不传 on_exhausted → 保持老行为（降级字符串），其他调用方零影响。"""
+
+        def always_fail():
+            raise httpx.ReadTimeout("timeout")
+
+        out = retry_tool(retries=1, delays=(0,))(always_fail)()
+        assert isinstance(out, str)
+        assert "工具调用失败" in out
+
+    def test_factory_gets_last_exception(self) -> None:
+        """传入工厂 → 耗尽时调用它，并递上最后一个异常（供判错误码）。"""
+        seen: dict[str, Exception] = {}
+
+        def build(exc: Exception) -> dict:
+            seen["exc"] = exc
+            return {"code": type(exc).__name__}
+
+        def always_fail():
+            raise httpx.ReadTimeout("boom")
+
+        out = retry_tool(retries=1, delays=(0,), on_exhausted=build)(always_fail)()
+        assert out == {"code": "ReadTimeout"}
+        assert isinstance(seen["exc"], httpx.ReadTimeout)
+
+    def test_factory_not_called_on_success(self) -> None:
+        """成功路径不碰工厂（只在耗尽时触发）。"""
+        called = {"n": 0}
+
+        def build(exc: Exception) -> str:
+            called["n"] += 1
+            return "degraded"
+
+        assert retry_tool(on_exhausted=build)(lambda: "ok")() == "ok"
+        assert called["n"] == 0
+
+    async def test_async_branch_supports_factory(self) -> None:
+        """async 分支同样支持 on_exhausted（sync/async 两条实现不能漏一条）。"""
+
+        async def always_fail():
+            raise httpx.ReadTimeout("timeout")
+
+        wrapped = retry_tool(retries=1, delays=(0,), on_exhausted=lambda e: "degraded")(
+            always_fail
+        )
+        assert await wrapped() == "degraded"
