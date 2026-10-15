@@ -21,6 +21,9 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from psycopg import AsyncConnection
 from pydantic import PrivateAttr
 
+from src.core.retry import retry_tool
+from src.tools.registry import RetryPolicy
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,38 +34,83 @@ class _SafeTool(BaseTool):
     协议层异常（Smithery 限流 429、连接失败）会在调用处抛异常中断 agent run——
     本包装捕获一切异常转字符串（与项目「工具失败降级不中断」设计一致）。
 
+    **重试必须包在本类【内层】**（`_retry`）：本类是"兜底网"，把异常吞成字符串；
+    若把重试包在外层，外层永远看不到异常 → 重试永不触发（与 P4 那次"外层空转"
+    同一个坑）。故顺序固定为 `原始工具 → 重试 → 本包装`。
+
     Attributes:
         _tool: 被包装的原始 MCP 工具（PrivateAttr——BaseTool 是 Pydantic 模型，
             下划线字段必须用 PrivateAttr 声明，否则不实例化）
+        _retry: 治理声明里的重试参数（None = 不重试；由幂等门控决定，见 mcp_meta）
     """
 
     _tool: BaseTool = PrivateAttr()
+    _retry: RetryPolicy | None = PrivateAttr(default=None)
 
-    def __init__(self, tool: BaseTool, **kwargs) -> None:
+    def __init__(
+        self, tool: BaseTool, *, retry: RetryPolicy | None = None, **kwargs
+    ) -> None:
         super().__init__(
             name=tool.name, description=tool.description, args_schema=tool.args_schema, **kwargs
         )
         self._tool = tool
+        self._retry = retry
+
+    @property
+    def raw_tool(self) -> BaseTool:
+        """内层原始 MCP 工具。
+
+        治理侧需要**按重试声明重包**时取它——直接包在本类外层会让重试空转
+        （本类把异常吞成字符串，外层看不到异常）。见 `mcp_meta.governed_tools`。
+        """
+        return self._tool
 
     def _run(self, *args, **kwargs):  # pragma: no cover - MCP 工具走 async
         raise NotImplementedError("MCP 工具为 async，使用 _arun")
 
+    async def _invoke_raw(self, payload: dict, config) -> object:
+        """调用远端工具（走 ainvoke 顶层入口：内部处理 RunnableConfig/args_schema，
+        直接调 _arun 会丢 config 参数——实测 StructuredTool 必传 config）。"""
+        return await self._tool.ainvoke(payload, config=config)
+
     async def _arun(self, *args, **kwargs):
+        config = kwargs.pop("config", None)
+        payload = args[0] if args and isinstance(args[0], dict) else kwargs
+
+        async def _call():
+            """**必须是具名 async 函数**：`retry_tool` 用
+            `asyncio.iscoroutinefunction` 分流 sync/async——传 `lambda: coro()`
+            会被判成同步函数，走 sync 分支后根本不 await（重试静默失效）。
+            本类首版就这么写错，被 `test_retry_actually_retries` 当场抓出。"""
+            return await self._invoke_raw(payload, config)
+
         try:
-            # 走原始工具 ainvoke（顶层入口：内部处理 RunnableConfig/args_schema，
-            # 直接调 _arun 会丢 config 参数——实测 StructuredTool 必传 config）
-            config = kwargs.pop("config", None)
-            if args and isinstance(args[0], dict):
-                return await self._tool.ainvoke(args[0], config=config)
-            return await self._tool.ainvoke(kwargs, config=config)
+            if self._retry is None:
+                return await _call()
+            # 按治理声明重试（瞬时故障）；耗尽后由 retry_tool 返回降级字符串，
+            # 仍走下方统一格式 —— 故 on_exhausted 不另配（保持文案一处）
+            wrapped = retry_tool(
+                retries=self._retry.retries,
+                delays=self._retry.delays,
+                extra_exceptions=self._retry.extra_exceptions,
+            )(_call)
+            return await wrapped()
         except Exception as exc:  # noqa: BLE001 —— 工具失败降级为错误消息，不中断 run
             logger.warning("MCP 工具 %s 执行失败（降级）：%s", self.name, exc)
             return f"工具执行失败（{type(exc).__name__}）：{str(exc)[:300]}，请勿重试，改用其他方式。"
 
 
-def _wrap_safe(tool: BaseTool) -> BaseTool:
-    """包装单个 MCP 工具为安全版本（保留 name/description/args_schema）。"""
-    return _SafeTool(tool=tool)
+def wrap_safe(tool: BaseTool, *, retry: RetryPolicy | None = None) -> BaseTool:
+    """包装单个 MCP 工具为安全版本（保留 name/description/args_schema）。
+
+    Args:
+        tool: 原始 MCP 工具
+        retry: 重试参数（幂等工具才给；None = 不重试）
+
+    Returns:
+        `_SafeTool`（异常兜底为字符串）
+    """
+    return _SafeTool(tool=tool, retry=retry)
 
 _manager: "McpClientManager | None" = None
 _manager_lock = threading.Lock()
@@ -113,7 +161,9 @@ class McpClientManager:
             else:
                 # 安全包装：协议层异常（Smithery 限流 429 等）降级为错误字符串，
                 # 不中断 agent run（实测：搜索任务调 Exa → 429 → TaskGroup 崩溃）
-                tools.extend(_wrap_safe(t) for t in result)
+                # ⚠️ 此处**不**挂重试——治理声明（含 is_idempotent）在本步之后才
+                #    加载；重试由 `mcp_meta.governed_tools()` 在装配时补（见其 docstring）
+                tools.extend(wrap_safe(t) for t in result)
         if failed:
             logger.warning("MCP 客户端共 %d 个 server，%d 个失败跳过", len(connections), len(failed))
 

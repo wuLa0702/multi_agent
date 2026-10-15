@@ -53,6 +53,7 @@ from src.core.paths import get_memory_sources, get_skill_md_dir
 from src.core.permissions import build_main_permissions
 from src.llm.adapter import get_chat_model
 from src.tools.channels.mcp_client import get_mcp_client_manager
+from src.tools.channels.mcp_meta import governed_tools as governed_mcp_tools
 from src.tools.registry import hitl_tools, tools_for_main
 
 from src.agent.middlewares.trace import trace_event  # 推理层 trace（决策 #4：agent/middlewares/trace.py）
@@ -431,7 +432,10 @@ def _build_agent(thread_id: str):
     # 不挂载，避免模型调用永远抛错/无审批出口的工具。
     if should_mount_hitl_tools(settings.hitl_enabled):
         internal_tools += hitl_tools()
-    mcp_tools = get_mcp_client_manager().get_tools()
+    # MCP 工具：按治理元数据**过滤 + 包装**——未登记的**不挂载**（fail-closed，
+    # 定案 X1）；登记的按 is_idempotent 挂重试、按 requires_approval 进审批
+    # （审批配置在 build_hitl_interrupt_on，两个来源共用一套口径）
+    mcp_tools = governed_mcp_tools(get_mcp_client_manager().get_tools())
     model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用
     # 中间件链（阶段 3 收口）：装配与顺序集中在 middlewares/builder.py——
     # 新增横切能力只改那里，本文件不再动。模型选择中间件作为参数注入

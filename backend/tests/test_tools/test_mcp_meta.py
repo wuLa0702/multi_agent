@@ -171,6 +171,122 @@ class TestCache:
         ]
 
 
+class TestGovernedTools:
+    """治理接线（批次 2）：过滤未登记 + 给幂等工具挂重试。
+
+    最关键的一条是 `test_retry_actually_retries`——它证明重试**真的在
+    `_SafeTool` 内层生效**，而不是被外层兜底吞掉后空转（P4 踩过的坑）。
+    """
+
+    @staticmethod
+    def _flaky(name: str, fail_times: int, counter: dict):
+        """造一个"前 N 次必失败"的 MCP 工具（失败用 httpx.ConnectError，
+        属 retry_tool 内置的可重试网络异常）。"""
+        import httpx
+        from langchain_core.tools import tool
+
+        async def _run(query: str = "") -> str:
+            counter["n"] += 1
+            if counter["n"] <= fail_times:
+                raise httpx.ConnectError("boom")
+            return "ok"
+
+        return tool(name, description="flaky")(_run)
+
+    def _register(self, mocker, *policies: dict) -> None:
+        """把给定元数据塞进缓存（走真实解析路径，不直接改内部 dict）。"""
+        rows = [_row(**p) for p in policies]
+        mocker.patch(
+            "src.db.mcp_meta_repository.list_meta_rows",
+            new=mocker.AsyncMock(return_value=rows),
+        )
+
+    async def test_unregistered_is_filtered_out(self, mocker) -> None:
+        """未登记 → 剔除（fail-closed，定案 X1）。"""
+        from langchain_core.tools import tool
+
+        from src.tools.channels.mcp_client import wrap_safe
+
+        self._register(mocker, {"tool_name": "known"})  # 只登记 known
+        await mcp_meta.load_policies(object())
+
+        known = wrap_safe(tool("exa_known", description="d")(lambda: "ok"))
+        unknown = wrap_safe(tool("exa_unknown", description="d")(lambda: "ok"))
+
+        kept = mcp_meta.governed_tools([known, unknown])
+
+        assert [t.name for t in kept] == ["exa_known"]
+
+    async def test_pending_lists_unregistered(self, mocker) -> None:
+        """待登记清单 = 已拉取 − 已登记（管理 API 暴露，把"缺失"变"待办"）。"""
+        from langchain_core.tools import tool
+
+        from src.tools.channels.mcp_client import wrap_safe
+
+        self._register(mocker, {"tool_name": "known"})
+        await mcp_meta.load_policies(object())
+
+        tools = [
+            wrap_safe(tool(n, description="d")(lambda: "ok"))
+            for n in ("exa_known", "exa_unknown", "exa_another")
+        ]
+        assert mcp_meta.pending_tool_names(tools) == ["exa_another", "exa_unknown"]
+
+    async def test_retry_actually_retries(self, mocker) -> None:
+        """幂等工具的重试**真的生效**：前 2 次失败 → 第 3 次成功。
+
+        若重试被包在 `_SafeTool` 外层（或没挂），本用例会看到 n==1（空转）。
+        """
+        from src.tools.channels.mcp_client import wrap_safe
+
+        self._register(
+            mocker,
+            {"tool_name": "flaky", "is_idempotent": 1,
+             "retry": '{"retries": 2, "delays": [0, 0]}'},
+        )
+        await mcp_meta.load_policies(object())
+
+        counter = {"n": 0}
+        raw = self._flaky("exa_flaky", fail_times=2, counter=counter)
+
+        kept = mcp_meta.governed_tools([wrap_safe(raw)])
+
+        result = await kept[0].ainvoke({"query": "x"})
+        assert result == "ok"
+        assert counter["n"] == 3, "1 首发 + 2 重试；只有 1 说明重试空转"
+
+    async def test_non_idempotent_does_not_retry(self, mocker) -> None:
+        """非幂等 → 不重试（写操作重试有幂等风险）；失败由兜底转字符串。"""
+        from src.tools.channels.mcp_client import wrap_safe
+
+        self._register(mocker, {"tool_name": "flaky", "is_idempotent": 0})
+        await mcp_meta.load_policies(object())
+
+        counter = {"n": 0}
+        raw = self._flaky("exa_flaky", fail_times=99, counter=counter)
+
+        kept = mcp_meta.governed_tools([wrap_safe(raw)])
+
+        result = await kept[0].ainvoke({"query": "x"})
+        assert counter["n"] == 1, "只调一次"
+        assert "工具执行失败" in result, "失败降级为字符串（不中断 run）"
+
+    async def test_idempotent_without_retry_config_still_no_retry(self, mocker) -> None:
+        """声明幂等但没配 retry → 不重试（幂等只是"允许重试"，不是"必须重试"）。"""
+        from src.tools.channels.mcp_client import wrap_safe
+
+        self._register(mocker, {"tool_name": "flaky", "is_idempotent": 1, "retry": ""})
+        await mcp_meta.load_policies(object())
+
+        counter = {"n": 0}
+        raw = self._flaky("exa_flaky", fail_times=99, counter=counter)
+
+        kept = mcp_meta.governed_tools([wrap_safe(raw)])
+        await kept[0].ainvoke({"query": "x"})
+
+        assert counter["n"] == 1
+
+
 class TestRepository:
     """仓储：真实 PG 读写（按需请求 `pg_schema`，非 autouse）。"""
 

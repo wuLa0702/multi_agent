@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from langchain.agents.middleware import InterruptOnConfig
 
+from src.tools.channels.mcp_meta import all_policies as mcp_policies
 from src.tools.registry import TOOL_REGISTRY
 
 # HITL 工具清单（hitl_enabled 门控挂载——关 HITL 时不挂载，避免模型调用
@@ -32,37 +33,58 @@ HITL_TOOLS = ("ask_human", "publish_report")
 
 
 def build_hitl_interrupt_on(enabled: bool) -> dict[str, InterruptOnConfig] | None:
-    """构建 interrupt_on（**从工具登记表派生**；hitl_enabled 门控）。
+    """构建 interrupt_on（**登记表 + MCP 治理元数据**；hitl_enabled 门控）。
+
+    **两个来源、一套口径**（2026-10-15 D2 批次 2）：本地代码工具读 `TOOL_REGISTRY`，
+    外部 MCP 工具读 `mcp_tool_meta`（经 `mcp_meta.all_policies()` 的内存缓存）——
+    外部工具因此与自家工具走**同一条审批流水线**，不再绕开弹窗。
 
     Args:
         enabled: settings.hitl_enabled
 
     Returns:
-        启用 → `{工具名: InterruptOnConfig}`（只含 `requires_approval=True` 的工具）；
+        启用 → `{工具名: InterruptOnConfig}`（只含 `requires_approval=True` 的工具；
+        MCP 工具以其**挂载名** `{server}_{tool}` 登记）；
         禁用 → None（create_deep_agent 不配 interrupt_on）
 
     Raises:
         ValueError: 有工具声明 `requires_approval=True` 却没配 `allowed_decisions`
             —— 配置错误**必须 fail fast**：静默跳过等于"这个工具永不审批"，
-            正是本改造要杜绝的事故
+            正是本改造要杜绝的事故。**两个来源同受此约束**
     """
     if not enabled:
         return None
+
     missing = [
         spec.name
         for spec in TOOL_REGISTRY.values()
         if spec.requires_approval and not spec.allowed_decisions
+    ] + [
+        p.qualified_name
+        for p in mcp_policies()
+        if p.requires_approval and not p.allowed_decisions
     ]
     if missing:
         raise ValueError(
             f"工具声明需审批但未配 allowed_decisions：{missing}"
             "（配置错误：静默跳过会让该工具永不审批，故 fail fast）"
         )
-    return {
+
+    config: dict[str, InterruptOnConfig] = {
         spec.name: InterruptOnConfig(allowed_decisions=list(spec.allowed_decisions))
         for spec in TOOL_REGISTRY.values()
         if spec.requires_approval
     }
+    config.update(
+        {
+            p.qualified_name: InterruptOnConfig(
+                allowed_decisions=list(p.allowed_decisions)
+            )
+            for p in mcp_policies()
+            if p.requires_approval
+        }
+    )
+    return config
 
 
 def should_mount_hitl_tools(enabled: bool) -> bool:

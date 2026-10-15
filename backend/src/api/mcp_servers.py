@@ -42,6 +42,20 @@ class McpServerListResponse(BaseModel):
     total: int
 
 
+class PendingToolsResponse(BaseModel):
+    """待登记清单：已拉取到但未配治理元数据的 MCP 工具（当前不挂载）。
+
+    Attributes:
+        status: ok
+        items: 未登记的挂载名（`{server}_{tool}`）
+        total: 条数
+    """
+
+    status: str = "ok"
+    items: list[str]
+    total: int
+
+
 class ErrorResponse(BaseModel):
     """统一错误响应（契约 §3.3）。"""
 
@@ -81,6 +95,22 @@ async def list_mcp_servers() -> McpServerListResponse:
         rows = await cursor.fetchall()
     items = [_row_to_out(r) for r in rows]
     return McpServerListResponse(items=items, total=len(items))
+
+
+@router.get("/pending-tools", response_model=PendingToolsResponse)
+async def list_pending_tools() -> PendingToolsResponse:
+    """**待登记清单**：已拉取到但未配治理元数据的 MCP 工具。
+
+    这些工具当前**不挂载**（fail-closed，定案 X1）——本接口把"未登记就不可用"
+    从"莫名其妙的缺失"变成"看得见的待办"。
+
+    Returns:
+        `{status, items, total}`；`items` 为未登记的挂载名（`{server}_{tool}`）
+    """
+    from src.tools.channels.mcp_meta import pending_tool_names
+
+    names = pending_tool_names(get_mcp_client_manager().get_tools())
+    return PendingToolsResponse(items=names, total=len(names))
 
 
 @router.patch("/{server_id}")
