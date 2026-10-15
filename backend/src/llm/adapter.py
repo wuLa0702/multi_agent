@@ -10,11 +10,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from src.core.config import settings
 from src.core.model_registry import get_registry
+
+_logger = logging.getLogger(__name__)
 
 # 统一超时/重试（LLM 调用硬性要求：timeout + max_retries）
 _LLM_TIMEOUT_SECONDS = 60
@@ -101,6 +105,10 @@ class LLMAdapter:
     async def chat(self, prompt: str) -> str:
         """最简对话：单次 prompt → 文本回复（成本控制：轻量结果缓存可选）。
 
+        **出站脱敏**（阶段 3）：发送与缓存均以**脱敏后**文本为准——缓存键取
+        "模型实际看到的内容"，两个仅密钥不同的输入若脱敏后相同，命中同一缓存
+        在语义上是正确的（模型确实看到同一段文本）。
+
         缓存（设计 §4.3/§5.3）：settings.llm_cache_enabled=True 时相同
         (prompt, model) 命中直接返回，省一次 LLM 调用；缓存异常 → 直接调
         LLM（降级不阻断，容错纪律）。
@@ -116,6 +124,13 @@ class LLMAdapter:
         """
         from src.core.config import settings
         from src.llm.cache import get_cached_async, set_cached_async
+        from src.llm.redact import redact
+
+        if settings.redact_enabled:
+            prompt, hits = redact(prompt)
+            if hits:
+                # 只记条数与类别，不记原文（否则日志本身成泄漏源）
+                _logger.info("出站脱敏（辅助调用）：%d 处", sum(hits.values()))
 
         model_name = getattr(self._model, "model_name", "") or "default"
         if settings.llm_cache_enabled:

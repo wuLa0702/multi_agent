@@ -46,6 +46,7 @@ from src.agent.hitl.hitl import build_hitl_interrupt_on, should_mount_hitl_tools
 from src.agent.hitl.pending import register_interrupt
 from src.agent.middlewares.interpreter import build_interpreter_middleware
 from src.agent.middlewares.token_usage import TokenUsageMiddleware
+from src.llm.redact import RedactMiddleware
 from src.tools.audit import ToolAuditMiddleware
 from src.tools.gateway import ToolGatewayMiddleware
 from src.agent.rubrics.rubrics import build_rubric_middleware
@@ -439,6 +440,11 @@ def _build_agent(thread_id: str):
     model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用
     middleware = [
         _configurable_model,
+        # 出站脱敏（阶段 3，2026-10-15）：模型调用前脱敏消息文本。
+        # 必须在**模型调用边界**收口——主对话不经 LLMAdapter.chat()，只挂 adapter 会漏
+        # （见 llm/redact.py 模块 docstring）。放 _configurable_model 之后：先选定模型，
+        # 再对本次入站消息脱敏。
+        RedactMiddleware(),
         # 上下文用量：图执行完自动算全量 messages token 并存库
         # （2026-08-04 评审改版：中间件替代 CallbackHandler，前端查表）
         TokenUsageMiddleware(),

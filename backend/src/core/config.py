@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     llm_cache_ttl: int = 3600            # 缓存有效期（秒）
     # 缓存后端：memory（进程内存，单用户够用）/ redis（生产，跨进程持久化，2026-08-11）
     llm_cache_backend: str = "memory"
+    # ── 出站脱敏（阶段 3，2026-10-15）──
+    # 发往远程 LLM 前脱敏（密钥 / 手机号 / 邮箱 / 身份证）；规则表见 llm/redact.py。
+    # 默认开；出问题时置 false 可一键跳过（不必改代码），便于对比排查
+    redact_enabled: bool = True
     # 会话成本软告警阈值（元，>0 启用；只记录+告警，不做硬限制——用户拍板）
     session_cost_warn_threshold: float = 5.0
 

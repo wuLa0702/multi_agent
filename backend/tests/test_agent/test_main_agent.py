@@ -41,15 +41,17 @@ def test_get_agent_session_cache(mocker) -> None:
     assert mock_create.call_count == 2
     # 构建参数含运行时切换三件套：middleware + context_schema + backend
     # （2026-08-04 评审改版：middleware 含 TokenUsageMiddleware；v2.0 会话级 backend；
-    # v3.0：+ ToolAuditMiddleware + permissions 上层声明式规则）
+    # v3.0：+ ToolAuditMiddleware + permissions 上层声明式规则；
+    # 阶段 3（2026-10-15）：+ RedactMiddleware 出站脱敏，紧随模型选择之后）
     _, kwargs = mock_create.call_args
     middleware_types = [type(m) for m in kwargs["middleware"]]
     assert middleware_types == [
         type(main_agent._configurable_model),
+        main_agent.RedactMiddleware,
         main_agent.TokenUsageMiddleware,
         main_agent.ToolAuditMiddleware,
         main_agent.ToolGatewayMiddleware,
-    ], "中间件栈应含模型切换 + 用量统计 + 工具审计 + 调度中心（校验）"
+    ], "中间件栈应含模型切换 + 出站脱敏 + 用量统计 + 工具审计 + 调度中心（校验）"
     assert kwargs["context_schema"] is main_agent.ChatContext
     assert kwargs["backend"] is not None, "v2.0 会话级 backend 应挂载（文件根隔离）"
     assert kwargs["permissions"][0].mode == "deny", "P0 上层声明式规则应挂载（/skills/** 写 deny）"
