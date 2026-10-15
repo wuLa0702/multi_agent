@@ -27,8 +27,17 @@ async def test_server_lists_internal_tools() -> None:
 
 @pytest.mark.asyncio
 async def test_server_call_internet_search(mocker) -> None:
-    """正常：调用 internet_search 工具返回搜索实现结果（内部 mock）。"""
-    mocker.patch("src.tools.channels.mcp_server._internet_search", return_value="mock 搜索结果")
+    """正常：调用 internet_search 工具返回搜索实现结果（内部 mock）。
+
+    阶段 2.2.1 起内部实现返回 `ToolResult` 信封（不再返回裸字符串），
+    MCP 包装层负责 `render()` 成文本——故 mock 也要给信封。
+    """
+    from src.tools.result import ToolResult
+
+    mocker.patch(
+        "src.tools.channels.mcp_server._internet_search",
+        return_value=ToolResult(status="ok", message="mock 搜索结果", tool="internet_search"),
+    )
 
     async with Client(FastMCPTransport(mcp)) as client:
         result = await client.call_tool("internet_search", {"query": "测试"})
@@ -36,6 +45,29 @@ async def test_server_call_internet_search(mocker) -> None:
     assert result.content, "调用应返回内容"
     text = "".join(getattr(b, "text", "") for b in result.content)
     assert "mock 搜索结果" in text
+
+
+@pytest.mark.asyncio
+async def test_server_renders_error_envelope_as_text(mocker) -> None:
+    """错误态：信封经 MCP 出去是**带前缀的中文文本**，不是对象、不是 JSON。"""
+    from src.tools.result import ToolResult
+
+    mocker.patch(
+        "src.tools.channels.mcp_server._internet_search",
+        return_value=ToolResult(
+            status="error",
+            message="搜索不可用：BOCHA_API_KEY 未配置（.env.dev），请直接基于已有知识回答。",
+            error_code="not_configured",
+            tool="internet_search",
+        ),
+    )
+
+    async with Client(FastMCPTransport(mcp)) as client:
+        result = await client.call_tool("internet_search", {"query": "测试"})
+
+    text = "".join(getattr(b, "text", "") for b in result.content)
+    assert text.startswith("失败原因：")
+    assert "not_configured" not in text, "错误码不进给 LLM / 外部 Agent 的文本"
 
 
 @pytest.mark.asyncio

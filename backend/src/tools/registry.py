@@ -72,7 +72,7 @@ class ToolSpec:
     mount_main: bool = True
 
 
-# ── 实现层声明（fn = 实现函数；重试包装在此显式挂）──
+# ── 实现层声明（fn = 实现函数；重试包装按需在此显式挂）──
 # 重试（计划-容错处理 v1.2）：只包读操作幂等工具——internet_search / fetch_url
 # 是读操作（幂等）→ 瞬时故障重试；run_skill_script 脚本含写操作
 # （build_report.py 写文件）→ 重试幂等风险，排除（v1.2 评审）。
@@ -81,9 +81,14 @@ class ToolSpec:
 # ⚠️ 条目顺序即挂载顺序：`tools_for_main()` 按此顺序返回，须与重构前手写清单一致。
 _IMPL_SPECS: dict[str, ToolSpec] = {
     # ── 搜索域（mount_main=False：仅搜索子代理按 YAML 取用）──
+    # P4 闭环（2026-10-15）：此处原为 `retry_tool()(internet_search)`，与外层
+    # 模块内的 `@retry_tool(retries=2, extra_exceptions=HTTPStatusError)` 构成
+    # 双重包装。实测证明**外层是空转**（内层已把异常吞成降级返回值，外层永不
+    # 触发：探测到博查仅被调用 3 次 = 1 首发 + 2 重试，恰为内层参数）。
+    # 且内层带 HTTP 细节（extra_exceptions），保留内层删外层 = 零行为变更。
     "internet_search": ToolSpec(
         name="internet_search",
-        fn=retry_tool()(internet_search),
+        fn=internet_search,
         domain="search",
         description="博查网络搜索：关键词 → 结构化结果（标题/链接/摘要）",
         is_idempotent=True,

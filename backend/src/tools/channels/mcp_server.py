@@ -12,6 +12,7 @@ from fastmcp import FastMCP
 
 from src.tools.impl.sandbox import run_code_in_sandbox as _run_code_in_sandbox
 from src.tools.impl.search import internet_search as _internet_search
+from src.tools.result import render
 
 mcp = FastMCP("multi-agent")
 
@@ -24,8 +25,12 @@ mcp = FastMCP("multi-agent")
     ),
 )
 def internet_search(query: str, max_results: int = 5) -> str:
-    """包装内部搜索工具（同源，注册表是真相源）。"""
-    return _internet_search(query, max_results)
+    """包装内部搜索工具（同源，注册表是真相源）。
+
+    MCP 是**文本协议**且面向外部 Agent（无 artifact 通道）→ 只发
+    `render()` 后的文本，不把内部 `ToolResult` 对象透传出去。
+    """
+    return render(_internet_search(query, max_results))
 
 
 @mcp.tool(

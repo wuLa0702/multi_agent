@@ -5,6 +5,12 @@
 
 Searchpin 为懒加载：未安装 `pip install searchpin` 或首次模型下载未完成时
 自动降级博查——不影响既有搜索。
+
+**输出（阶段 2.2.1）**：返回 `ToolResult` 信封（`ok` / `error` 两态，无
+`degraded`——搜索要么有结果要么没有，不存在"拿到一半"）。
+`data` 带 `engine` 与 `fallback_used`：**降级对上层透明**（编排层据此才知道
+"这个工具最近一直在走付费后端"）。引擎优先级本身属部署配置，**不进 status**
+（否则同一段代码在测试期/生产期会打出相反的标签）。
 """
 
 from __future__ import annotations
@@ -15,9 +21,14 @@ import os
 import httpx
 
 from src.core.config import settings
+from src.core.errors import ToolErrorCode, is_retryable_tool_error
 from src.core.retry import retry_tool
+from src.tools.error_map import classify_exception
+from src.tools.result import ToolResult
 
 logger = logging.getLogger(__name__)
+
+_TOOL_NAME = "internet_search"
 
 # Searchpin 语义重排模型默认走 hf-mirror（国内 HF 直连超时；已实测镜像可下，~26s 首次）
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
@@ -106,35 +117,139 @@ def _format_results(pages: list[dict], max_results: int = 5) -> str:
     )
 
 
-def _bocha_search(query: str, max_results: int = 5) -> str:
-    """博查搜索（降级引擎，付费）。失败降级为错误信息，不中断 run。"""
+def _normalize_results(pages: list[dict], max_results: int = 5) -> list[dict]:
+    """结果列表 → 结构化载荷（`data.results`，字段名对齐设计 §5 迁移清单）。
+
+    Args:
+        pages: 引擎原始结果页（name / url / summary）
+        max_results: 截取上限
+
+    Returns:
+        [{title, url, snippet}, ...]
+    """
+    return [
+        {
+            "title": p.get("name", ""),
+            "url": p.get("url", ""),
+            "snippet": p.get("summary") or p.get("snippet", ""),
+        }
+        for p in pages[:max_results]
+    ]
+
+
+def _ok_result(
+    query: str,
+    pages: list[dict],
+    max_results: int,
+    *,
+    engine: str,
+    fallback_used: bool,
+) -> ToolResult:
+    """命中结果 → `ok` 信封。
+
+    Args:
+        query: 原始查询词（回填 `data`，便于审计对账）
+        pages: 结果页（非空）
+        max_results: 截取上限
+        engine: 实际出结果的引擎名（searchpin / bocha）
+        fallback_used: 是否走了降级引擎——**降级透明**的唯一出口
+
+    Returns:
+        `ok` 信封；`message` 为可读文本，`data` 含 results + 引擎溯源
+    """
+    return ToolResult(
+        status="ok",
+        message=_format_results(pages, max_results),
+        data={
+            "query": query,
+            "results": _normalize_results(pages, max_results),
+            "engine": engine,
+            "fallback_used": fallback_used,
+        },
+        tool=_TOOL_NAME,
+    )
+
+
+def _retry_exhausted(exc: Exception) -> ToolResult:
+    """重试耗尽 → 降级错误信封（降级是工具层的决定，`core/retry.py` 只管重试）。
+
+    `retryable` 仍按错误**性质**填：耗尽是"这个工具这一轮试完了"，
+    不代表故障性质变成永久——编排层换时机/换工具仍可能成功，
+    故与 `is_retryable_tool_error` 的映射保持一致，不另立口径。
+
+    Args:
+        exc: 重试耗尽时的最后一个异常
+
+    Returns:
+        `error` 信封；文案与改造前逐字一致（不静默改）
+    """
+    error_code = classify_exception(exc)
+    return ToolResult(
+        status="error",
+        message=f"工具调用失败（{type(exc).__name__}）：{exc}。请稍后重试。",
+        error_code=error_code,
+        retryable=is_retryable_tool_error(error_code),
+        tool=_TOOL_NAME,
+    )
+
+
+def _bocha_search(query: str, max_results: int = 5) -> ToolResult:
+    """博查搜索（降级引擎，付费）。失败降级为错误信封，不中断 run。"""
     if not settings.bocha_api_key:
-        return "搜索不可用：BOCHA_API_KEY 未配置（.env.dev），请直接基于已有知识回答。"
+        return ToolResult(
+            status="error",
+            message="搜索不可用：BOCHA_API_KEY 未配置（.env.dev），请直接基于已有知识回答。",
+            error_code=ToolErrorCode.NOT_CONFIGURED,
+            tool=_TOOL_NAME,
+        )
     try:
         pages = bocha_client.search(query, max_results)
-        if not pages:
-            return "搜索无结果，请直接基于已有知识回答。"
-        return _format_results(pages, max_results)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 403:
             # 授权/配额耗尽（403：key 无效或账号无额度/欠费）——重试无意义，
             # 立即降级并明确指示 agent 直接回答
-            return (
-                "搜索不可用：博查授权失败（HTTP 403，多为账号配额耗尽或 key 无效）。"
-                "请勿重试搜索，直接基于已有知识回答。"
+            return ToolResult(
+                status="error",
+                message=(
+                    "搜索不可用：博查授权失败（HTTP 403，多为账号配额耗尽或 key 无效）。"
+                    "请勿重试搜索，直接基于已有知识回答。"
+                ),
+                error_code=ToolErrorCode.UNPAID,
+                tool=_TOOL_NAME,
             )
         raise  # 429/5xx → 可重试，交给 retry_tool
-    except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
+    except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError):
         raise  # 网络瞬时故障 → 交给 retry_tool 重试
     except Exception as e:  # noqa: BLE001 —— 其余异常就地降级，不冒泡中断 run
-        return (
-            f"搜索失败（{type(e).__name__}）：{e}。"
-            "请勿重试搜索，直接基于已有知识回答。"
+        return ToolResult(
+            status="error",
+            message=(
+                f"搜索失败（{type(e).__name__}）：{e}。"
+                "请勿重试搜索，直接基于已有知识回答。"
+            ),
+            error_code=classify_exception(e),
+            tool=_TOOL_NAME,
         )
+    if not pages:
+        # 搜了但没命中 = 正常结果，不是失败（co-creator 2026-10-15 拍板）
+        return ToolResult(
+            status="ok",
+            message="搜索无结果，请直接基于已有知识回答。",
+            data={
+                "query": query,
+                "results": [],
+                "engine": "bocha",
+                "fallback_used": True,
+            },
+            tool=_TOOL_NAME,
+        )
+    return _ok_result(
+        query, pages, max_results, engine="bocha", fallback_used=True
+    )
 
 
-@retry_tool(retries=2, extra_exceptions=(httpx.HTTPStatusError,))
-def internet_search(query: str, max_results: int = 5) -> str:
+@retry_tool(retries=2, extra_exceptions=(httpx.HTTPStatusError,), on_exhausted=_retry_exhausted)
+def internet_search(query: str, max_results: int = 5) -> ToolResult:
     """针对给定查询执行一次网络搜索（Searchpin 默认 → 博查降级）。
 
     Searchpin（免费默认）失败/无结果 → 自动降级博查（付费）；
@@ -146,6 +261,8 @@ def internet_search(query: str, max_results: int = 5) -> str:
     # 1. Searchpin（默认，免费）——失败/无结果自动降级博查
     pages = searchpin_client.search(query, max_results)
     if pages:
-        return _format_results(pages, max_results)
+        return _ok_result(
+            query, pages, max_results, engine="searchpin", fallback_used=False
+        )
     # 2. 博查（降级，付费）
     return _bocha_search(query, max_results)
