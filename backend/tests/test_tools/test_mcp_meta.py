@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.db import mcp_meta_repository as mcp_meta_repo
 from src.tools.channels import mcp_meta
 from src.tools.channels.mcp_meta import McpToolPolicy
 
@@ -287,8 +288,141 @@ class TestGovernedTools:
         assert counter["n"] == 1
 
 
+class TestDeriveDefaults:
+    """MCP 注解 → 治理默认值（自动登记用；"下载即用"的核心推导）。"""
+
+    def test_readonly_low_risk_no_approval_and_idempotent(self) -> None:
+        """readOnlyHint → 低危 + 免审批 + 幂等（幂等才配重试）。"""
+        d = mcp_meta.derive_defaults({"readOnlyHint": True})
+        assert d["risk_level"] == "low"
+        assert d["requires_approval"] is False
+        assert d["is_idempotent"] is True
+        assert d["retry"] is not None, "只读幂等 → 挂重试"
+
+    def test_destructive_requires_approval(self) -> None:
+        """destructiveHint → 高危 + **需审批**（approve/reject）。"""
+        d = mcp_meta.derive_defaults({"destructiveHint": True})
+        assert d["risk_level"] == "high"
+        assert d["requires_approval"] is True
+        assert d["allowed_decisions"] == ["approve", "reject"]
+        assert d["is_idempotent"] is False
+        assert d["retry"] is None, "非幂等 → 不配重试（写操作重试有幂等风险）"
+
+    def test_idempotent_hint_maps(self) -> None:
+        """idempotentHint 单独出现 → 幂等（挂重试），但仍不需审批。"""
+        d = mcp_meta.derive_defaults({"idempotentHint": True})
+        assert d["is_idempotent"] is True
+        assert d["retry"] is not None
+        assert d["requires_approval"] is False
+
+    def test_no_annotation_uses_permissive_default(self) -> None:
+        """无注解 → **宽松默认**（免审批 + 高危标记 + note 提示复核）。
+
+        这是刻意的产品取舍：多数 server 不带注解，一律要审批等于第三方工具不可用。
+        风险由"可见性"兜底（high 标记 + note + 告警日志）。
+        """
+        for metadata in (None, {}, {"title": "某工具"}):
+            d = mcp_meta.derive_defaults(metadata)
+            assert d["requires_approval"] is False, "免审批（保证下载即用）"
+            assert d["risk_level"] == "high", "但标高危（可见性兜底）"
+            assert d["note"] == mcp_meta.UNANNOTATED_NOTE
+
+    def test_readonly_false_is_not_treated_as_readonly(self) -> None:
+        """`readOnlyHint=false` 不等于只读——按无注解处理（不能反推成只读）。"""
+        d = mcp_meta.derive_defaults({"readOnlyHint": False})
+        assert d["note"] == mcp_meta.UNANNOTATED_NOTE
+
+    def test_strip_prefix(self) -> None:
+        """挂载名 → 远端原名（元数据存原名，定案 X2）。"""
+        assert mcp_meta._strip_prefix("exa", "exa_web_search") == "web_search"
+        assert mcp_meta._strip_prefix("exa", "other_tool") == "other_tool"
+
+
+def _mcp_tool(name: str, metadata: dict | None = None):
+    """造一个带注解 metadata 的假 MCP 工具。
+
+    ⚠️ `@tool` 装饰器**不接受** `metadata=`（它是 `BaseTool` 的字段，不是装饰器
+    参数）——适配器是在 `StructuredTool(...)` 构造时塞进去的（tools.py:534），
+    测试照同款路径构造，别用装饰器。
+    """
+    from langchain_core.tools import StructuredTool
+
+    return StructuredTool(
+        name=name,
+        description="d",
+        args_schema={"type": "object", "properties": {}},
+        func=lambda **_: "ok",
+        metadata=metadata,
+    )
+
+
 class TestRepository:
     """仓储：真实 PG 读写（按需请求 `pg_schema`，非 autouse）。"""
+
+    async def test_register_tools_creates_rows(self, pg_schema) -> None:
+        """自动登记：按注解推导写入，幂等工具带上重试参数。"""
+        from src.db import connection as db_conn
+        from src.tools.channels.mcp_client import wrap_safe
+
+        readonly = wrap_safe(_mcp_tool("exa_search", {"readOnlyHint": True}))
+
+        async with db_conn.connection() as conn:
+            result = await mcp_meta.register_tools(conn, "exa", [readonly])
+            rows = await mcp_meta_repo.list_meta_rows(conn)
+
+        assert result == {"added": 1, "skipped": 0, "unannotated": []}
+        assert len(rows) == 1
+        assert rows[0]["tool_name"] == "search", "存远端原名（不含前缀）"
+        assert rows[0]["risk_level"] == "low"
+        assert rows[0]["retry"], "只读幂等 → 写出重试参数"
+
+    async def test_register_tools_reports_unannotated(self, pg_schema) -> None:
+        """无注解工具 → 进 `unannotated` 清单（供告警/复核），但仍登记（下载即用）。"""
+        from src.db import connection as db_conn
+        from src.tools.channels.mcp_client import wrap_safe
+
+        bare = wrap_safe(_mcp_tool("exa_do"))
+
+        async with db_conn.connection() as conn:
+            result = await mcp_meta.register_tools(conn, "exa", [bare])
+
+        assert result == {"added": 1, "skipped": 0, "unannotated": ["exa_do"]}
+
+    async def test_register_tools_skips_already_registered(self, pg_schema) -> None:
+        """已登记的不覆盖——**人工调过的声明优先于自动推导**（重装/升级不踩掉）。"""
+        from src.db import connection as db_conn
+        from src.tools.channels.mcp_client import wrap_safe
+
+        async with db_conn.connection() as conn:
+            # 人工登记：要求审批
+            await mcp_meta_repo.upsert_meta(
+                conn, "exa", "do",
+                risk_level="high", requires_approval=True,
+                allowed_decisions=["approve", "reject"],
+            )
+            bare = wrap_safe(_mcp_tool("exa_do"))
+            result = await mcp_meta.register_tools(conn, "exa", [bare])
+            rows = await mcp_meta_repo.list_meta_rows(conn)
+
+        assert result == {"added": 0, "skipped": 1, "unannotated": []}
+        assert bool(rows[0]["requires_approval"]) is True, "人工声明未被覆盖"
+
+    async def test_full_install_flow_goes_live(self, pg_schema, mocker) -> None:
+        """**端到端**：登记 → 刷新缓存 → 工具真的能挂载（"下载即用"闭环）。
+
+        缺任一环都不行：登记了不刷缓存 = 缓存里没有 = 仍被判"未登记"。
+        """
+        from src.db import connection as db_conn
+        from src.tools.channels.mcp_client import wrap_safe
+
+        t = wrap_safe(_mcp_tool("exa_search", {"readOnlyHint": True}))
+        async with db_conn.connection() as conn:
+            await mcp_meta.register_tools(conn, "exa", [t])
+            await mcp_meta.load_policies(conn)  # ← 安装流程里由 mcp_service 做
+
+        assert mcp_meta.policy_for("exa_search") is not None
+        assert mcp_meta.pending_tool_names([t]) == [], "登记后不再进待登记清单"
+        assert [x.name for x in mcp_meta.governed_tools([t])] == ["exa_search"]
 
     async def test_table_created_and_roundtrip(self, pg_schema) -> None:
         """建表随 init_schema 完成；upsert → 读回字段一致。"""

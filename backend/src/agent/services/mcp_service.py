@@ -34,6 +34,49 @@ from src.tools.channels.mcp_client import get_mcp_client_manager
 logger = logging.getLogger(__name__)
 
 
+async def register_server_tools(server_name: str) -> int:
+    """拉取该 server 的工具并**自动登记**治理元数据（"下载即用"）。
+
+    **为什么需要它**：定案 X1 是 fail-closed（未登记不挂载），而市场安装的语义是
+    "下载了就能用"——两者冲突。解法是安装后自动登记：默认值由 **MCP 协议自带的
+    工具注解**推导（`mcp_meta.derive_defaults`），本地表仍可覆盖。
+
+    ⚠️ 必须在 `mcp_servers` 落库**之后**调用（reload 才拉得到新 server 的工具），
+    且在 `refresh_agent_tools()` **之前**（否则重建出的图读到空治理缓存）。
+
+    Args:
+        server_name: MCP server slug（与 `installer.slug_server_name` 同源）
+
+    Returns:
+        新增登记的工具数
+
+    Raises:
+        无。登记失败只记告警（安装本身已成功，不该因登记失败回滚）——
+        失败后果是该 server 的工具暂不可挂载，可用 `GET /pending-tools` 看到。
+    """
+    from src.tools.channels import mcp_meta
+
+    try:
+        async with db_conn.connection() as conn:
+            # 先 reload：新装 server 的工具要先进缓存才取得到
+            manager = get_mcp_client_manager()
+            await manager.reload(conn)
+            prefix = f"{server_name}_"
+            tools = [t for t in manager.get_tools() if t.name.startswith(prefix)]
+            result = await mcp_meta.register_tools(conn, server_name, tools)
+            # 治理缓存随之刷新（否则"已登记"要到下次重启才生效）
+            await mcp_meta.load_policies(conn)
+        return int(result["added"])
+    except Exception:  # noqa: BLE001 —— 旁路能力失败降级，不阻断安装
+        logger.warning(
+            "MCP 工具自动登记失败（server=%s）：工具暂不可挂载，"
+            "可查 GET /v1/mcp-servers/pending-tools 后手工登记",
+            server_name,
+            exc_info=True,
+        )
+        return 0
+
+
 async def refresh_agent_tools() -> None:
     """MCP 配置变更后热刷新：先重载工具缓存，再失效 Agent 单例。
 

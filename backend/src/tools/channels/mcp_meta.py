@@ -253,3 +253,125 @@ def reset() -> None:
     global _loaded
     _policies.clear()
     _loaded = False
+
+
+# ── 自动登记（市场安装后；"下载即用"）──
+#
+# 背景：fail-closed（未登记不挂载）与"下载了就能用"天然冲突。解法是**装完自动登记**：
+# 默认值由 **MCP 协议自带的工具注解**推导（不是我发明的扩展）；`mcp_tool_meta`
+# 表做**本地覆盖**（管理员随时改，控制权仍在本地——D2 选① 的精神）。
+
+_ANN_READONLY = "readOnlyHint"
+_ANN_DESTRUCTIVE = "destructiveHint"
+_ANN_IDEMPOTENT = "idempotentHint"
+
+# 未声明注解时的说明文案（既写进 note，也用于识别"需复核"的行）
+UNANNOTATED_NOTE = "自动登记：远端未声明注解，按宽松默认（免审批/高危标记），建议复核"
+
+
+def _default_retry() -> dict[str, Any]:
+    """幂等工具的默认重试参数（与 `ToolSpec` 侧口径一致）。"""
+    return {"retries": DEFAULT_RETRIES, "delays": list(DEFAULT_DELAYS)}
+
+
+def derive_defaults(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """MCP 工具注解 → 治理默认值（`upsert_meta` 的关键字参数）。
+
+    | 注解 | 推导出的治理默认 |
+    |---|---|
+    | `readOnlyHint=true` | 风险 low ／ 免审批 ／ 幂等（→ 挂重试） |
+    | `destructiveHint=true` | 风险 high ／ **需审批**（approve/reject） |
+    | `idempotentHint=true` | 幂等（→ 挂重试） |
+    | 无注解 / 不明确 | **宽松默认**：风险 high 标记 + 免审批 + note 标"建议复核" |
+
+    ⚠️ 无注解走**宽松档**是刻意的产品取舍（"下载即用"优先）：多数 MCP server 不带
+    注解，若一律需审批，第三方工具每次调用都弹窗，等于不可用。风险由**可见性**兜底——
+    `risk_level=high` + `note` 标注 + 自动登记时的告警日志 + `pending` 清单可查。
+
+    Args:
+        metadata: langchain 工具的 `metadata`（适配器把 MCP 注解 dump 在这里）
+
+    Returns:
+        可直接展开传入 `repo.upsert_meta` 的字段（不含 server_name / tool_name）
+    """
+    ann = metadata or {}
+    read_only = ann.get(_ANN_READONLY) is True
+    destructive = ann.get(_ANN_DESTRUCTIVE) is True
+    idempotent = ann.get(_ANN_IDEMPOTENT) is True or read_only
+
+    if read_only:
+        return {
+            "risk_level": "low",
+            "requires_approval": False,
+            "allowed_decisions": [],
+            "is_idempotent": True,
+            "retry": _default_retry(),
+            "note": "自动登记：远端声明 readOnlyHint",
+        }
+    if destructive:
+        return {
+            "risk_level": "high",
+            "requires_approval": True,
+            "allowed_decisions": ["approve", "reject"],
+            "is_idempotent": idempotent,
+            "retry": _default_retry() if idempotent else None,
+            "note": "自动登记：远端声明 destructiveHint",
+        }
+    return {
+        "risk_level": "high",
+        "requires_approval": False,
+        "allowed_decisions": [],
+        "is_idempotent": idempotent,
+        "retry": _default_retry() if idempotent else None,
+        "note": UNANNOTATED_NOTE,
+    }
+
+
+def _strip_prefix(server_name: str, qualified: str) -> str:
+    """挂载名 → 远端原名（去掉 `{server}_` 前缀；未带前缀则原样返回）。"""
+    prefix = f"{server_name}_"
+    return qualified[len(prefix):] if qualified.startswith(prefix) else qualified
+
+
+async def register_tools(
+    conn: AsyncConnection, server_name: str, tools: list[BaseTool]
+) -> dict[str, Any]:
+    """自动登记某 server 的工具（市场安装后调用，实现"下载即用"）。
+
+    **已登记的不覆盖**——人工调过的治理声明优先于自动推导（幂等重装/升级不踩掉）。
+    判重**查 DB**（`existing_tool_names`）而非内存缓存：缓存可能滞后于库。
+
+    Args:
+        conn: PG 连接
+        server_name: MCP server slug（工具名前缀）
+        tools: 该 server 的挂载形态工具（`metadata` 携带注解）
+
+    Returns:
+        `{"added": n, "skipped": m, "unannotated": [挂载名, ...]}`
+    """
+    known = await repo.existing_tool_names(conn, server_name)
+    added, skipped, unannotated = 0, 0, []
+    for tool in tools:
+        remote_name = _strip_prefix(server_name, tool.name)
+        if remote_name in known:
+            skipped += 1
+            continue
+        defaults = derive_defaults(getattr(tool, "metadata", None))
+        if defaults["note"] == UNANNOTATED_NOTE:
+            unannotated.append(tool.name)
+        await repo.upsert_meta(conn, server_name, remote_name, **defaults)
+        added += 1
+    if unannotated:
+        logger.warning(
+            "自动登记 %d 个未声明注解的 MCP 工具（按宽松默认免审批）：%s"
+            "——如需收紧，改 mcp_tool_meta 的 requires_approval",
+            len(unannotated),
+            unannotated,
+        )
+    logger.info(
+        "MCP 工具自动登记完成：server=%s 新增 %d / 跳过已登记 %d",
+        server_name,
+        added,
+        skipped,
+    )
+    return {"added": added, "skipped": skipped, "unannotated": unannotated}

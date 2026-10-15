@@ -86,6 +86,12 @@ async def install(req: InstallRequest):
     except ValueError as e:
         raise _error(400, "INSTALL_FAILED", str(e)) from e
 
+    # MCP 类：**安装后自动登记治理元数据**（"下载即用"）——否则 fail-closed
+    # 会把它挡在门外（未登记不挂载）。默认值由 MCP 注解推导，本地表可覆盖。
+    # 顺序：登记 →【必须】再热刷新（登记会刷新治理缓存，随后重建的图才认它）
+    if req.skill_type == SKILL_TYPE_MCP:
+        await mcp_service.register_server_tools(installer.slug_server_name(item.name))
+
     await _refresh_agent_tools()
     return record
 

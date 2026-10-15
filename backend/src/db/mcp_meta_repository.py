@@ -37,6 +37,26 @@ async def list_meta_rows(conn: AsyncConnection) -> list[dict]:
     return list(await cursor.fetchall())
 
 
+async def existing_tool_names(conn: AsyncConnection, server_name: str) -> set[str]:
+    """某 server 已登记治理元数据的工具名集合（**以 DB 为准**）。
+
+    「自动登记不覆盖人工调整」必须查 DB 而不是内存缓存——缓存可能滞后于库
+    （例如同一进程内刚被别的路径改过），拿它判重会导致误覆盖或误跳过。
+
+    Args:
+        conn: PG 连接
+        server_name: MCP server slug
+
+    Returns:
+        该 server 下已登记的远端工具名集合
+    """
+    cursor = await conn.execute(
+        "SELECT tool_name FROM mcp_tool_meta WHERE server_name = %s", (server_name,)
+    )
+    rows = await cursor.fetchall()
+    return {row["tool_name"] for row in rows}
+
+
 async def upsert_meta(
     conn: AsyncConnection,
     server_name: str,

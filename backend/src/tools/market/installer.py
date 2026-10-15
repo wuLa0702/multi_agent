@@ -32,6 +32,25 @@ logger = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = 15.0
 
+
+def slug_server_name(raw: str) -> str:
+    """市场条目名 → MCP server slug（同时用作工具名前缀）。
+
+    `McpClientManager(tool_name_prefix=True)` 拿它当前缀，而 DeepSeek 等模型 API
+    要求工具名只含 `[a-zA-Z0-9_-]`（"Vercel Grep_xxx" 含空格会被 400 拒绝）。
+
+    Args:
+        raw: 市场条目名（可能含空格/中文/符号）
+
+    Returns:
+        合法 slug；全被过滤时回落 `"mcp_server"`
+
+    Note:
+        安装流程与"安装后自动登记工具"（`mcp_service.register_server_tools`）
+        **必须用同一个 slug**，否则元数据挂到不存在的 server 名下——故抽成公共函数。
+    """
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", raw).strip("_") or "mcp_server"
+
 # GitHub 仓库树 URL → raw 文件 URL（SKILL.md 下载用）
 # https://github.com/{owner}/{repo}/tree/{branch}/{path} →
 # https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}/SKILL.md
@@ -155,9 +174,7 @@ async def install_skill(
     if item.skill_type == SKILL_TYPE_MCP:
         url, headers = await _resolve_mcp_connection(item)
         args_json = json.dumps(item.args)
-        # name 必须 slug 化：McpClientManager tool_name_prefix=True 用它当工具前缀，
-        # DeepSeek 等模型 API 要求工具名只含 [a-zA-Z0-9_-]（"Vercel Grep_xxx" 含空格会被 400 拒绝）
-        server_name = re.sub(r"[^a-zA-Z0-9_-]", "_", item.name).strip("_") or "mcp_server"
+        server_name = slug_server_name(item.name)
         server_id = await repo.insert_mcp_server(
             conn,
             name=server_name,

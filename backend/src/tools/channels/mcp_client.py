@@ -51,7 +51,14 @@ class _SafeTool(BaseTool):
         self, tool: BaseTool, *, retry: RetryPolicy | None = None, **kwargs
     ) -> None:
         super().__init__(
-            name=tool.name, description=tool.description, args_schema=tool.args_schema, **kwargs
+            name=tool.name,
+            description=tool.description,
+            args_schema=tool.args_schema,
+            # ⚠️ 必须透传 metadata：适配器把 **MCP 工具注解**（readOnlyHint /
+            # destructiveHint / idempotentHint）放在这里，自动登记时据此推导
+            # 治理默认值——不透传的话注解信息在这一层就丢了（tools.py:511 起）
+            metadata=tool.metadata,
+            **kwargs,
         )
         self._tool = tool
         self._retry = retry
