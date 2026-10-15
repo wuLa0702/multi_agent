@@ -16,7 +16,7 @@ backend/tests/
 ## 原则
 - pytest，禁 unittest；文件名/函数名 `test_` 开头；一个测试一个行为
 - LLM 全部 mock，不实际调 API
-- 文件系统用 `tmp_path`，数据库用 compose PG + 每测试独立 schema（`:memory:` 已废弃）
+- 文件系统用 `tmp_path`；数据库用 compose PG + **每用例独立 schema**（`:memory:` 已废弃，PG 无内存模式）——**按需请求** `pg_schema` / `reset_agent_singleton`（**非 autouse**：纯函数测试不拉 PG，避免全量耗时翻数倍）
 - 每个测试文件覆盖：正常 / 边界（空、大、特殊字符）/ 错误（越权、不存在）/ LLM 异常（超时、空回复）
 
 ## 多 Agent 专项测试
