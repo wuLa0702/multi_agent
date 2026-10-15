@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.core.config import settings
+from src.core.errors import ToolErrorCode
 from src.tools.impl import skill
 from src.tools.market.templates import create_skill_from_template, validate_skill_dir
 
@@ -157,30 +158,43 @@ def test_run_skill_script_success(script_env) -> None:
     2026-08-10 参数改名：args → script_args（langchain 1.x 工具转换保留字
     冲突 v__args，评估跑数实证 run_skill_script() got 'v__args'）。
     """
-    out = skill.run_skill_script(
+    result = skill.run_skill_script(
         "research-report", "build_report.py", script_args="sample_data.json"
     )
-    assert out == "out:build_report.py sample_data.json"
+    assert result.status == "ok"
+    assert result.message == "out:build_report.py sample_data.json"
+    assert result.data == {
+        "skill": "research-report",
+        "script": "build_report.py",
+        "output": "out:build_report.py sample_data.json",
+    }
     assert script_env["run_script"] == 1
 
 
 def test_run_skill_script_not_found(script_env) -> None:
-    """脚本不存在 → 友好提示（不中断 run）。"""
-    out = skill.run_skill_script("research-report", "missing.py")
-    assert "技能脚本不存在" in out
+    """脚本不存在 → 错误信封（not_found；不中断 run）。"""
+    result = skill.run_skill_script("research-report", "missing.py")
+    assert result.status == "error"
+    assert result.error_code == ToolErrorCode.NOT_FOUND
+    assert "技能脚本不存在" in result.message
 
 
 def test_run_skill_script_rejects_path_escape(script_env) -> None:
-    """路径逃逸 → 拒绝提示（00-security）。"""
+    """路径逃逸 → 拒绝（invalid_arg；00-security）。"""
     for bad in ("../x.py", "/etc/passwd"):
-        out = skill.run_skill_script("research-report", bad)
-        assert "路径不合法" in out
+        result = skill.run_skill_script("research-report", bad)
+        assert result.status == "error", f"{bad} 应被拒绝"
+        assert result.error_code == ToolErrorCode.INVALID_ARG
+        assert "路径不合法" in result.message
 
 
 def test_run_skill_script_no_url(script_env, monkeypatch) -> None:
-    """sandbox_url 空 → 降级提示。"""
+    """sandbox_url 空 → not_configured（不可重试）。"""
     monkeypatch.setattr(settings, "sandbox_url", "")
-    assert "沙箱不可用" in skill.run_skill_script("research-report", "build_report.py")
+    result = skill.run_skill_script("research-report", "build_report.py")
+    assert result.status == "error"
+    assert result.error_code == ToolErrorCode.NOT_CONFIGURED
+    assert "沙箱不可用" in result.message
 
 
 # ── 上下文工程第一批-P0：#3 技能拆分约定核对（入口 ≤2KB）──

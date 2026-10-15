@@ -86,9 +86,11 @@ class TestFetchUrlInjection:
         assert validate_url("https://x.com/\"onerror=alert") is not None
 
     def test_fetch_url_invalid_degrades(self) -> None:
-        """注入 URL → 降级提示（不中断）。"""
+        """注入 URL → 错误信封（invalid_arg，不中断）。"""
         out = fetch_url("javascript:alert(1)")
-        assert "链接格式非法" in out
+        assert out.status == "error"
+        assert out.error_code == "invalid_arg"
+        assert "链接格式非法" in out.message
 
     def test_security_audit_decorator_logs(self, audit_records) -> None:
         """security_audit 装饰器：校验失败自动审计（安全评审 2.5 收口）。"""

@@ -72,8 +72,20 @@ async def test_server_renders_error_envelope_as_text(mocker) -> None:
 
 @pytest.mark.asyncio
 async def test_server_call_sandbox(mocker) -> None:
-    """正常：调用 run_code_in_sandbox 工具返回沙箱结果（内部 mock）。"""
-    mocker.patch("src.tools.channels.mcp_server._run_code_in_sandbox", return_value="sandbox output")
+    """正常：调用 run_code_in_sandbox 工具返回沙箱结果（内部 mock）。
+
+    阶段 2.2.3 起内部实现返回 `ToolResult` 信封（不再返回裸字符串）。
+    """
+    from src.tools.result import ToolResult
+
+    mocker.patch(
+        "src.tools.channels.mcp_server._run_code_in_sandbox",
+        return_value=ToolResult(
+            status="ok", message="sandbox output", data={"stdout": "sandbox output",
+                                                         "truncated": False},
+            tool="run_code_in_sandbox",
+        ),
+    )
 
     async with Client(FastMCPTransport(mcp)) as client:
         result = await client.call_tool("run_code_in_sandbox", {"code": "print(1)"})

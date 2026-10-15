@@ -6,6 +6,12 @@
 
 读取源：data/skills/skill_md/<skill_name>/scripts/<script_name>（市场技能，
 磁盘直读 + 路径校验）；执行：沙箱池（隔离，内容拷入容器不执行磁盘文件）。
+
+**输出（阶段 2.2.7）**：返回 `ToolResult` 信封。路径穿越 / 脚本不存在 /
+沙箱未配置 / 执行异常 → `error` + 归一错误码。
+
+⚠️ 已知不一致（记在分支笔记 P12）：本工具**不截断**脚本输出，而沙箱 4 个
+工具都经 `_truncate_output`——本次「最简短迁移」不夹带行为变更，留待后续拍板。
 """
 
 from __future__ import annotations
@@ -15,15 +21,28 @@ from pathlib import Path
 from langchain_core.runnables import RunnableConfig
 
 from src.core.config import settings
+from src.core.errors import ToolErrorCode
 from src.core.paths import get_skill_md_dir
 from src.tools.impl.sandbox import (
+    _NOT_CONFIGURED_MESSAGE,
     _thread_id_from,
     sandbox_adapter,
     sandbox_pool,
 )
+from src.tools.result import ToolResult
+
+_TOOL_NAME = "run_skill_script"
 
 # 技能内可执行目录（防执行 assets/ 模板等非脚本文件）
 _SCRIPTS_SUBDIR = "scripts"
+
+
+def _invalid_script_path(script_name: str) -> str:
+    """路径穿越 → 审计 + 返回拒绝文案（审计由 security 模块统一记）。"""
+    from src.tools.audit import log_security_blocked
+
+    log_security_blocked(_TOOL_NAME, f"路径穿越：{script_name}")
+    return "技能脚本路径不合法：仅允许 scripts/ 内相对文件名。"
 
 
 def run_skill_script(
@@ -32,7 +51,7 @@ def run_skill_script(
     *,
     script_args: str = "",
     config: RunnableConfig | None = None,
-) -> str:
+) -> ToolResult:
     """执行技能脚本（读文件 → 沙箱执行，一步封装）。
 
     Args:
@@ -42,28 +61,52 @@ def run_skill_script(
         config: 执行配置（框架注入，取 thread_id 定位会话沙箱）
 
     Returns:
-        脚本 stdout（截断）；校验失败/资源已满时返回错误提示字符串
+        `ok` 信封（脚本输出）；校验失败/脚本不存在/沙箱故障返回 `error` 信封
     """
     if not settings.sandbox_url:
-        return "沙箱不可用：SANDBOX_URL 未配置（.env.dev），请直接基于已有知识回答。"
+        return ToolResult(
+            status="error",
+            message=_NOT_CONFIGURED_MESSAGE,
+            error_code=ToolErrorCode.NOT_CONFIGURED,
+            tool=_TOOL_NAME,
+        )
     # 路径校验（00-security）：禁 ../ 与绝对路径
     parts = script_name.replace("\\", "/").split("/")
     if script_name.startswith("/") or any(p == ".." for p in parts):
-        from src.tools.audit import log_security_blocked
-        log_security_blocked("run_skill_script", f"路径穿越：{script_name}")
-        return "技能脚本路径不合法：仅允许 scripts/ 内相对文件名。"
+        return ToolResult(
+            status="error",
+            message=_invalid_script_path(script_name),
+            error_code=ToolErrorCode.INVALID_ARG,
+            tool=_TOOL_NAME,
+        )
     script_file = get_skill_md_dir() / skill_name / _SCRIPTS_SUBDIR / script_name
     if not script_file.is_file():
-        return (
-            f"技能脚本不存在：{skill_name}/scripts/{script_name}"
-            "（可用 ls /skills/market/ 查看技能目录）。"
+        return ToolResult(
+            status="error",
+            message=(
+                f"技能脚本不存在：{skill_name}/scripts/{script_name}"
+                "（可用 ls /skills/market/ 查看技能目录）。"
+            ),
+            error_code=ToolErrorCode.NOT_FOUND,
+            tool=_TOOL_NAME,
         )
     try:
         content = script_file.read_text(encoding="utf-8")
         sandbox = sandbox_pool.get_sandbox(_thread_id_from(config))
         # entry 不拼 python 前缀——adapter.run_script 内部已拼 "python {entry}"
-        return sandbox_adapter.run_script(
+        output = sandbox_adapter.run_script(
             sandbox, {script_name: content}, f"{script_name} {script_args}".strip()
         )
+        return ToolResult(
+            status="ok",
+            message=output,
+            data={"skill": skill_name, "script": script_name, "output": output},
+            tool=_TOOL_NAME,
+        )
     except Exception as e:  # noqa: BLE001 —— 工具失败降级为错误信息，不冒泡中断 run
-        return f"技能脚本执行失败（{type(e).__name__}）：{e}。请勿重试沙箱。"
+        return ToolResult(
+            status="error",
+            message=f"技能脚本执行失败（{type(e).__name__}）：{e}。请勿重试沙箱。",
+            error_code=ToolErrorCode.INTERNAL,
+            tool=_TOOL_NAME,
+        )

@@ -23,7 +23,6 @@ from typing import Literal
 
 from langchain_core.tools import BaseTool
 
-from src.core.retry import retry_tool
 from src.tools.adapter import as_lc_tool
 from src.tools.impl.ask_human import ask_human
 from src.tools.impl.fetch import fetch_url
@@ -95,9 +94,11 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         fallback_to="fetch_url",
         mount_main=False,
     ),
+    # P4 闭环（2026-10-15，同 internet_search）：删掉外层 `retry_tool()`——
+    # 实测其空转（内层已把异常吞成降级返回值），内层自带 HTTP 细节，零行为变更。
     "fetch_url": ToolSpec(
         name="fetch_url",
-        fn=retry_tool()(fetch_url),
+        fn=fetch_url,
         domain="search",
         description="受控抓取网页正文（搜索发现 + 抓取获取 双工具分工）",
         is_idempotent=True,

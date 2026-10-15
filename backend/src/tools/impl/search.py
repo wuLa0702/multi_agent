@@ -17,14 +17,15 @@ from __future__ import annotations
 
 import logging
 import os
+from functools import partial
 
 import httpx
 
 from src.core.config import settings
-from src.core.errors import ToolErrorCode, is_retryable_tool_error
+from src.core.errors import ToolErrorCode
 from src.core.retry import retry_tool
 from src.tools.error_map import classify_exception
-from src.tools.result import ToolResult
+from src.tools.result import ToolResult, exhausted_result
 
 logger = logging.getLogger(__name__)
 
@@ -170,29 +171,6 @@ def _ok_result(
     )
 
 
-def _retry_exhausted(exc: Exception) -> ToolResult:
-    """重试耗尽 → 降级错误信封（降级是工具层的决定，`core/retry.py` 只管重试）。
-
-    `retryable` 仍按错误**性质**填：耗尽是"这个工具这一轮试完了"，
-    不代表故障性质变成永久——编排层换时机/换工具仍可能成功，
-    故与 `is_retryable_tool_error` 的映射保持一致，不另立口径。
-
-    Args:
-        exc: 重试耗尽时的最后一个异常
-
-    Returns:
-        `error` 信封；文案与改造前逐字一致（不静默改）
-    """
-    error_code = classify_exception(exc)
-    return ToolResult(
-        status="error",
-        message=f"工具调用失败（{type(exc).__name__}）：{exc}。请稍后重试。",
-        error_code=error_code,
-        retryable=is_retryable_tool_error(error_code),
-        tool=_TOOL_NAME,
-    )
-
-
 def _bocha_search(query: str, max_results: int = 5) -> ToolResult:
     """博查搜索（降级引擎，付费）。失败降级为错误信封，不中断 run。"""
     if not settings.bocha_api_key:
@@ -248,7 +226,11 @@ def _bocha_search(query: str, max_results: int = 5) -> ToolResult:
     )
 
 
-@retry_tool(retries=2, extra_exceptions=(httpx.HTTPStatusError,), on_exhausted=_retry_exhausted)
+@retry_tool(
+    retries=2,
+    extra_exceptions=(httpx.HTTPStatusError,),
+    on_exhausted=partial(exhausted_result, tool=_TOOL_NAME),
+)
 def internet_search(query: str, max_results: int = 5) -> ToolResult:
     """针对给定查询执行一次网络搜索（Searchpin 默认 → 博查降级）。
 

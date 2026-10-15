@@ -21,6 +21,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from src.core.errors import is_retryable_tool_error
+from src.tools.error_map import classify_exception
+
 ToolStatus = Literal["ok", "degraded", "error"]
 
 
@@ -51,6 +54,33 @@ class ToolResult:
     error_code: str = ""
     retryable: bool = False
     tool: str = ""
+
+
+def exhausted_result(exc: BaseException, *, tool: str) -> ToolResult:
+    """重试耗尽 → 降级错误信封（供 `retry_tool(on_exhausted=...)` 注入）。
+
+    文案与改造前逐字一致（不静默改）：
+    `工具调用失败（{异常类名}）：{异常}。请稍后重试。`
+
+    `retryable` 按错误**性质**填：耗尽是「这一轮试完了」，不代表故障性质变成
+    永久——编排层换时机 / 换工具仍可能成功，故与 `is_retryable_tool_error`
+    的映射保持一致，不另立口径。
+
+    Args:
+        exc: 重试耗尽时的最后一个异常
+        tool: 工具名（审计与事件定位用）
+
+    Returns:
+        `error` 信封（错误码由 `error_map.classify_exception` 翻译）
+    """
+    error_code = classify_exception(exc)
+    return ToolResult(
+        status="error",
+        message=f"工具调用失败（{type(exc).__name__}）：{exc}。请稍后重试。",
+        error_code=error_code,
+        retryable=is_retryable_tool_error(error_code),
+        tool=tool,
+    )
 
 
 def render(result: ToolResult) -> str:

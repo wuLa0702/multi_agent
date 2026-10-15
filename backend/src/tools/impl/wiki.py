@@ -3,15 +3,19 @@
 走 REST（wiki_export_service 调 wiki POST /v1/pages/{path}）——Agent 工具通道
 （MCP 需 wiki 侧暴露 wiki_write，暂用 REST 直连，双通道语义见 wiki 设计 §3）。
 
-失败降级为错误信息，不中断 run。
+失败降级为错误信息，不中断 run。输出为 `ToolResult` 信封（阶段 2.2.8）。
 """
 
 from __future__ import annotations
 
 from src.agent.services.wiki_export_service import WikiExportError, export_to_wiki
+from src.core.errors import ToolErrorCode
+from src.tools.result import ToolResult
+
+_TOOL_NAME = "write_wiki"
 
 
-def write_wiki(path: str, content: str, title: str = "") -> str:
+def write_wiki(path: str, content: str, title: str = "") -> ToolResult:
     """把内容写入 wiki 知识库页面。
 
     Args:
@@ -20,12 +24,29 @@ def write_wiki(path: str, content: str, title: str = "") -> str:
         title: 页面标题（缺省用 path）
 
     Returns:
-        成功 → "已写入 wiki: {path}"；失败 → 降级错误信息
+        成功 → `ok` 信封（`data` 带 path）；内容为空 → `error: invalid_arg`；
+        wiki 侧故障 → `error: upstream_error`
     """
     if not content.strip():
-        return "写入失败：内容为空"
+        return ToolResult(
+            status="error",
+            message="写入失败：内容为空",
+            error_code=ToolErrorCode.INVALID_ARG,
+            tool=_TOOL_NAME,
+        )
     try:
         result = export_to_wiki(path, content, title or path)
     except WikiExportError as exc:
-        return f"写入 wiki 失败：{exc}"
-    return f"已写入 wiki: {result.get('path') or path}"
+        return ToolResult(
+            status="error",
+            message=f"写入 wiki 失败：{exc}",
+            error_code=ToolErrorCode.UPSTREAM_ERROR,
+            tool=_TOOL_NAME,
+        )
+    written_path = result.get("path") or path
+    return ToolResult(
+        status="ok",
+        message=f"已写入 wiki: {written_path}",
+        data={"path": written_path},
+        tool=_TOOL_NAME,
+    )

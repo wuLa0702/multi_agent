@@ -41,5 +41,8 @@ def internet_search(query: str, max_results: int = 5) -> str:
     ),
 )
 def run_code_in_sandbox(code: str, filename: str = "script.py") -> str:
-    """包装内部沙箱工具（同源，注册表是真相源）。"""
-    return _run_code_in_sandbox(code, filename)
+    """包装内部沙箱工具（同源，注册表是真相源）。
+
+    同 `internet_search`：MCP 是文本协议 → `render()` 后发文本。
+    """
+    return render(_run_code_in_sandbox(code, filename))

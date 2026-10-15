@@ -4,12 +4,19 @@
 - 命中 interrupt_on(approve/edit/reject)——approve 通过交付 / reject+note
   修改意见修订重出 / edit 人类直接改报告后交付
 - P0 真实执行 = 返回"报告已交付"标记（落盘/对外发送 P2 扩展）
+
+输出为 `ToolResult` 信封（阶段 2.2.10）。本工具无错误分支——未通过审核时
+走的是 HITL 中断/拒绝链路，不落到"工具返回失败"。
 """
 
 from __future__ import annotations
 
+from src.tools.result import ToolResult
 
-def publish_report(report_content: str, title: str = "") -> str:
+_TOOL_NAME = "publish_report"
+
+
+def publish_report(report_content: str, title: str = "") -> ToolResult:
     """提交研究报告供审核交付。
 
     研究报告完整生成后调用，请求用户审核确认后再交付。报告内容将展示
@@ -20,6 +27,12 @@ def publish_report(report_content: str, title: str = "") -> str:
         title: 报告标题（卡片摘要展示用）
 
     Returns:
-        交付确认信息（approve 通过后执行；reject/edit 不会真执行）
+        `ok` 信封（`data` 带 title）；approve 通过后才走到这里，
+        reject/edit 不会真执行
     """
-    return "报告已通过审核并交付"
+    return ToolResult(
+        status="ok",
+        message="报告已通过审核并交付",
+        data={"title": title},
+        tool=_TOOL_NAME,
+    )

@@ -370,8 +370,11 @@ def test_revision_limit_configured_threshold() -> None:
 # ── 13. 工具实现 ──
 
 def test_publish_report_returns_delivered() -> None:
-    """publish_report 真实执行（approve 通过后）返回交付标记。"""
-    assert "交付" in publish_report(report_content="# 研报", title="测试")
+    """publish_report 真实执行（approve 通过后）返回交付标记（阶段 2.2.10：ok 信封）。"""
+    result = publish_report(report_content="# 研报", title="测试")
+    assert result.status == "ok"
+    assert "交付" in result.message
+    assert result.data == {"title": "测试"}
 
 
 def test_ask_human_stub_raises() -> None:
