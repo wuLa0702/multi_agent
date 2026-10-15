@@ -52,3 +52,16 @@ def test_fallback_target_is_registered() -> None:
     for spec in registry.TOOL_REGISTRY.values():
         if spec.fallback_to:
             assert spec.fallback_to in registry.TOOL_REGISTRY
+
+
+def test_approval_flag_matches_decisions() -> None:
+    """不变量：`requires_approval=True` ⟺ `allowed_decisions` 已声明。
+
+    防"声明要审批却没写按钮"——那种配置会让审批配置构建失败（fail fast），
+    或（更早的形态）静默不审批。阶段 4 审批接线的配套防线。
+    """
+    for name, spec in registry.TOOL_REGISTRY.items():
+        assert spec.requires_approval == bool(spec.allowed_decisions), (
+            f"{name}：requires_approval={spec.requires_approval} 与 "
+            f"allowed_decisions={spec.allowed_decisions} 不一致"
+        )

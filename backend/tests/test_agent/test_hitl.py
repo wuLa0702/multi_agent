@@ -123,8 +123,84 @@ def test_hitl_enabled_interrupt_config() -> None:
     ]
     assert config["ask_human"]["allowed_decisions"] == ["respond"]
     assert config["publish_report"]["allowed_decisions"] == ["approve", "edit", "reject"]
-    assert config["internet_search"] is False
     assert should_mount_hitl_tools(True) is True
+
+
+class TestApprovalEquivalenceLock:
+    """**等价锁**（阶段 4 审批接线）：派生结果必须与改造前的手写表逐条一致。
+
+    背景：审批配置原为 `hitl.py` 手写的 `HITL_INTERRUPT_ON`，与 `registry.py`
+    的工具元数据构成"同一份信息写两遍"。改造后由注册表**派生**——本类把改造前
+    的手写表**原样抄成标准答案**，锁住"只是换写法，没改行为"。
+
+    任何一条对不上 → 报红 → 说明审批弹窗行为变了，不许合并。
+    """
+
+    # 改造前 HITL_INTERRUPT_ON 的原样抄录（唯一用途：作等价基准，勿随实现改动）
+    LEGACY_TABLE: dict[str, list[str]] = {
+        "run_code_in_sandbox": ["approve", "edit", "reject"],
+        "run_command_in_sandbox": ["approve", "reject"],
+        "upload_workspace_file": ["approve", "reject"],
+        "download_sandbox_file": ["approve", "reject"],
+        "run_skill_script": ["approve", "reject"],
+        "ask_human": ["respond"],
+        "publish_report": ["approve", "edit", "reject"],
+    }
+
+    def _approval_entries(self) -> dict[str, list[str]]:
+        """取出"真审批项"（过滤掉 `False` 这类非配置项）——故**改前改后都可用**。"""
+        config = build_hitl_interrupt_on(True)
+        assert config is not None
+        return {
+            name: list(cfg["allowed_decisions"])
+            for name, cfg in config.items()
+            if not isinstance(cfg, bool)
+        }
+
+    def test_derived_equals_legacy(self) -> None:
+        """逐工具逐决策一致（含顺序）——等价锁的核心断言。"""
+        assert self._approval_entries() == self.LEGACY_TABLE
+
+    def test_no_extra_approval_tools(self) -> None:
+        """不许多出审批项——多一个就意味着某个不该审批的工具会弹窗。"""
+        assert set(self._approval_entries()) == set(self.LEGACY_TABLE)
+
+    def test_non_approval_tools_absent(self) -> None:
+        """不需要审批的工具**不出现条目**（本次唯一的形状变化）。
+
+        等价依据（已核 langchain 源码 `human_in_the_loop.py`）：解析时
+        `if tool_config is True` 才登记 —— `False` 与"键不存在"都会被丢弃，
+        故原表里显式的 `internet_search: False` 删掉后行为完全相同。
+        """
+        config = build_hitl_interrupt_on(True)
+        assert config is not None
+        for name in ("internet_search", "write_wiki", "generate_report"):
+            assert name not in config
+
+
+def test_config_build_fails_fast_on_missing_decisions(monkeypatch) -> None:
+    """配置错误 fail fast：声明要审批却没写按钮 → ValueError（不静默跳过）。
+
+    静默跳过等于"这个工具永不审批" —— 正是本次收敛要杜绝的事故形态；
+    故宁可 agent 启动即报错，也不让它带病运行。
+    """
+    from src.tools import registry as tool_registry
+
+    monkeypatch.setitem(
+        tool_registry.TOOL_REGISTRY,
+        "bad_tool",
+        tool_registry.ToolSpec(
+            name="bad_tool",
+            fn=None,  # type: ignore[arg-type] 本用例只走配置校验，不挂载
+            domain="sandbox",
+            description="配置不全的工具",
+            requires_approval=True,  # 声明要审批
+            allowed_decisions=None,  # 却没写按钮
+        ),
+    )
+
+    with pytest.raises(ValueError, match="未配 allowed_decisions"):
+        build_hitl_interrupt_on(True)
 
 
 # ── 3. 中断回调 ──

@@ -56,6 +56,12 @@ class ToolSpec:
         size: 粒度（small=可自由编排 / big=强事务整体动作）
         fallback_to: 降级备选工具名（显式声明，不靠猜）
         requires_approval: 是否需 HITL 审批
+        allowed_decisions: 审批时**允许人类做哪些决策**（`requires_approval=True`
+            时必填，见下方不变量）。取值：`approve`（通过执行）/ `edit`（人类改参数
+            后重执行）/ `reject`（驳回）/ `respond`（仅澄清类工具——人类回答即结果）。
+            **为什么不是从 `risk_level` 推导**：同为 `high` 的工具按钮集可以不同——
+            `run_code_in_sandbox` 允许 `edit`（代码可改了重跑），
+            `run_command_in_sandbox` 不允许（命令改了还是得重执行）。故显式声明。
         mount_main: 是否挂到主 Agent（False = 仅子代理按 YAML 取用）
     """
 
@@ -68,6 +74,7 @@ class ToolSpec:
     size: Literal["small", "big"] = "small"
     fallback_to: str | None = None
     requires_approval: bool = False
+    allowed_decisions: tuple[str, ...] | None = None
     mount_main: bool = True
 
 
@@ -112,6 +119,8 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         description="在隔离 OpenSandbox 沙箱执行 Python 代码并返回输出",
         risk_level="high",
         requires_approval=True,
+        # 允许 edit：代码可以人类改完再跑，改比重写省事
+        allowed_decisions=("approve", "edit", "reject"),
     ),
     "run_command_in_sandbox": ToolSpec(
         name="run_command_in_sandbox",
@@ -120,14 +129,21 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         description="在沙箱执行 shell 命令并返回输出",
         risk_level="high",
         requires_approval=True,
+        # 不允许 edit：命令改了还是得重新执行，"改了照旧跑"没有意义
+        allowed_decisions=("approve", "reject"),
     ),
     # ── 文件域（会话级工作区同步）──
+    # ⚠️ 2026-10-15 修正：这两个此前【漏了】 requires_approval——而审批实现在
+    # hitl.py 里手写了它们（approve+reject），即"登记表说不用审批、实际却在审批"。
+    # 收敛时由等价锁抓出，此处补正（行为不变：审批照旧）。
     "upload_workspace_file": ToolSpec(
         name="upload_workspace_file",
         fn=upload_workspace_file,
         domain="file",
         description="把会话工作区文件上传到沙箱",
         risk_level="medium",
+        requires_approval=True,
+        allowed_decisions=("approve", "reject"),
     ),
     "download_sandbox_file": ToolSpec(
         name="download_sandbox_file",
@@ -135,6 +151,8 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         domain="file",
         description="从沙箱取回文件到会话工作区",
         risk_level="medium",
+        requires_approval=True,
+        allowed_decisions=("approve", "reject"),
     ),
     # ── 技能域（读文件→沙箱→执行 一步封装）──
     "run_skill_script": ToolSpec(
@@ -145,6 +163,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         size="big",  # 强事务：一个整体动作，非可自由编排的原子操作
         risk_level="high",
         requires_approval=True,
+        allowed_decisions=("approve", "reject"),
     ),
     # ── Wiki 知识库 ──
     "write_wiki": ToolSpec(
@@ -169,6 +188,9 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         domain=HITL_DOMAIN,
         description="向人类澄清需求 / 中途确认（HITL 决策出口）",
         requires_approval=True,
+        # 只用 respond：人类回答即工具结果。**绝不配 approve/edit**
+        # （官方警告：respond 仅限 ask-user 类工具）
+        allowed_decisions=("respond",),
     ),
     "publish_report": ToolSpec(
         name="publish_report",
@@ -176,6 +198,8 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         domain=HITL_DOMAIN,
         description="输出审核交付闸门（HITL 审批出口）",
         requires_approval=True,
+        # 允许 edit：人类可直接改报告正文后交付
+        allowed_decisions=("approve", "edit", "reject"),
     ),
 }
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.hitl.hitl import HITL_INTERRUPT_ON, build_hitl_interrupt_on
+from src.agent.hitl.hitl import build_hitl_interrupt_on
 from src.agent.rubrics.rubrics import RUBRIC_TEMPLATES, build_rubric_middleware
 
 
@@ -33,8 +33,9 @@ class TestHitlConfig:
         assert config["upload_workspace_file"]["allowed_decisions"] == ["approve", "reject"]
         assert config["download_sandbox_file"]["allowed_decisions"] == ["approve", "reject"]
         assert config["run_skill_script"]["allowed_decisions"] == ["approve", "reject"]
-        # 只读：不审批
-        assert config["internet_search"] is False
+        # 只读：不审批 —— 阶段 4 起派生实现**不出条目**（原手写表里是显式 False；
+        # 两者等价，依据见 langchain human_in_the_loop.py：`is True` 才登记）
+        assert "internet_search" not in config
 
 
 class TestRubricTemplates:
