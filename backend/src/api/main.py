@@ -50,6 +50,7 @@ from src.core.logging import setup_logging
 from src.core.model_registry import get_registry
 from src.core.redis import close_redis, get_redis
 from src.tools.channels.mcp_client import get_mcp_client_manager
+from src.tools.channels.mcp_meta import load_policies as load_mcp_policies
 from src.tools.channels.mcp_server import mcp as mcp_server
 
 # 日志配置（UTF-8 + 双滚动 + 2 周保留，见 .claude/rules/04-logging.md）
@@ -133,11 +134,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     # FastMCP 要求：父 ASGI 应用执行其 lifespan（初始化 session manager task group）
     async with _mcp_http_app.lifespan(_):
-        # 模型注册表 + MCP 客户端：seed + 加载（失败不阻断——降级为仅内部工具）
+        # 模型注册表 + MCP 客户端 + MCP 治理元数据：seed + 加载
+        # （失败不阻断——降级为仅内部工具）
+        # ⚠️ 治理元数据必须在此**预加载**：get_agent/_build_agent 是同步函数，
+        #    装配时读不到异步 DB（见 tools/channels/mcp_meta.py §为什么是"缓存"）
         try:
             async with db_conn.connection() as conn:
                 await get_registry().load(conn)
                 await get_mcp_client_manager().connect_all(conn)
+                await load_mcp_policies(conn)
         except Exception:  # noqa: BLE001 - 加载失败降级：运行时模型回落 .env，agent 仅用内部工具
             logging.exception("注册表/MCP 加载失败——运行时模型回落 .env，agent 仅用内部工具")
 
