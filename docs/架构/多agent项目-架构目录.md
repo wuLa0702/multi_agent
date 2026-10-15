@@ -6,6 +6,7 @@
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.13 | 2026-10-15 | **§2 目录树对齐实际（工具中心收拢遗留）**：`backend/src/` 子树重写——删去**已不存在的 `mcp/`**（registry/server/http_base/adapters/tools）与 `src/skills/`、`agent/planner·summarizer·approve`、`core/langsmith·security`，改为实际的 `tools/`（registry/adapter/result/error_map/audit/gateway/validators/impl/channels/market）+ `wiki/` + `agent/` 8 子域 + 四层标注；§2 落地状态对照表 4 行更新 + 2 行划删（📦 目录已不存在）＋ 新增 tools/ 与 wiki/ 两行；§2.1 能力表「代码工具」行改为 `tools/impl/` + `tools/registry.py`；**§1 依赖链 1 处 + §5 依赖链 1 处**由 `{mcp, sandbox, memory, db}` 改为 `{tools, wiki, sandbox, memory, db}`；§1 架构图两处过时框同步（前端 Vue3 → React 19；MCP 网关 → 工具中心）；tests/ 分层行补 test_skills/test_tools |
 > | v2.12 | 2026-10-15 | **SQLite → PostgreSQL 全量迁移**（工作单 `docs/决策/2026-10-15-计划-PG迁移-v1.md`）：§2 落地状态对照表 `core/db.py` → **`db/connection.py`**（连接池单例，唯一连接出口）、`db/schema.py · repository.py` 保持；§2.1 能力表「mcp_servers 表（SQLite）」→ PostgreSQL；§3 基础设施新增 `postgres` 服务（pgvector/pgvector:pg16，宿主 5433，业务表 `public` / 断点记忆表 `langgraph` 同库不同 schema）；§6.1 决策 #7 数据库由「Redis + SQLite」改为「**Redis + PostgreSQL（+ pgvector）**」；§5 工程经验「Checkpointer（SQLite）」表述同步 |
 > | v2.11 | 2026-08-12 | §2 落地状态对照表新增 `agent/services/` 数据服务层（2026-08-12 结构重构：api→agent 能力子域→db 跨层收敛，api 禁直调 db/）|
 > | v2.10 | 2026-08-11 | §6.1 决策记录：新增决策 #10「项目定位目标」——研究型多 Agent 平台，双版本目标表述（技术 A / 业务 B，详见追问链 §1.1），后续开发朝该目标补齐 |
@@ -55,29 +56,32 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ 前端 Vue3 + Vite (浏览器)                                 │
-│   ChatView ── 对话流 + 工具/参数/结果 三栏 + SSE 流式      │
+│ 前端 React 19 + shadcn/ui (浏览器)          ← ✅ 实际选型 │
+│   ChatPage ── 对话流 + 工具/参数/结果 三栏 + SSE 流式      │
 └──────────────┬──────────────────────────────────────────┘
-               │ /api/chat/stream (SSE) /api/history ...
+               │ /v1/chat/stream (SSE) /api/history ...
 ┌──────────────▼──────────────────────────────────────────┐
 │ 后端 FastAPI (ASGI)                                      │
-│   api/  路由层 · 鉴权 · 中间件(日志/限流) · SSE 出口       │
+│   api/  路由层 · CORS · SSE 出口                          │
 │   ┌─────▼────────────────────────────────────────────┐  │
-│   │ Agent 层 ✅ deepagents 主线 + LangGraph 演进预留 │  │
-│   │   主 Agent ── 委派 ──► 子 Agent ×2（声明式 YAML） │  │
+│   │ Agent 层（编排）✅ deepagents 主线 + LangGraph 演进预留│ │
+│   │   主 Agent ── 委派 ──► 子 Agent（声明式 YAML）     │  │
 │   │   任务清单 write_todos · 人工审批 · 压缩 summarizer│  │
 │   │   graph/ 预留：后续手写主图（Send API 平行）       │  │
-│   └─────┬──────────────┬──────────────┬─────────────┘  │
-│   ┌─────▼─────┐ ┌──────▼──────┐ ┌─────▼───────┐        │
-│   │ MCP 网关  │ │ 沙箱 ✅     │ │ 记忆/存储    │        │
-│   │ FastMCP   │ │ OpenSandbox │ │ Redis(短期)  │        │
-│   │ 外部系统  │ │ 本地替身待定 │ │ PG(长期)    │        │
-│   └───────────┘ └─────────────┘ └─────────────┘        │
+│   └─────┬─────────────────────────────────────────────┘  │
+│   ┌─────▼─────────────┐ ┌────────────┐ ┌──────────────┐ │
+│   │ 工具中心 ✅        │ │ 沙箱 ✅     │ │ 记忆/存储     │ │
+│   │ tools/（登记表+   │ │ OpenSandbox │ │ Redis(短期)   │ │
+│   │ 审计+通道+市场）   │ │             │ │ PG(长期)      │ │
+│   │ wiki/（REST 对接） │ │             │ │               │ │
+│   └───────────────────┘ └────────────┘ └──────────────┘ │
 │   LangSmith 监控(trace/eval) · 结构化日志 · 配置中心      │
 └─────────────────────────────────────────────────────────┘
 ```
 
-- **依赖单向**：api → agent → {mcp, sandbox, memory, db}，禁止反向（沿用当前项目规范 📌）
+- **依赖单向**：`api → agent → {tools, wiki, sandbox, memory, db}`，禁止反向（沿用当前项目规范 📌）
+  - 📌 **2026-10-15 校正**：原写 `{mcp, sandbox, memory, db}`——`mcp/` 目录已不存在（工具中心收拢为 `tools/`），另补 `wiki/`。
+  - ⚠️ 该方向有**可执行的不变量测试**守护：`tests/test_tools/test_layering.py`（能力层/底座层反向 import 上层即红）
 - **模型多 provider**：deepseek / 豆包 / 智谱，LLM 适配层统一接口（当前项目 config.py 已有此模式 📌）
 
 ```mermaid
@@ -120,68 +124,54 @@ multi-agent-project/
 │
 ├── backend/                        # 通用多Agent后端 FastAPI
 │   ├── src/
-│   │   ├── api/                    # HTTP接入层（通用接口，无业务）
-│   │   │   ├── main.py             # FastAPI入口、CORS、全局路由注册
-│   │   │   ├── chat.py             # 流式对话、断点恢复通用接口
-│   │   │   ├── history.py          # 会话历史通用CRUD
-│   │   │   ├── auth/               # 通用鉴权模块（可后置）
-│   │   │   └── agent_loader.py     # Agent全局单例生命周期管理
-│   │   ├── agent/                  # 多智能体核心（纯通用调度逻辑，无业务技能）
-│   │   │   ├── main_agent.py        # 主Agent调度入口
-│   │   │   ├── graph/              # LangGraph 通用状态流转图
-│   │   │   │   ├── state.py         # 全局通用State结构体
-│   │   │   │   └── graph.py         # 节点、分支、并行调度通用逻辑
-│   │   │   ├── subagents/          # 声明式子Agent通用加载器（yaml配置，无业务预置）
-│   │   │   │   └── template.yaml    # 空白子Agent配置模板
-│   │   │   ├── memory/             # 通用记忆模块
-│   │   │   │   ├── state_store/     # Redis短时记忆：会话、审批断点、运行任务
-│   │   │   │   ├── vector_store/    # 向量库长时记忆：通用知识库、历史对话摘要
-│   │   │   │   └── profile.py       # 通用用户画像提取
-│   │   │   ├── middlewares/         # Agent通用中间件栈
-│   │   │   │   ├── logging.py
-│   │   │   │   ├── retry.py
-│   │   │   │   └── pii.py
-│   │   │   ├── skills/              # 【框架层】通用技能加载运行时（代码逻辑，无业务配置）
-│   │   │   ├── planner.py           # 通用任务拆解规划器
-│   │   │   ├── summarizer.py        # 通用对话摘要压缩
-│   │   │   └── approve.py           # 通用人工审批中断/恢复逻辑
-│   │   ├── mcp/                    # 通用MCP工具网关（对接外部任意第三方服务，无预置业务）
-│   │   │   ├── server.py            # MCP服务注册通用逻辑
-│   │   │   ├── registry.py          # 通用工具注册表
-│   │   │   ├── http_base.py         # 通用异步HTTP连接池
-│   │   │   ├── adapters/            # 第三方服务兼容适配器（预留）
-│   │   │   └── tools/               # 使用者自行添加业务工具，框架不预置
-│   │   ├── sandbox/                # 通用代码沙箱层（通用文件/代码执行，无业务报表）
-│   │   │   ├── adapter.py           # 沙箱统一抽象接口
-│   │   │   ├── opensandbox.py
-│   │   │   ├── local_docker.py
-│   │   │   ├── health.py           # 通用沙箱健康检测
-│   │   │   ├── breaker.py           # 通用熔断保护
-│   │   │   └── download.py          # 通用文件导出能力
-│   │   ├── llm/                    # 通用大模型适配层，多厂商无感切换
-│   │   │   ├── adapter.py
-│   │   │   ├── providers.py
-│   │   │   └── retry.py
-│   │   ├── core/                   # 全局通用基建（全项目复用，无业务）
-│   │   │   ├── config.py            # 全局配置读取
-│   │   │   ├── paths.py             # 统一路径管理：日志、下载、技能资源目录
-│   │   │   ├── logging.py           # 结构化日志、请求追踪ID
-│   │   │   ├── langsmith.py         # 通用链路监控
-│   │   │   ├── errors.py            # 统一异常处理
-│   │   │   ├── security.py          # 通用安全校验
-│   │   │   └── middlewares/         # 全局通用中间件：限流、PII、鉴权
-│   │   ├── db/                     # 通用数据持久层
-│   │   │   ├── models/             # ORM数据库通用表结构（会话、用户、审批记录）
-│   │   │   └── repositories/       # 通用仓储CRUD封装
-│   │   └── schemas/                # 全局通用Pydantic数据模型（2026-08-03 由 models/ 更名）
-│   ├── tests/                      # 分层通用测试，无业务用例
-│   │   ├── unit/                   # 单模块单元测试（llm/mcp/sandbox/agent基础逻辑）
-│   │   ├── integration/             # 模块联动集成测试
-│   │   ├── e2e/                    # 全链路流式对话E2E测试
-│   │   └── conftest.py             # 通用测试fixture：mock LLM、临时存储
-│   ├── scripts/                    # 通用开发/运维脚本，无业务初始化逻辑
-│   │   ├── dev.sh                  # 一键启动开发环境
-│   │   └── smoke_test.py           # 通用冒烟测试
+│   │   ├── api/                    # 【入口层】HTTP 接入（仅编排）
+│   │   │   ├── main.py             # FastAPI 入口、CORS、路由注册
+│   │   │   ├── chat.py             # 流式对话、断点恢复
+│   │   │   ├── export.py           # wiki 双向通道 REST 路由
+│   │   │   ├── health.py · mcp_servers.py · skills.py · history 等
+│   │   │   └── auth/               # ⏳ 鉴权演进预留
+│   │   ├── agent/                  # 【编排层】根只允许 main_agent.py（见下 §2 对照表）
+│   │   │   ├── main_agent.py       # 主 Agent 编排入口（工具挂载 / 事件流 / 中间件装配）
+│   │   │   ├── hitl/               # 人在回路：审批配置（从工具登记表派生）+ 中断采集
+│   │   │   ├── memory/             # 记忆：抽取 / 存储 / 队列（三态并列执行体）
+│   │   │   ├── middlewares/        # 中间件栈：token 用量 / trace / builder（唯一装配点）
+│   │   │   ├── prompts/            # 提示词
+│   │   │   ├── rubrics/            # Rubric 评分（模板库 + 门控）
+│   │   │   ├── services/           # 数据服务层（session/model/settings/skill/cost）
+│   │   │   ├── subagents/          # 声明式子代理（*.yaml + loader）
+│   │   │   └── tasks/              # 辅助任务（会话标题生成等）
+│   │   ├── tools/                  # 【能力层】工具中心（唯一登记处）
+│   │   │   ├── registry.py         # ToolSpec 登记表：工具是什么的唯一真相源
+│   │   │   ├── adapter.py          # 输出适配：ToolResult → content_and_artifact
+│   │   │   ├── result.py           # ToolResult 三态信封 + LLM 文本渲染
+│   │   │   ├── error_map.py        # 异常 / HTTP 状态 → 归一错误码
+│   │   │   ├── audit.py            # 工具审计（两行制，只审计不拦截）
+│   │   │   ├── gateway.py          # 调度中心中间件（失败回灌 LLM 的摘要口径）
+│   │   │   ├── validators.py       # 否定禁止校验（路径/URL 收口）
+│   │   │   ├── impl/               # 工具实现（11 个：搜索/抓取/沙箱 4/技能/wiki/研报 2/澄清）
+│   │   │   ├── channels/           # 接入协议通道（MCP 双向已实现；REST/A2A 占位）
+│   │   │   └── market/             # Skill Market（市场适配 + 安装）
+│   │   ├── wiki/                   # 【能力层】wiki 知识库 REST 双向通道（2026-10-15 下沉）
+│   │   ├── sandbox/                # 【能力层】沙箱适配层
+│   │   ├── llm/                    # 【底座层】LLM 适配（唯一 LLM 出口）+ 出站脱敏
+│   │   ├── core/                   # 【底座层】横切基建
+│   │   │   ├── config.py paths.py logging.py errors.py constants.py
+│   │   │   ├── redis.py retry.py permissions.py model_registry.py backend.py
+│   │   ├── db/                     # 【底座层】唯一 SQL 出口
+│   │   │   ├── connection.py       # PG 连接池单例（2026-10-15 迁移；原 core/db.py）
+│   │   │   ├── schema.py           # 表结构集中定义
+│   │   │   └── *_repository.py     # 各域仓储（session/model/settings/skill/cost）
+│   │   └── schemas/                # 【底座层】Pydantic 数据模型（2026-08-03 由 models/ 更名）
+│   ├── tests/                      # 分层测试（实际结构，按被测模块分）
+│   │   ├── test_agent/ test_api/ test_core/ test_mcp/
+│   │   ├── test_sandbox/ test_skills/ test_tools/    # test_tools 含分层不变量测试
+│   │   ├── fixtures/               # 共享测试数据
+│   │   └── conftest.py             # 共享 fixture：mock LLM / tmp_path / PG 独立 schema
+│   ├── scripts/                    # 开发/运维脚本
+│   │   ├── dev.sh dev.bat dev-restart.*   # 一键启动 / 快重启
+│   │   ├── lint_tools.py           # 工具静态检查（注解/命名/docstring）
+│   │   ├── check_no_bare_except.py # 裸捕获检查
+│   │   ├── audit_tool_descriptions.py · eval_harness.py · agent_demo.py
 │   ├── .env.example                # 通用环境变量模板（LLM、沙箱、数据库配置）
 │   ├── langgraph.json
 │   ├── pyproject.toml
@@ -202,7 +192,7 @@ multi-agent-project/
     └── learnings/                 # 框架开发踩坑记录
 ```
 
-> **落地状态对照**（2026-08-03 实测，✅ 已落地 / ⏳ 演进预留 / ✏️ 实际偏差）：
+> **落地状态对照**（2026-10-15 按工作区实测复核；✅ 已落地 / ⏳ 演进预留 / ✏️ 实际偏差 / 📦 目录已不存在）：
 >
 > | 蓝图条目 | 状态 | 说明 |
 > |---|---|---|
@@ -211,11 +201,13 @@ multi-agent-project/
 > | agent/main_agent.py | ✅ | deepagents 编排：搜索子代理 + 沙箱工具 |
 > | agent/services/（数据服务层） | ✅ | 2026-08-12 结构重构新增：session/model/settings/skill/cost 5 服务，api→agent 能力子域→db 跨层收敛（api 禁直调 db/）|
 > | agent/subagents/ | ✏️ | loader.py + search_agent.yaml（蓝图 template.yaml 空白模板，实际已落业务子代理）|
-> | agent/planner · summarizer · approve | ⏳ | 演进预留 |
-> | agent/graph · memory · middlewares · skills | ✏️ | 大部分空占位；middlewares/token_usage.py ✅ 已落地（TokenUsageMiddleware 上下文用量，2026-08-04） |
-> | src/skills/（marketplace.py · installer.py） | ✏️ | 蓝图未列但已落地：Skill Market 业务层（市场适配 + 安装管理），依赖 api → skills → {db, mcp} |
-> | mcp/registry.py（纯协议层） | ✅ | 工具实现已迁 agent/tools/（v2.3 拍板修正：工具是 Agent 能力，mcp 只做注册/转发出口）；registry.py 注册表 + client.py 连接 + server.py 端点 |
-> | mcp/server.py · http_base.py · adapters/ | ⏳ | FastMCP 协议化演进预留（registry 清单已具备）|
+> | agent/planner · summarizer · approve | ✏️ | 蓝图拟作独立模块，**实际内聚在别处**：任务清单=框架 `write_todos`；压缩=框架 summarizer；审批=`agent/hitl/` |
+> | agent/graph/（手写 LangGraph 主图） | ⏳ | 演进预留，**目录尚未创建**（蓝图保留，见 §6.1 决策 #1） |
+> | agent/memory · middlewares | ✅ | 已落地：memory（抽取/存储/队列）、middlewares（token 用量 / trace / **builder 唯一装配点**） |
+> | **tools/（工具中心）** | ✅ | **2026-10-14 收拢新增**（阶段 0–4 落地）：唯一登记处 registry + 输出契约 result/adapter + 审计 audit + 网关 gateway + 校验 validators + `impl/`（11 工具）+ `channels/`（协议通道）+ `market/`（Skill Market）|
+> | **wiki/（wiki 对接）** | ✅ | **2026-10-15 新增**：`export_service` / `read_service`（REST 双向），由 `agent/services/` 下沉（修 P13 分层违规） |
+> | ~~mcp/（registry · server · http_base · adapters · tools）~~ | 📦 | **目录已不存在**（2026-10-14 阶段 1.0 收拢）：工具实现 → `tools/impl/`；协议通道 → `tools/channels/`；注册表 → `tools/registry.py` |
+> | ~~src/skills/（marketplace · installer）~~ | 📦 | **目录已不存在**（同上）：Skill Market 业务层 → `tools/market/`（源目录已空并删除） |
 > | sandbox/adapter.py | ✏️ | OpenSandbox 实现内聚单文件（本地 docker / 云端仅换 URL），暂不拆 opensandbox/local_docker |
 > | sandbox/health · breaker · download | ⏳ | 演进预留（adapter 内已含超时语义）|
 > | llm/adapter.py | ✏️ | 单 provider 内聚（timeout/retry 含），providers/retry 多厂商时再拆 |
@@ -225,7 +217,7 @@ multi-agent-project/
 > | db/schema.py · repository.py | ✏️ | 项目既定规范「SQL 集中 schema.py + DAO」；蓝图 ORM 理想化 |
 > | db/models · repositories | ⏳ | ORM 化演进预留 |
 > | schemas/ | ✅ | 2026-08-03 由 models/ 更名（events/message/session），.claude/rules/10-api.md 已同步 |
-> | tests/ 分层 | ✏️ | 实际 test_agent/test_api/test_core/test_mcp/test_sandbox（以 .claude/rules/20-testing.md 为准）|
+> | tests/ 分层 | ✏️ | 实际 test_agent / test_api / test_core / test_mcp / test_sandbox / test_skills / test_tools（以 .claude/rules/20-testing.md 为准）|
 > | scripts/ | ✏️ | dev.sh/dev.bat/dev-restart.* 已落地；agent_demo.py 2026-08-03 由 agent/ 移入；smoke_test.py ⏳ |
 > | pyproject.toml · docker-compose.yml | ✏️ | 在项目根（非 backend/）——移动会破坏文档命令与 dev.sh |
 > | .env.example · langgraph.json | ⏳ | 待建（当前 .env.dev 已配置）|
@@ -236,12 +228,12 @@ multi-agent-project/
 
 ### 2.1 能力落地位置对照（2026-08-03，Skill Market 落地后确立）
 
-> 背景：`agent/tools/`、`data/skills/`、`mcp_servers` 表三个位置容易混淆。
+> 背景：`tools/impl/`、`data/skills/`、`mcp_servers` 表三个位置容易混淆。
 > **一句话区分：tool 是"手"（Agent 可调用的函数），skill 是"脑内知识"（Agent 怎么做的说明），subagent 是"下属"（专职角色）。**
 
 | 能力 | 落地位置 | 本质 | Agent 使用方式 | 新增方式 |
 |------|---------|------|---------------|---------|
-| **代码工具 tool** | `backend/src/agent/tools/`（search.py / sandbox_tool.py）+ 注册 `mcp/registry.py` | Python 函数 | 直接挂载为工具，Agent 可**调用**（函数式工具） | 手写代码 + 注册表登记（需改代码） |
+| **代码工具 tool** | 实现 `backend/src/tools/impl/*.py` ＋ **注册** `backend/src/tools/registry.py`（唯一登记处） | Python 函数 | 直接挂载为工具，Agent 可**调用**（函数式工具） | 写实现文件 + **登记一条 ToolSpec**（只改这一处） |
 | **SKILL.md 技能 skill** | `data/skills/skill_md/{名称}/SKILL.md`（本地文件；`core/paths.py` 的 `get_skill_md_dir()`） | 说明书（YAML frontmatter + Markdown 正文） | 渐进披露注入提示词，Agent 按说明执行 | 市场安装（Skill Market）或手写文件——**无需改代码**，Agent 重启自动扫描 |
 | **远程 MCP 工具** | `mcp_servers` 表（PostgreSQL，一行一个 server 连接配置） | 远程服务（Smithery 等托管，本地只存 URL + 鉴权 headers） | `McpClientManager` 连接后注入 Agent，调用时走网络 | Skill Market 市场一键安装（自动建连接） |
 | **子代理 subagent** | `backend/src/agent/subagents/*.yaml` | 专职角色声明（prompt + tools 清单） | `task` 工具委派 | 写 YAML 文件（tools 名查 registry） |
@@ -327,7 +319,7 @@ docker compose --env-file .env.prod up -d
 
 | 经验 | 来源 📌 | 新项目动作 |
 |------|---------|-----------|
-| 依赖单向：main → core → {tools, llm, db} | 当前项目规范 | 新分层：api → agent → {mcp, sandbox, memory} |
+| 依赖单向：main → core → {tools, llm, db} | 当前项目规范 | 新分层：`api → agent → {tools, wiki, sandbox, memory, db}`（2026-10-15 校正：原写 `{mcp, ...}`，已无 mcp/ 目录） |
 | Agent 四层：perception / planning / action / memory | 当前项目 src/agent/ | 演化为：planner / graph / tools / memory，保留分层心智 |
 | 路由 /v1/ 前缀 + Pydantic 请求响应模型 | 当前项目规范 | 直接沿用 |
 
@@ -356,8 +348,8 @@ docker compose --env-file .env.prod up -d
 
 | 经验 | 来源 📌 | 新项目动作 |
 |------|---------|-----------|
-| MCP 单例 + 装饰器注册 | 记忆：MCP server 复盘 | registry.py 从第一天就是注册表模式 |
-| HTTP 双模式（流式/非流式） | 同上 | mcp http_base 统一 httpx 池 |
+| MCP 单例 + 装饰器注册 | 记忆：MCP server 复盘 | `tools/registry.py` 从第一天就是注册表模式（唯一登记处，见规则 07）|
+| HTTP 双模式（流式/非流式） | 同上 | 出站 HTTP 统一 httpx（`tools/impl/*` 与 `wiki/*_service` 各自设 timeout；池化跟随具体客户端）|
 | 异常分级（可重试/不可重试） | 同上 | 错误码体系 + 重试策略分等级 |
 
 ### E. 开发流程
