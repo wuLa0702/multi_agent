@@ -10,9 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from src.agent.services import skill_service
+from src.agent.services import mcp_service, skill_service
 from src.db import connection as db_conn
-from src.tools.channels.mcp_client import get_mcp_client_manager
 
 router = APIRouter(prefix="/v1/mcp-servers", tags=["mcp-servers"])
 
@@ -91,19 +90,21 @@ async def update_mcp_server(server_id: int, req: McpServerUpdateRequest):
     if not hit:
         raise _error(404, "MCP_SERVER_NOT_FOUND", f"MCP 连接不存在：{server_id}")
 
-    # 热刷新（失败不阻断，client 内部有降级）
-    try:
-        async with db_conn.connection() as conn:
-            await get_mcp_client_manager().reload(conn)
-    except Exception:  # noqa: BLE001
-        pass
+    # 热刷新（唯一入口，见 mcp_service docstring：此前此处漏了 rebuild_agent，
+    # 导致老会话仍用旧工具清单）
+    await mcp_service.refresh_agent_tools()
     return {"status": "ok", "id": server_id, "is_active": req.is_active}
 
 
 @router.delete("/{server_id}")
 async def delete_mcp_server(server_id: int):
-    """删除连接（含 installed_skills 关联清理）。"""
+    """删除连接（含 installed_skills 关联清理）+ 热刷新。
+
+    热刷新在此**必须**做：不刷新的话，已删除 server 的工具仍留在图里，
+    模型会去调一个不存在的服务（此前缺这一步）。
+    """
     hit = await skill_service.delete_mcp_server(server_id)
     if not hit:
         raise _error(404, "MCP_SERVER_NOT_FOUND", f"MCP 连接不存在：{server_id}")
+    await mcp_service.refresh_agent_tools()
     return {"status": "ok", "id": server_id}

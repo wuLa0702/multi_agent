@@ -15,10 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from src.agent.main_agent import rebuild_agent
-from src.agent.services import skill_service
-from src.db import connection as db_conn
-from src.tools.channels.mcp_client import get_mcp_client_manager
+from src.agent.services import mcp_service, skill_service
 from src.schemas.skill import (
     SKILL_TYPE_MCP,
     SKILL_TYPE_MD,
@@ -42,17 +39,13 @@ def _error(status: int, code: str, detail: str) -> HTTPException:
 
 
 async def _refresh_agent_tools() -> None:
-    """安装/切换/卸载后的热刷新：MCP 工具重建 + Agent 单例失效。
+    """安装/切换/卸载后的热刷新（转发到唯一入口 `mcp_service.refresh_agent_tools`）。
 
-    reload 失败不阻断（client 内部已有降级路径）；Agent 重建是纯内存操作。
-    连接自开自关（reload 需要读 mcp_servers 表）。
+    ⚠️ 2026-10-15 收口：本处原本自有一份 reload + rebuild_agent 实现，
+    与 `api/mcp_servers.py` 的两条路径各写各的（且那两条各有缺失，见 G1）。
+    现统一转发——**不要在本文件重新长出实现**，否则又变两处真相源。
     """
-    async with db_conn.connection() as conn:
-        try:
-            await get_mcp_client_manager().reload(conn)
-        except Exception:  # noqa: BLE001 —— 降级：工具热刷新失败不阻断管理操作
-            pass
-    rebuild_agent()
+    await mcp_service.refresh_agent_tools()
 
 
 @router.get("/marketplace/list", response_model=MarketplaceListResponse)
