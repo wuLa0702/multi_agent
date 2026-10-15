@@ -356,6 +356,133 @@ def _mcp_tool(name: str, metadata: dict | None = None):
     )
 
 
+class TestThreeStateEnvelope:
+    """三态信封（批次 3）：MCP 工具的输出接入项目的 artifact 通道。
+
+    此前 `_SafeTool` 返回**裸字符串** → `artifact=None` → 审计只见 `status="unknown"`、
+    SSE 只见 `result_status=None`——MCP 工具在可观测链路上是"盲区"（G2 缺口 ②）。
+    """
+
+    @staticmethod
+    async def _call(tool, name: str):
+        """走**真实链路**入口调用工具 → ToolMessage（带 artifact）。
+
+        ⚠️ 必须传 ToolCall dict：传裸参数 dict 时 langchain 只回 content、
+        丢掉 artifact（实测：`ainvoke({})` → `'ok'`）。真实 agent 由 ToolNode
+        传 ToolCall，故测试照同款入口，否则测的不是生产路径。
+        """
+        return await tool.ainvoke(
+            {"name": name, "args": {}, "id": "c1", "type": "tool_call"}
+        )
+
+
+    async def test_success_returns_content_and_artifact(self) -> None:
+        """成功 → `(文本, 信封)`：信封带 status=ok（审计/SSE 读得到）。"""
+        from src.tools.channels.mcp_client import wrap_safe
+
+        msg = await self._call(wrap_safe(_mcp_tool("exa_search")), "exa_search")
+
+        assert msg.artifact["status"] == "ok"
+        assert msg.content == "ok", "content 通道给模型的是纯文本"
+
+    async def test_tool_declares_content_and_artifact(self) -> None:
+        """不变量：包装后必须声明 content_and_artifact（否则二元组被 repr 成文本）。"""
+        from src.tools.channels.mcp_client import wrap_safe
+
+        assert (
+            wrap_safe(_mcp_tool("exa_search")).response_format
+            == "content_and_artifact"
+        )
+
+    async def test_failure_returns_error_envelope_with_code(self) -> None:
+        """失败 → **错误信封**（不是裸字符串）：带归一错误码 + retryable。
+
+        失败用 httpx.ConnectError（可重试网络异常）→ error_code=upstream_error、
+        retryable=True —— 这两个字段正是审计/SSE 需要的。
+        """
+        import httpx
+
+        from src.tools.channels.mcp_client import wrap_safe
+
+        async def _boom(**_: object) -> str:
+            raise httpx.ConnectError("connection refused")
+
+        from langchain_core.tools import StructuredTool
+
+        broken = StructuredTool(
+            name="exa_do", description="d",
+            args_schema={"type": "object", "properties": {}}, coroutine=_boom,
+        )
+        msg = await self._call(wrap_safe(broken), "exa_do")
+
+        assert msg.artifact["status"] == "error"
+        assert msg.artifact["error_code"] == "upstream_error"
+        assert msg.artifact["retryable"] is True, "连接失败属可重试性质"
+
+    async def test_error_text_still_reaches_the_model(self) -> None:
+        """错误文本**照样进 content**（模型能自我纠正，不因改了信封而变哑）。"""
+        import httpx
+
+        from langchain_core.tools import StructuredTool
+
+        from src.tools.channels.mcp_client import wrap_safe
+
+        async def _boom(**_: object) -> str:
+            raise httpx.ConnectError("connection refused")
+
+        broken = StructuredTool(
+            name="exa_do", description="d",
+            args_schema={"type": "object", "properties": {}}, coroutine=_boom,
+        )
+        msg = await self._call(wrap_safe(broken), "exa_do")
+
+        assert "失败原因" in msg.content, "走 render(error) 口径"
+        assert "connection refused" in msg.content, "原始错误信息保留给模型"
+
+    async def test_no_degraded_state_for_mcp(self) -> None:
+        """MCP 不产生 degraded——它没有"拿到一半/被截断"的语义。
+
+        锁这条是防止有人照搬本地工具的三态、给 MCP 造一个假的 degraded。
+        """
+        from src.tools.channels.mcp_client import wrap_safe
+
+        msg = await self._call(wrap_safe(_mcp_tool("exa_search")), "exa_search")
+
+        assert msg.artifact["status"] == "ok"
+
+
+class TestOutputToText:
+    """MCP content blocks → 给 LLM 的文本（适配器返回的 content 可能是块列表）。"""
+
+    def test_plain_string(self) -> None:
+        from src.tools.channels.mcp_client import mcp_output_to_text
+
+        assert mcp_output_to_text(("纯文本", None)) == "纯文本"
+
+    def test_text_blocks_joined(self) -> None:
+        from src.tools.channels.mcp_client import mcp_output_to_text
+
+        raw = ([{"type": "text", "text": "第一段"}, {"type": "text", "text": "第二段"}], None)
+        assert mcp_output_to_text(raw) == "第一段\n第二段"
+
+    def test_non_text_block_not_silently_dropped(self) -> None:
+        """图片/文件块 → 给可读占位，**不静默丢内容**（丢了模型不知道有东西）。"""
+        from src.tools.channels.mcp_client import mcp_output_to_text
+
+        raw = ([{"type": "text", "text": "见图"}, {"type": "image"}], None)
+        out = mcp_output_to_text(raw)
+
+        assert "见图" in out
+        assert "[image]" in out
+
+    def test_artifact_extracts_structured_content(self) -> None:
+        from src.tools.channels.mcp_client import _mcp_artifact_of
+
+        assert _mcp_artifact_of(("t", {"structured_content": {"k": 1}})) == {"k": 1}
+        assert _mcp_artifact_of(("t", None)) is None
+        assert _mcp_artifact_of("裸值") is None
+
+
 class TestRepository:
     """仓储：真实 PG 读写（按需请求 `pg_schema`，非 autouse）。"""
 

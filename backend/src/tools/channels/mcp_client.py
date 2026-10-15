@@ -15,13 +15,18 @@ import asyncio
 import json
 import logging
 import threading
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from psycopg import AsyncConnection
 from pydantic import PrivateAttr
 
+from src.core.errors import is_retryable_tool_error
 from src.core.retry import retry_tool
+from src.tools.contract.adapter import artifact_of
+from src.tools.contract.error_map import classify_exception
+from src.tools.contract.result import ToolResult, render
 from src.tools.registry import RetryPolicy
 
 logger = logging.getLogger(__name__)
@@ -54,6 +59,10 @@ class _SafeTool(BaseTool):
             name=tool.name,
             description=tool.description,
             args_schema=tool.args_schema,
+            # 与本地工具**同一输出契约**（阶段 2 双通道）：不声明的话本类返回的
+            # 二元组会被 `_stringify` 成一整段 repr 塞给 LLM（适配器早已声明
+            # content_and_artifact，是本层包装把 artifact 弄丢的——批次 3 修）
+            response_format="content_and_artifact",
             # ⚠️ 必须透传 metadata：适配器把 **MCP 工具注解**（readOnlyHint /
             # destructiveHint / idempotentHint）放在这里，自动登记时据此推导
             # 治理默认值——不透传的话注解信息在这一层就丢了（tools.py:511 起）
@@ -80,7 +89,12 @@ class _SafeTool(BaseTool):
         直接调 _arun 会丢 config 参数——实测 StructuredTool 必传 config）。"""
         return await self._tool.ainvoke(payload, config=config)
 
-    async def _arun(self, *args, **kwargs):
+    async def _arun(self, *args, **kwargs) -> tuple[str, dict[str, Any]]:
+        """执行 MCP 工具 → `(content, artifact)` 双通道（与本地工具同一输出契约）。
+
+        成功 → `ok` 信封；失败 → `error` 信封（归一错误码 + `retryable`）。
+        **不产生 `degraded`**：MCP 没有"拿到一半/被截断"的语义。
+        """
         config = kwargs.pop("config", None)
         payload = args[0] if args and isinstance(args[0], dict) else kwargs
 
@@ -93,18 +107,96 @@ class _SafeTool(BaseTool):
 
         try:
             if self._retry is None:
-                return await _call()
-            # 按治理声明重试（瞬时故障）；耗尽后由 retry_tool 返回降级字符串，
-            # 仍走下方统一格式 —— 故 on_exhausted 不另配（保持文案一处）
-            wrapped = retry_tool(
-                retries=self._retry.retries,
-                delays=self._retry.delays,
-                extra_exceptions=self._retry.extra_exceptions,
-            )(_call)
-            return await wrapped()
-        except Exception as exc:  # noqa: BLE001 —— 工具失败降级为错误消息，不中断 run
+                raw = await _call()
+            else:
+                # 按治理声明重试（瞬时故障）；耗尽后由 retry_tool 返回降级字符串，
+                # 仍走下方统一格式 —— 故 on_exhausted 不另配（保持文案一处）
+                wrapped = retry_tool(
+                    retries=self._retry.retries,
+                    delays=self._retry.delays,
+                    extra_exceptions=self._retry.extra_exceptions,
+                )(_call)
+                raw = await wrapped()
+        except Exception as exc:  # noqa: BLE001 —— 工具失败降级为错误信封，不中断 run
             logger.warning("MCP 工具 %s 执行失败（降级）：%s", self.name, exc)
-            return f"工具执行失败（{type(exc).__name__}）：{str(exc)[:300]}，请勿重试，改用其他方式。"
+            return _error_envelope(self.name, exc)
+
+        result = ToolResult(
+            status="ok",
+            message=mcp_output_to_text(raw),
+            data={"mcp": _mcp_artifact_of(raw)},
+            tool=self.name,
+        )
+        return render(result), artifact_of(result)
+
+
+def mcp_output_to_text(raw: Any) -> str:
+    """MCP 工具原始返回 → 给 LLM 的文本（content 通道）。
+
+    适配器返回 `(content, artifact)` 二元组（`response_format="content_and_artifact"`，
+    见 `langchain_mcp_adapters/tools.py::_convert_call_tool_result`），其中 `content`
+    可能是**字符串**（单段文本）或 **langchain content block 列表**（文本/图片/文件）。
+
+    Args:
+        raw: `_invoke_raw` 的返回值
+
+    Returns:
+        纯文本；非文本块降级为占位说明（如 `[图片]`）——不静默丢内容
+    """
+    content = raw[0] if isinstance(raw, tuple) and len(raw) == 2 else raw
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content)
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict):
+            kind = block.get("type")
+            if kind == "text":
+                parts.append(str(block.get("text", "")))
+            else:
+                # 图片/文件等非文本块：给它一个可读占位，而不是丢掉
+                parts.append(f"[{kind or '未知内容'}]")
+    return "\n".join(p for p in parts if p)
+
+
+def _mcp_artifact_of(raw: Any) -> Any:
+    """MCP 工具返回的 artifact 通道 → 可进信封的 data（结构化内容）。
+
+    适配器把 MCP 的 `structuredContent` 包成 `MCPToolArtifact`：
+    `{"structured_content": {...}}`；没有结构化内容时为 None。
+
+    Returns:
+        结构化内容 dict；无则 None
+    """
+    if not (isinstance(raw, tuple) and len(raw) == 2):
+        return None
+    artifact = raw[1]
+    if isinstance(artifact, dict):
+        return artifact.get("structured_content")
+    return None
+
+
+def _error_envelope(tool_name: str, exc: BaseException) -> tuple[str, dict[str, Any]]:
+    """失败 → `(content, artifact)` 错误信封（与本地工具口径一致）。
+
+    文案沿用改造前逐字（`工具执行失败（{类型}）：{摘要}，请勿重试，改用其他方式。`），
+    只是从"裸字符串"升级为**带 artifact 的错误信封**——这才是 SSE/审计能读懂的部分。
+    """
+    error_code = classify_exception(exc)
+    result = ToolResult(
+        status="error",
+        message=(
+            f"工具执行失败（{type(exc).__name__}）：{str(exc)[:300]}，"
+            "请勿重试，改用其他方式。"
+        ),
+        error_code=error_code,
+        retryable=is_retryable_tool_error(error_code),
+        tool=tool_name,
+    )
+    return render(result), artifact_of(result)
 
 
 def wrap_safe(tool: BaseTool, *, retry: RetryPolicy | None = None) -> BaseTool:
@@ -151,7 +243,15 @@ class McpClientManager:
             self._tools = []
             return
 
-        client = MultiServerMCPClient(connections, tool_name_prefix=True)
+        # handle_tool_errors=False（2026-10-15 批次 3，与项目错误模型对齐）：
+        # 默认 True 时适配器把 MCP 的 `isError=True` **吞成正常返回的文本**，
+        # 下游无从判断成败（三态退化成"永远 ok"，比 unknown 更糟——假阳性）。
+        # 关闭后 `_MCPToolExecutionError` 以异常形式逃逸到 `_SafeTool` 的兜底层，
+        # 由它转成**错误信封**（status=error + 归一错误码）——错误文本照样进
+        # content 给模型看，模型的自我纠正能力不受影响。
+        client = MultiServerMCPClient(
+            connections, tool_name_prefix=True, handle_tool_errors=False
+        )
         # 逐个 server 取工具（gather return_exceptions）：单个 server 连不上
         # （缺 key / 服务下线）只跳过它，不影响其他 server 与整体启动
         tasks = [
