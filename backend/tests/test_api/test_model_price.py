@@ -9,21 +9,18 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.api.main import app
-from src.core import db as core_db
+from src.db import connection as db_conn
 
 
 @pytest.fixture
-async def seeded(tmp_db_path):
+async def seeded():
     """临时库 + seed 默认模型。"""
     from src.core.model_registry import get_registry
 
     registry = get_registry()
     registry.reset()
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         await registry.load(conn)
-    finally:
-        await conn.close()
     yield registry
     registry.reset()
 

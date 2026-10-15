@@ -1,14 +1,27 @@
-"""共享 Fixture：mock LLM / tmp_path / :memory: 数据库。
+"""共享 Fixture：mock LLM / tmp_path / **每用例独立 PG schema**。
 
-约定（.claude/rules/20-testing.md）：
+约定（规则 20-testing，2026-10-15 PG 迁移修订）：
 - LLM 全部 mock，不实际调 API
-- 文件系统用 tmp_path，数据库用 :memory:
+- 文件系统用 tmp_path
+- 数据库：**PG 没有内存模式**——复用 compose 起的 PostgreSQL
+  （`docker compose --env-file .env.dev up -d postgres`），
+  **每个用例独立 schema**（用例结束 DROP），无需额外组件、天然并行安全
+
+⚠️ Windows 事件循环（2026-10-15 PG 迁移踩坑，详见 docs/踩坑/）：
+psycopg 3 的 async 模式**硬禁 ProactorEventLoop**（psycopg/connection_async.py
+显式检查并抛 InterfaceError）。Python 3.8+ 在 Windows 的默认策略正是 Proactor
+（uvicorn --reload 因走子进程才恰好拿到 Selector）——故测试必须显式切 Selector，
+否则首个 psycopg 连接即崩。代价：Windows 本机 MCP stdio 子进程不可用
+（Selector 不支持 asyncio 子进程）；项目当前无 stdio server 配置，生产为 Linux。
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from langchain_core.language_models import BaseChatModel
@@ -19,6 +32,17 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+
+
+@pytest.fixture(scope="session")
+def _asyncio_loop_factory():
+    """Windows 强制 SelectorEventLoop（pytest-asyncio ≥1.0 的 loop_factory 钩子）。
+
+    返回 None 表示用平台默认（Linux 下即 Selector/Epoll，无需干预）。
+    """
+    if sys.platform == "win32":
+        return asyncio.SelectorEventLoop
+    return None
 
 
 @pytest.fixture
@@ -35,14 +59,49 @@ def tmp_data_dir(tmp_path: Path) -> Path:
     return d
 
 
-@pytest.fixture
-def tmp_db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """隔离 SQLite：settings.db_path 指向 tmp（chat 流落库测试用）。"""
+async def _drop_schema(schema: str) -> None:
+    """删掉用例 schema（独立连接；不用池——池此刻的 search_path 正指向它）。
+
+    Args:
+        schema: 已生成的用例 schema 名（t_ + 12 位 hex，天然合法标识符）
+    """
+    from psycopg import AsyncConnection
+
     from src.core.config import settings
 
-    p = tmp_path / "test.db"
-    monkeypatch.setattr(settings, "db_path", str(p))
-    return p
+    if not settings.pg_dsn:
+        return
+    conn = await AsyncConnection.connect(settings.pg_dsn, autocommit=True)
+    try:
+        await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+    finally:
+        await conn.close()
+
+
+@pytest.fixture(autouse=True)
+async def pg_schema() -> AsyncIterator[str]:
+    """每用例独立 PG schema（隔离 + 用完即删）。
+
+    流程：关掉上个用例的池（幂等）→ 建池并把 search_path 指向新 schema
+    → 建表 → 用例结束关池 + DROP SCHEMA CASCADE。
+
+    测试**不需要显式请求**本 fixture（autouse）；旧 `tmp_db_path` 已废弃——
+    PG 无内存模式，隔离靠 schema 而非临时文件。
+
+    Yields:
+        本用例独占的 schema 名（checkpointer/store 需沿用同一 schema）
+    """
+    from src.db import connection as db_conn
+
+    schema = f"t_{uuid4().hex[:12]}"
+    await db_conn.close_pool()  # 清除上个用例遗留（幂等）
+    await db_conn.init_pool(search_path=schema)
+    await db_conn.ensure_schema()
+    try:
+        yield schema
+    finally:
+        await db_conn.close_pool()
+        await _drop_schema(schema)
 
 
 @pytest.fixture
@@ -121,18 +180,21 @@ def mock_chat_llm(mocker, fake_deep_agent_model: FakeDeepAgentModel) -> FakeDeep
 
 
 @pytest.fixture(autouse=True)
-async def reset_agent_singleton(tmp_path):
+async def reset_agent_singleton(pg_schema, tmp_path):
     """每个测试重置 agent 缓存 + 初始化 checkpointer（P0）+ store（P1）。
 
-    Checkpointer/Store 生命周期模拟 lifespan：每测试在 tmp 重建
-    （隔离 DB，不污染真实 data/），结束后关闭连接并复位。
+    Checkpointer/Store 生命周期模拟 lifespan：每测试在本用例的 PG schema 内
+    重建（隔离干净、不污染真实库），结束后关闭连接并复位。
     v2.0：_agent 单例 → _agents 会话级缓存（全清）。
+
+    Args:
+        pg_schema: 本用例独占 schema（checkpointer/store 与之同 schema）
     """
     from src.agent import main_agent
 
     main_agent._agents.clear()
-    await main_agent.init_checkpointer(db_path=tmp_path)
-    await main_agent.init_store(db_path=tmp_path)
+    await main_agent.init_checkpointer(search_path=pg_schema)
+    await main_agent.init_store(search_path=pg_schema)
     yield
     await main_agent.close_store()
     await main_agent.close_checkpointer()
@@ -160,20 +222,17 @@ def audit_records():
 
 
 @pytest.fixture
-async def seeded_registry(tmp_db_path):
-    """基于隔离 DB 加载默认 seed 的模型注册表（模型 ID 测试用）。
+async def seeded_registry(pg_schema):
+    """基于本用例 schema 加载默认 seed 的模型注册表（模型 ID 测试用）。
 
-    providers/models 表 + 内存缓存均在 tmp 库上重建，测试后清空。
+    providers/models 表 + 内存缓存均在用例 schema 上重建，测试后清空。
     """
-    from src.core import db as core_db
     from src.core.model_registry import get_registry
+    from src.db import connection as db_conn
 
     registry = get_registry()
     registry.reset()
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         await registry.load(conn)
-    finally:
-        await conn.close()
     yield registry
     registry.reset()

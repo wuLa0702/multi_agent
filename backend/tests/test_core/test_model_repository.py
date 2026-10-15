@@ -13,13 +13,12 @@ from src.db import model_repository
 
 
 @pytest.fixture
-async def conn(tmp_db_path):
-    """隔离 SQLite 连接（schema 已建）。"""
-    from src.core import db as core_db
+async def conn():
+    """本用例 schema 上的 PG 连接（schema 由 conftest 的 autouse pg_schema 建好）。"""
+    from src.db import connection as db_conn
 
-    c = await core_db.get_connection()
-    yield c
-    await c.close()
+    async with db_conn.connection() as c:
+        yield c
 
 
 @pytest.mark.asyncio

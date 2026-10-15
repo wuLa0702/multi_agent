@@ -54,7 +54,7 @@ async def _post_stream(client: AsyncClient, payload: dict) -> tuple[int, str]:
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_normal_flow(mock_chat_llm, tmp_db_path) -> None:
+async def test_chat_stream_normal_flow(mock_chat_llm) -> None:
     """正常流：start 首 → token×N → done 尾；事件顺序与字段齐全。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         status, body = await _post_stream(client, {"message": "你好"})
@@ -84,9 +84,9 @@ async def test_chat_stream_normal_flow(mock_chat_llm, tmp_db_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_persists_messages(mock_chat_llm, tmp_db_path) -> None:
+async def test_chat_stream_persists_messages(mock_chat_llm) -> None:
     """落库：user 消息 + assistant 全文各一条，会话更新。"""
-    from src.core import db as core_db
+    from src.db import connection as db_conn
     from src.db import session_repo as repo
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -94,11 +94,8 @@ async def test_chat_stream_persists_messages(mock_chat_llm, tmp_db_path) -> None
     events = parse_sse(body)
     session_id = events[0]["session_id"]
 
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         messages = await repo.list_messages(conn, session_id)
-    finally:
-        await conn.close()
 
     assert [m.role for m in messages] == ["user", "assistant"]
     assert messages[0].content == "你好"
@@ -106,9 +103,9 @@ async def test_chat_stream_persists_messages(mock_chat_llm, tmp_db_path) -> None
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_auto_create_session(mock_chat_llm, tmp_db_path) -> None:
+async def test_chat_stream_auto_create_session(mock_chat_llm) -> None:
     """session_id=None → 自动建会话（start 事件带新 id）。"""
-    from src.core import db as core_db
+    from src.db import connection as db_conn
     from src.db import session_repo as repo
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -117,18 +114,15 @@ async def test_chat_stream_auto_create_session(mock_chat_llm, tmp_db_path) -> No
     session_id = events[0]["session_id"]
     assert session_id
 
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         session = await repo.get_session(conn, session_id)
-    finally:
-        await conn.close()
     assert session is not None
     # 2026-08-04 P0 自动标题：首条消息后标题 = 消息前 20 字（不再是「新会话」）
     assert session.title == "第一条"
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_mutually_exclusive_400(mock_chat_llm, tmp_db_path) -> None:
+async def test_chat_stream_mutually_exclusive_400(mock_chat_llm) -> None:
     """边界：message 与 resume_run_id 同时给 → 400 BAD_REQUEST。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         status, body = await _post_stream(
@@ -140,7 +134,7 @@ async def test_chat_stream_mutually_exclusive_400(mock_chat_llm, tmp_db_path) ->
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_empty_payload_400(mock_chat_llm, tmp_db_path) -> None:
+async def test_chat_stream_empty_payload_400(mock_chat_llm) -> None:
     """边界：全空载荷 → 400 BAD_REQUEST。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         status, body = await _post_stream(client, {})
@@ -150,7 +144,7 @@ async def test_chat_stream_empty_payload_400(mock_chat_llm, tmp_db_path) -> None
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_resume_not_implemented_400(mock_chat_llm, tmp_db_path) -> None:
+async def test_chat_stream_resume_not_implemented_400(mock_chat_llm) -> None:
     """resume_run_id 单独给 → 400（断点恢复当前阶段未实现，显式拦截）。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         status, body = await _post_stream(client, {"resume_run_id": "run-1"})
@@ -160,7 +154,7 @@ async def test_chat_stream_resume_not_implemented_400(mock_chat_llm, tmp_db_path
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_session_not_found_404(mock_chat_llm, tmp_db_path) -> None:
+async def test_chat_stream_session_not_found_404(mock_chat_llm) -> None:
     """错误路径：不存在的 session_id → 404 SESSION_NOT_FOUND。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         status, body = await _post_stream(client, {"session_id": "no-such", "message": "hi"})
@@ -205,7 +199,7 @@ async def test_chat_stream_with_model_id(
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_invalid_model_id_400(tmp_db_path) -> None:
+async def test_chat_stream_invalid_model_id_400() -> None:
     """边界：model_id 不存在 → 400（运行时切换参数校验）。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         status, body = await _post_stream(client, {"message": "hi", "model_id": 99999})
@@ -215,7 +209,7 @@ async def test_chat_stream_invalid_model_id_400(tmp_db_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_llm_error_event(mocker, tmp_db_path) -> None:
+async def test_chat_stream_llm_error_event(mocker) -> None:
     """LLM 异常：不发 done，发 error 事件收尾（流内错误不崩 HTTP 层）。"""
     def _boom() -> None:
         raise TimeoutError("llm timeout")
@@ -251,7 +245,7 @@ class _FakeStreamAgent:
 
 @pytest.mark.asyncio
 async def test_chat_stream_v3_emits_tool_call_events(
-    mock_chat_llm, tmp_db_path, mocker, monkeypatch
+    mock_chat_llm, mocker, monkeypatch
 ) -> None:
     """P0：EVENT_STREAM_V3=true → SSE 输出 tool_call 事件（契约 v3 落地）。
 
@@ -286,7 +280,7 @@ async def test_chat_stream_v3_emits_tool_call_events(
 
 @pytest.mark.asyncio
 async def test_chat_stream_v3_default_off_token_only(
-    mock_chat_llm, tmp_db_path, mocker, monkeypatch
+    mock_chat_llm, mocker, monkeypatch
 ) -> None:
     """P0：EVENT_STREAM_V3=false（默认）→ 仅 token 事件，现状零行为变化。"""
     from src.api import chat as chat_api

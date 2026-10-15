@@ -1,8 +1,11 @@
 """C01 项目实际链路核验 + 回归（2026-09-11）。
 
 背景：`docs/决策/2026-09-11-评估-会话与消息上下文核验-v1.md` §2——项目真实路径
-（`_prepare_new_messages` + `build_agent` + AsyncSqliteSaver + `stream_agent_events`）
+（`_prepare_new_messages` + `build_agent` + Checkpointer + `stream_agent_events`）
 曾出现消息重复累积（3 轮 12 条、`q1/q2/q3` 重复）。
+
+2026-10-15 PG 迁移：Checkpointer 由 AsyncSqliteSaver 换为 AsyncPostgresSaver，
+本回归链路不变（隔离靠 conftest 的 per-test schema）。
 
 C01 修复（co-creator 拍板：**Checkpointer 管 Agent 路径执行历史**）后：
 - 新消息模式只传**增量**（历史由图状态累积）
@@ -15,7 +18,7 @@ from __future__ import annotations
 
 from src.agent.main_agent import ChatContext, build_agent, stream_agent_events
 from src.api.chat import ChatStreamRequest, _prepare_new_messages
-from src.core import db as core_db
+from src.db import connection as db_conn
 from src.db import session_repo as repo
 from src.schemas.message import Message
 
@@ -29,34 +32,28 @@ async def _append(conn, session_id: str, role: str, content: str) -> None:
 
 async def _run_turn(session_id: str, user_text: str, assistant_text: str) -> list:
     """走一轮项目真实路径，返回 checkpoint 中的 messages 列表。"""
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         req = ChatStreamRequest(session_id=session_id, message=user_text)
         lc_messages = await _prepare_new_messages(conn, repo, req, session_id)
         await _append(conn, session_id, "assistant", assistant_text)
-    finally:
-        await conn.close()
 
     agent = build_agent(thread_id=session_id)
     ctx = ChatContext(session_id=session_id)
     async for _evt in stream_agent_events(agent, lc_messages, context=ctx):
         pass
 
-    # AsyncSqliteSaver 必须走异步接口（同步 get_state 会抛 InvalidStateError）
+    # Async* Saver 必须走异步接口（同步 get_state 会抛 InvalidStateError）
     snap = await agent.aget_state({"configurable": {"thread_id": session_id}})
     return list(snap.values.get("messages", []))
 
 
 async def _new_session(session_id: str) -> None:
     """建会话（标题非"新会话"→ 不触发后台标题 LLM 任务，保持测试确定性）。"""
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         await repo.create_session(conn, session_id, title="C01 回归会话")
-    finally:
-        await conn.close()
 
 
-async def test_project_pipeline_no_message_duplication(tmp_db_path, mock_chat_llm) -> None:
+async def test_project_pipeline_no_message_duplication(mock_chat_llm) -> None:
     """C01 回归：项目真实路径 3 轮后应为 6 条，且 `q1/q2/q3` 各只出现一次。"""
     session_id = "sess-c01-verify"
     await _new_session(session_id)
@@ -72,7 +69,7 @@ async def test_project_pipeline_no_message_duplication(tmp_db_path, mock_chat_ll
         assert contents.count(q) == 1, f"{q} 应只出现一次（无重复累积）：{contents}"
 
 
-async def test_memory_injection_not_accumulated(tmp_db_path, mock_chat_llm) -> None:
+async def test_memory_injection_not_accumulated(mock_chat_llm) -> None:
     """C01 回归：记忆注入用固定 id → 多轮后 state 中只保留 1 份。"""
     from src.agent.main_agent import get_store
     from src.agent.memory.store import save_typed_memory
@@ -90,7 +87,7 @@ async def test_memory_injection_not_accumulated(tmp_db_path, mock_chat_llm) -> N
     assert len(memory_msgs) == 1, f"记忆注入应只 1 份（固定 id 覆盖），实际 {len(memory_msgs)}"
 
 
-async def test_degraded_without_checkpointer_uses_db_history(tmp_db_path, mock_chat_llm) -> None:
+async def test_degraded_without_checkpointer_uses_db_history(mock_chat_llm) -> None:
     """降级路径：未挂 Checkpointer → 仍由 DB 重建全量历史（不丢上下文）。
 
     C01 修复按 `has_checkpointer()` 分流：无 Checkpointer（测试/脚本未跑 lifespan）
@@ -102,23 +99,17 @@ async def test_degraded_without_checkpointer_uses_db_history(tmp_db_path, mock_c
     await _new_session(session_id)
 
     # 预置一轮历史（旧问题/旧回答）
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         await _append(conn, session_id, "user", "旧问题")
         await _append(conn, session_id, "assistant", "旧回答")
-    finally:
-        await conn.close()
 
     # 临时关闭 checkpointer（模拟未跑 lifespan 的降级环境）
     saved = main_agent._checkpointer
     main_agent._checkpointer = None
     try:
-        conn = await core_db.get_connection()
-        try:
+        async with db_conn.connection() as conn:
             req = ChatStreamRequest(session_id=session_id, message="新问题")
             lc_messages = await _prepare_new_messages(conn, repo, req, session_id)
-        finally:
-            await conn.close()
     finally:
         main_agent._checkpointer = saved
 

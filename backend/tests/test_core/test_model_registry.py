@@ -17,16 +17,13 @@ from src.core.model_registry import ModelRegistry
 
 
 @pytest.fixture
-async def registry(tmp_db_path) -> ModelRegistry:
-    """隔离 DB 上加载 seed 的注册表。"""
-    from src.core import db as core_db
+async def registry() -> ModelRegistry:
+    """本用例 schema 上加载 seed 的注册表（schema 由 conftest autouse 建好）。"""
+    from src.db import connection as db_conn
 
     r = ModelRegistry()
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         await r.load(conn)
-    finally:
-        await conn.close()
     yield r
 
 
@@ -82,25 +79,22 @@ async def test_reset_clears_cache(registry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_all_providers_disabled_raises(tmp_db_path) -> None:
+async def test_load_all_providers_disabled_raises() -> None:
     """错误：全部厂商禁用（过滤后无可用模型）→ ConfigError。
 
     说明：load() 内部先 seed 幂等填充，空库会被重新填充而非报错；
     真正触发 ConfigError 的是 seed 后仍无可用模型（全禁用）。
     """
-    from src.core import db as core_db
+    from src.db import connection as db_conn
     from src.db import model_repository
 
     r = ModelRegistry()
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         await model_repository.seed_defaults(conn)  # 先 seed 填充（load 前表才有数据可禁用）
         await conn.execute("UPDATE providers SET is_active = 0")
         await conn.commit()
         with pytest.raises(ConfigError, match="注册表为空"):
             await r.load(conn)
-    finally:
-        await conn.close()
 
 
 @pytest.mark.asyncio

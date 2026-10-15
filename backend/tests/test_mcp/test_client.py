@@ -42,7 +42,7 @@ async def _insert_server(conn, **fields) -> None:
     await conn.execute(
         """INSERT INTO mcp_servers
            (name, transport, url, command, args, headers, is_active, sort_order, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (
             defaults["name"],
             defaults["transport"],
@@ -60,13 +60,12 @@ async def _insert_server(conn, **fields) -> None:
 
 
 @pytest.fixture
-async def conn(tmp_db_path):
-    """隔离 SQLite 连接（schema 已建，含 mcp_servers 表）。"""
-    from src.core import db as core_db
+async def conn():
+    """本用例 schema 上的 PG 连接（含 mcp_servers 表，schema 由 conftest 建好）。"""
+    from src.db import connection as db_conn
 
-    c = await core_db.get_connection()
-    yield c
-    await c.close()
+    async with db_conn.connection() as c:
+        yield c
 
 
 @pytest.mark.asyncio

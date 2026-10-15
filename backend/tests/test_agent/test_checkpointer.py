@@ -1,40 +1,50 @@
 """Checkpointer 断点持久化测试（P0，2026-08-04 计划文档 A/C）。
 
-覆盖（20-testing.md：正常 / 边界 / 错误）：
-- 持久化：checkpoint 写入 SQLite → 重建 saver（模拟重启）仍可读
+覆盖（规则 20-testing：正常 / 边界 / 错误）：
+- 持久化：checkpoint 写入 PG → 重建 saver（模拟重启）仍可读
 - 隔离：多 thread（会话）checkpoint 互不干扰
 - config 构造：stream_agent_tokens 内部封装 thread_id + checkpoint_id
-- 并发限流：Semaphore 存在且值为 4
+- 并发限流：Semaphore 存在且取 settings.stream_concurrency
+
+2026-10-15 PG 迁移：AsyncSqliteSaver → AsyncPostgresSaver；持久化介质由
+「同文件」变为「同 schema」（用例 schema 由 conftest 建好并在结束时 DROP）。
 """
 
 from __future__ import annotations
 
-import sqlite3
+import asyncio
 
 import pytest
-
-from src.core.paths import CHECKPOINTER_DB_FILE, STORE_DB_FILE
-
-from langgraph.checkpoint.base import CheckpointTuple
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.base import Checkpoint, CheckpointTuple
 
 
-def _make_saver(db_path) -> SqliteSaver:
-    """建同步 SqliteSaver（直接构造自管连接；不用 from_conn_string——
-    @contextmanager 退出即关连接，不适合持久的 saver）。"""
-    # db_path 是目录（tmp_path）时拼 checkpoints.db；已是文件路径直接用
-    db_file = db_path / CHECKPOINTER_DB_FILE if db_path.is_dir() else db_path
-    conn = sqlite3.connect(str(db_file), check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    saver = SqliteSaver(conn)
-    saver.setup()
+async def _make_saver(search_path: str):
+    """建 AsyncPostgresSaver（async 执行路径必需——sync 版在 astream 下静默失败）。
+
+    Args:
+        search_path: 断点表所在 schema（用例独占，setup() 在此建表）
+
+    Returns:
+        已完成 setup 的 AsyncPostgresSaver（调用方负责 close）
+    """
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from psycopg.rows import dict_row
+
+    from src.db import connection as db_conn
+
+    conn = await db_conn.connect_with_schema(
+        search_path=search_path,
+        autocommit=True,
+        prepare_threshold=0,
+        row_factory=dict_row,
+    )
+    saver = AsyncPostgresSaver(conn)
+    await saver.setup()
     return saver
 
 
-def _put_checkpoint(saver: SqliteSaver, thread_id: str, value: str) -> str:
+async def _put_checkpoint(saver, thread_id: str, value: str) -> str:
     """写入一个 checkpoint，返回 checkpoint_id。"""
-    from langgraph.checkpoint.base import Checkpoint
-
     checkpoint: Checkpoint = {
         "v": 1,
         "ts": "2026-08-04T00:00:00Z",
@@ -46,7 +56,7 @@ def _put_checkpoint(saver: SqliteSaver, thread_id: str, value: str) -> str:
     }
     metadata = {"source": "loop", "step": 1, "writes": None}
     # put 签名：put(config, checkpoint, metadata, new_versions)——config 含 thread_id + checkpoint_ns
-    saver.put(
+    await saver.aput(
         {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}},
         checkpoint,
         metadata,
@@ -55,35 +65,41 @@ def _put_checkpoint(saver: SqliteSaver, thread_id: str, value: str) -> str:
     return checkpoint["id"]
 
 
-def test_checkpoint_persists_across_saver_reload(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_checkpoint_persists_across_saver_reload(pg_schema) -> None:
     """持久化：写入 → 重建 saver（模拟重启进程）→ checkpoint 仍可读。"""
-    db = tmp_path / CHECKPOINTER_DB_FILE
-
     # 第一次"进程"：写入
-    saver1 = _make_saver(db)
-    cid = _put_checkpoint(saver1, "session-a", "hello")
-    saver1.conn.close()
+    saver1 = await _make_saver(pg_schema)
+    cid = await _put_checkpoint(saver1, "session-a", "hello")
+    await saver1.conn.close()
 
-    # 第二次"进程"：重建 saver 从同一 SQLite 读取
-    saver2 = _make_saver(db)
-    tuples: list[CheckpointTuple] = list(
-        saver2.list({"configurable": {"thread_id": "session-a"}})
-    )
-    assert tuples, "重启后 checkpoint 应仍在（SQLite 持久化）"
-    assert tuples[0].checkpoint["id"] == cid
+    # 第二次"进程"：重建 saver 从同一 schema 读取
+    saver2 = await _make_saver(pg_schema)
+    try:
+        tuples: list[CheckpointTuple] = [
+            t async for t in saver2.alist({"configurable": {"thread_id": "session-a"}})
+        ]
+        assert tuples, "重启后 checkpoint 应仍在（PostgreSQL 持久化）"
+        assert tuples[0].checkpoint["id"] == cid
+    finally:
+        await saver2.conn.close()
 
 
-def test_thread_isolation(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_thread_isolation(pg_schema) -> None:
     """隔离：不同 thread（会话）checkpoint 互不干扰。"""
-    saver = _make_saver(tmp_path)
-    _put_checkpoint(saver, "session-a", "msg-a")
-    _put_checkpoint(saver, "session-b", "msg-b")
+    saver = await _make_saver(pg_schema)
+    try:
+        await _put_checkpoint(saver, "session-a", "msg-a")
+        await _put_checkpoint(saver, "session-b", "msg-b")
 
-    a = list(saver.list({"configurable": {"thread_id": "session-a"}}))
-    b = list(saver.list({"configurable": {"thread_id": "session-b"}}))
-    assert len(a) == 1 and len(b) == 1
-    assert a[0].checkpoint["id"].endswith("msg-a")
-    assert b[0].checkpoint["id"].endswith("msg-b")
+        a = [t async for t in saver.alist({"configurable": {"thread_id": "session-a"}})]
+        b = [t async for t in saver.alist({"configurable": {"thread_id": "session-b"}})]
+        assert len(a) == 1 and len(b) == 1
+        assert a[0].checkpoint["id"].endswith("msg-a")
+        assert b[0].checkpoint["id"].endswith("msg-b")
+    finally:
+        await saver.conn.close()
 
 
 def test_stream_config_builds_thread_id(mocker) -> None:
@@ -94,8 +110,6 @@ def test_stream_config_builds_thread_id(mocker) -> None:
     fake_agent = mocker.MagicMock()
 
     # mock semaphore 不阻塞（用 async context manager 替身）
-    import asyncio
-
     class _NullCM:
         async def __aenter__(self):
             return self
@@ -163,8 +177,6 @@ def test_stream_config_without_session_no_thread_id(mocker) -> None:
 
     captured: list[dict] = []
     fake_agent = mocker.MagicMock()
-
-    import asyncio
 
     class _NullCM:
         async def __aenter__(self):

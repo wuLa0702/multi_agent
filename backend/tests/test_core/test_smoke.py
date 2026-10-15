@@ -13,7 +13,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from src.core.config import get_settings, settings  # noqa: E402
-from src.core.paths import get_app_dir, get_db_path, get_log_dir, is_cloud  # noqa: E402
+from src.core.paths import get_app_dir, get_log_dir, is_cloud  # noqa: E402
 
 
 def test_dev_env_loaded(app_env_dev) -> None:
@@ -38,11 +38,14 @@ def test_paths_local_on_windows() -> None:
         assert str(get_log_dir()).endswith("logs")
 
 
-def test_db_path_under_data() -> None:
-    """正常路径：SQLite 数据库落在数据目录下。"""
-    db = get_db_path()
-    assert db.name == "wiki.db"
-    assert db.parent.name == "data"
+def test_pg_dsn_configured_in_env() -> None:
+    """正常路径：PG 连接串由 .env.dev 提供（2026-10-15 PG 迁移替代 SQLite 文件路径）。
+
+    密钥纪律：DSN 只来自 .env，不在代码/文档里留字面量——这里只断言「已配置」
+    与协议前缀，不打印其值。
+    """
+    assert settings.pg_dsn, "PG_DSN 未在 .env.dev / .env.prod 配置"
+    assert settings.pg_dsn.startswith("postgresql://")
 
 
 def test_config_never_exposes_raw_secrets_in_defaults() -> None:

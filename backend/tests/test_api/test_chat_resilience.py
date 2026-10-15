@@ -1,12 +1,15 @@
 """chat 降级矩阵单测（计划-容错处理 v1.2，P1-c）。
 
-覆盖：会话落库 SQLite 瞬时错误重试 1 次 → 仍失败降级内存（不阻断响应）。
+覆盖：会话落库 PG 瞬时错误重试 1 次 → 仍失败降级内存（不阻断响应）。
+
+2026-10-15 PG 迁移：注入的异常由 `sqlite3.OperationalError`（busy/locked）
+改为 `psycopg.OperationalError`（死锁/序列化失败等 PG 瞬时错误家族）——
+chat.py 捕获的异常类型随之同步。
 """
 
 from __future__ import annotations
 
-import sqlite3
-
+import psycopg
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -20,9 +23,9 @@ class TestSessionPersistRetry:
 
     @pytest.mark.asyncio
     async def test_retries_once_then_success(
-        self, monkeypatch, mock_chat_llm, tmp_db_path
+        self, monkeypatch, mock_chat_llm
     ) -> None:
-        """SQLite busy（可重试）→ 重试 1 次 → 第二次成功 → 正常建会话。"""
+        """PG 瞬时错误（可重试）→ 重试 1 次 → 第二次成功 → 正常建会话。"""
         from src.db import session_repo as repo
 
         calls = {"n": 0}
@@ -31,7 +34,7 @@ class TestSessionPersistRetry:
         async def flaky_create(conn, sid):
             calls["n"] += 1
             if calls["n"] == 1:
-                raise sqlite3.OperationalError("database is locked")
+                raise psycopg.OperationalError("deadlock detected")
             return await real_create(conn, sid)
 
         monkeypatch.setattr(repo, "create_session", flaky_create)
@@ -43,16 +46,16 @@ class TestSessionPersistRetry:
 
     @pytest.mark.asyncio
     async def test_degrades_to_memory_on_persistent_failure(
-        self, monkeypatch, mock_chat_llm, tmp_db_path
+        self, monkeypatch, mock_chat_llm
     ) -> None:
-        """SQLite 持续失败（重试仍失败）→ 降级内存会话：start 事件正常、无断流。"""
+        """PG 持续失败（重试仍失败）→ 降级内存会话：start 事件正常、无断流。"""
         from src.db import session_repo as repo
 
         calls = {"n": 0}
 
         async def always_fail(conn, sid):
             calls["n"] += 1
-            raise sqlite3.OperationalError("database is locked")
+            raise psycopg.OperationalError("deadlock detected")
 
         monkeypatch.setattr(repo, "create_session", always_fail)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -63,7 +66,7 @@ class TestSessionPersistRetry:
         assert events[-1]["type"] == "done"
 
     @pytest.mark.asyncio
-    async def test_retryable_error_also_retried(self, monkeypatch, mock_chat_llm, tmp_db_path) -> None:
+    async def test_retryable_error_also_retried(self, monkeypatch, mock_chat_llm) -> None:
         """自定义 RetryableError 同样触发重试（矩阵：可重试异常统一处理）。"""
         from src.core.errors import RetryableError
         from src.db import session_repo as repo
@@ -74,7 +77,7 @@ class TestSessionPersistRetry:
         async def flaky(conn, sid):
             calls["n"] += 1
             if calls["n"] == 1:
-                raise RetryableError("SQLite 瞬时锁")
+                raise RetryableError("PG 瞬时错误")
             return await real_create(conn, sid)
 
         monkeypatch.setattr(repo, "create_session", flaky)

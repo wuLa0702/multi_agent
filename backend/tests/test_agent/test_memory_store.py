@@ -9,59 +9,69 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import pytest
 
-from src.core.paths import CHECKPOINTER_DB_FILE, STORE_DB_FILE
 
-from langgraph.store.sqlite import SqliteStore
+@asynccontextmanager
+async def _make_store(search_path: str):
+    """建 AsyncPostgresStore（async 执行路径必需——sync 版 aput/asearch 抛 NotImplementedError）。
 
+    Args:
+        search_path: 记忆表所在 schema（用例独占，setup() 在此建表）
 
-async def _make_store(db_path) -> SqliteStore:
-    """建 AsyncSqliteStore（async 执行路径必需——SqliteStore 不支持 async 方法）。"""
-    import aiosqlite
-    from langgraph.store.sqlite.aio import AsyncSqliteStore
+    Yields:
+        已完成 setup 的 AsyncPostgresStore（退出时关连接，不污染用例池）
+    """
+    from langgraph.store.postgres.aio import AsyncPostgresStore
+    from psycopg.rows import dict_row
 
-    db_file = db_path / STORE_DB_FILE if db_path.is_dir() else db_path
-    # isolation_level=None：autocommit 连接（AsyncSqliteStore 内部管理事务）
-    conn = await aiosqlite.connect(str(db_file), isolation_level=None)
-    await conn.execute("PRAGMA journal_mode=WAL")
-    store = AsyncSqliteStore(conn)
-    await store.setup()
-    return store
+    from src.db import connection as db_conn
+
+    conn = await db_conn.connect_with_schema(
+        search_path=search_path,
+        autocommit=True,
+        prepare_threshold=0,
+        row_factory=dict_row,
+    )
+    try:
+        store = AsyncPostgresStore(conn)
+        await store.setup()
+        yield store
+    finally:
+        await conn.close()
 
 
 @pytest.mark.asyncio
-async def test_memory_persists_across_store_reload(tmp_path) -> None:
+async def test_memory_persists_across_store_reload(pg_schema) -> None:
     """持久化：写入 → 重建 store（模拟重启）→ 记忆仍可检索。"""
     from src.agent.memory.store import load_recent_memories, save_conversation_memory
 
-    # 用独立子目录：autouse fixture 的 store 占用了 tmp_path 根（避免 DB 锁冲突）
-    db = tmp_path / "mem" / STORE_DB_FILE
-    db.parent.mkdir()
-    store1 = await _make_store(db)
-    await save_conversation_memory(store1, "用户叫小明，喜欢 Python 编程" * 10)
+    async with _make_store(pg_schema) as store1:
+        await save_conversation_memory(store1, "用户叫小明，喜欢 Python 编程" * 10)
 
     # 重建（模拟重启）
-    store2 = await _make_store(db)
-    memories = await load_recent_memories(store2)
-    assert memories, "重启后记忆应仍在（SqliteStore 持久化）"
+    async with _make_store(pg_schema) as store2:
+        memories = await load_recent_memories(store2)
+    assert memories, "重启后记忆应仍在（PostgresStore 持久化）"
     assert "小明" in memories[0]
 
 
 @pytest.mark.asyncio
-async def test_memory_noise_threshold(tmp_path) -> None:
+async def test_memory_noise_threshold(pg_schema) -> None:
     """噪音阈值：过短回复不写入（闲聊过滤）。"""
-    from src.agent.memory.store import MEMORY_MIN_LEN, load_recent_memories, save_conversation_memory
+    from src.agent.memory.store import (
+        MEMORY_MIN_LEN,
+        load_recent_memories,
+        save_conversation_memory,
+    )
 
-    # 独立子目录（避免与 autouse fixture 的 store 锁冲突）
-    db = tmp_path / "mem2" / STORE_DB_FILE
-    db.parent.mkdir()
-    store = await _make_store(db)
-
-    short = "好的"  # < 阈值
-    assert len(short) < MEMORY_MIN_LEN
-    await save_conversation_memory(store, short)
-    memories = await load_recent_memories(store)
+    async with _make_store(pg_schema) as store:
+        short = "好的"  # < 阈值
+        assert len(short) < MEMORY_MIN_LEN
+        await save_conversation_memory(store, short)
+        memories = await load_recent_memories(store)
     assert memories == [], "过短回复不应写入记忆"
 
 
@@ -127,24 +137,25 @@ async def test_extract_memory_fact_llm_error() -> None:
     assert fact is None
 
 
-def test_agent_builds_with_store(mocker, tmp_path) -> None:
-    """挂载：create_deep_agent 收到 store（lifespan 初始化后）。"""
+@pytest.mark.asyncio
+async def test_agent_builds_with_store(mocker, pg_schema) -> None:
+    """挂载：create_deep_agent 收到 store（lifespan 初始化后）。
+
+    2026-10-15 PG 迁移：由 sync 测试改为 async——PG 连接要求 Selector 事件循环，
+    `asyncio.run` 在 Windows 下拿到的是 Proactor，会直接崩。
+    """
     from src.agent import main_agent
 
     mocker.patch("src.agent.main_agent.get_chat_model", return_value=object())
     mocker.patch("src.agent.main_agent.load_subagents", return_value=[])  # P1-1：不解析真实 YAML
     mock_create = mocker.patch("src.agent.main_agent.create_deep_agent", return_value=object())
 
-    import asyncio
+    main_agent._agents.clear()
+    await main_agent.init_store(search_path=pg_schema)
+    try:
+        main_agent.get_agent()
+    finally:
+        await main_agent.close_store()
 
-    async def run() -> None:
-        main_agent._agents.clear()
-        await main_agent.init_store(db_path=tmp_path)
-        try:
-            main_agent.get_agent()
-        finally:
-            await main_agent.close_store()
-
-    asyncio.run(run())
     _, kwargs = mock_create.call_args
     assert kwargs["store"] is not None, "lifespan 初始化后 store 应挂载到 agent"
