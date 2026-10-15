@@ -43,15 +43,23 @@ def test_get_agent_session_cache(mocker) -> None:
     # （2026-08-04 评审改版：middleware 含 TokenUsageMiddleware；v2.0 会话级 backend；
     # v3.0：+ ToolAuditMiddleware + permissions 上层声明式规则；
     # 阶段 3（2026-10-15）：+ RedactMiddleware 出站脱敏，紧随模型选择之后）
+    #
+    # 类型从**各自真实模块**导入（阶段 3 装配收口后 main_agent 不再转发这些符号；
+    # 显式导入而非复用 builder 输出，才不是同义反复——本断言锁的是"链里有什么、什么顺序"）
+    from src.agent.middlewares.token_usage import TokenUsageMiddleware
+    from src.llm.redact import RedactMiddleware
+    from src.tools.audit import ToolAuditMiddleware
+    from src.tools.gateway import ToolGatewayMiddleware
+
     _, kwargs = mock_create.call_args
     middleware_types = [type(m) for m in kwargs["middleware"]]
-    assert middleware_types == [
+    assert middleware_types[:5] == [
         type(main_agent._configurable_model),
-        main_agent.RedactMiddleware,
-        main_agent.TokenUsageMiddleware,
-        main_agent.ToolAuditMiddleware,
-        main_agent.ToolGatewayMiddleware,
-    ], "中间件栈应含模型切换 + 出站脱敏 + 用量统计 + 工具审计 + 调度中心（校验）"
+        RedactMiddleware,
+        TokenUsageMiddleware,
+        ToolAuditMiddleware,
+        ToolGatewayMiddleware,
+    ], "中间件栈前五应是：模型切换 + 出站脱敏 + 用量统计 + 工具审计 + 调度中心（校验）"
     assert kwargs["context_schema"] is main_agent.ChatContext
     assert kwargs["backend"] is not None, "v2.0 会话级 backend 应挂载（文件根隔离）"
     assert kwargs["permissions"][0].mode == "deny", "P0 上层声明式规则应挂载（/skills/** 写 deny）"

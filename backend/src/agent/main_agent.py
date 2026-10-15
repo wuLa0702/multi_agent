@@ -44,12 +44,7 @@ from langchain_core.messages import BaseMessage
 from src.agent.hitl.callback import HitlCallback
 from src.agent.hitl.hitl import build_hitl_interrupt_on, should_mount_hitl_tools
 from src.agent.hitl.pending import register_interrupt
-from src.agent.middlewares.interpreter import build_interpreter_middleware
-from src.agent.middlewares.token_usage import TokenUsageMiddleware
-from src.llm.redact import RedactMiddleware
-from src.tools.audit import ToolAuditMiddleware
-from src.tools.gateway import ToolGatewayMiddleware
-from src.agent.rubrics.rubrics import build_rubric_middleware
+from src.agent.middlewares.builder import build_middlewares
 from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
 from src.core.backend import create_backend
@@ -438,29 +433,10 @@ def _build_agent(thread_id: str):
         internal_tools += hitl_tools()
     mcp_tools = get_mcp_client_manager().get_tools()
     model = get_chat_model()  # 默认 provider 兜底（middleware 会覆盖）；P2 编译子代理共用
-    middleware = [
-        _configurable_model,
-        # 出站脱敏（阶段 3，2026-10-15）：模型调用前脱敏消息文本。
-        # 必须在**模型调用边界**收口——主对话不经 LLMAdapter.chat()，只挂 adapter 会漏
-        # （见 llm/redact.py 模块 docstring）。放 _configurable_model 之后：先选定模型，
-        # 再对本次入站消息脱敏。
-        RedactMiddleware(),
-        # 上下文用量：图执行完自动算全量 messages token 并存库
-        # （2026-08-04 评审改版：中间件替代 CallbackHandler，前端查表）
-        TokenUsageMiddleware(),
-        # 工具调用审计（P1）：MCP/沙箱逃逸面统一审计，只记不拦
-        ToolAuditMiddleware(),
-        # 调度中心（阶段 1.1）：调用前统一 args_schema 校验；失败降级为
-        # 错误 ToolMessage 不中断 run。顺序：审计在外（先留痕），网关在内（校验+短路）
-        ToolGatewayMiddleware(),
-    ]
-    # 解释器（P2，2026-08-05 解耦）：挂载逻辑在 middlewares/interpreter.py——
-    # main_agent 只做编排，不内嵌中间件构建细节（顺序保持 ToolAudit 在前，
-    # 本函数返回追加在后——eval 先经审计链）
-    middleware += build_interpreter_middleware()
-    # Rubric 自评（P1，2026-08-06 设计 §5.4）：rubric_enabled 门控构建——
-    # 同解释器模式：main_agent 只编排，构建细节在 rubrics.py
-    middleware += build_rubric_middleware()
+    # 中间件链（阶段 3 收口）：装配与顺序集中在 middlewares/builder.py——
+    # 新增横切能力只改那里，本文件不再动。模型选择中间件作为参数注入
+    # （它定义在本模块，builder 直接 import 会循环）。
+    middleware = build_middlewares(_configurable_model)
     return create_deep_agent(
         model=model,
         system_prompt=build_system_prompt(),  # 分层组装（核心+可选；动态记忆由 chat 注入）
