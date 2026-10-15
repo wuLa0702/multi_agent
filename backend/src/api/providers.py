@@ -1,6 +1,6 @@
 """厂商/模型列表：GET /v1/providers（前端模型下拉的数据源）。
 
-数据真相源：SQLite providers/models 表（lifespan 加载进注册表，见
+数据真相源：PostgreSQL providers/models 表（lifespan 加载进注册表，见
 core/model_registry.py）；API key 永不返回（密钥只存 .env）。
 2026-08-12 成本评审 2.3：加 PATCH 模型单价入口（用户自定义模型成本核算）。
 """
@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel, Field
 
 from src.agent.services import model_service
-from src.core import db as core_db
+from src.db import connection as db_conn
 from src.core.model_registry import get_registry
 from src.schemas.model_config import ProvidersResponse
 
@@ -58,9 +58,6 @@ async def update_model_price(
             status_code=404,
             detail={"error": "模型不存在", "detail": f"model_id={model_id} 未找到", "code": "MODEL_NOT_FOUND"},
         )
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         await get_registry().load(conn)  # reload 使单价生效（成本核算读 registry 缓存）
-    finally:
-        await conn.close()
     return {"status": "ok", "model_id": model_id}

@@ -115,9 +115,9 @@ class Settings(BaseSettings):
     # 单次请求超时——超时抛 TimeoutException → 被重试装饰器捕获 → 重试 → 降级
     tool_timeout_seconds: float = 10.0
     # 对话流并发上限（2026-08-10 拍板：环境保存，替代 main_agent 硬编码 4）：
-    # SQLite checkpointer 写锁是硬约束——Semaphore 限制同时执行的流数量，超出排队。
-    # 本地 .env.dev=10（开发机强）；云端 .env.prod=2（2核4g 保守）——开大先验
-    # 限流/写锁，出问题再调小（co-creator 拍板：本地允许 10，云端 2）
+    # ⚠️ 2026-10-15 PG 迁移：原「SQLite checkpointer 写锁是硬约束」前提已消失
+    # （PG 支持真正并发写）；本值与 .env 现值**暂不变动**，待 co-creator 评估是否上调。
+    # 本地 .env.dev=10（开发机强）；云端 .env.prod=2（2核4g 保守）
     stream_concurrency: int = 4
     # ── 成本控制（2026-08-11 设计 §4.3/§4.4/§5.3/§5.4）──
     # LLM 结果缓存开关（面试演示开；生产按需）
@@ -143,7 +143,17 @@ class Settings(BaseSettings):
 
     # ── 记忆/存储 ──
     redis_url: str = "redis://localhost:6379/0"
-    db_path: str = "./data/wiki.db"
+
+    # ── PostgreSQL（2026-10-15 PG 迁移：业务库 + LangGraph 断点/记忆库）──
+    # DSN 只来自 .env.dev / .env.prod（密钥纪律：永不硬编码 / 不入库）
+    pg_dsn: str = ""
+    # 连接池参数（2核4g 单机单用户：min 1 保常驻热连接，max 10 足够；
+    # timeout = 借出等待上限，超时抛 PoolTimeout 而非无限阻塞）
+    pg_pool_min_size: int = 1
+    pg_pool_max_size: int = 10
+    pg_pool_timeout: float = 30.0
+    # LangGraph 断点/记忆表所在 schema（业务表在 public；同库不同 schema 隔离关注点）
+    pg_langgraph_schema: str = "langgraph"
 
     # ── 搜索（博查 Bocha：国内 Tavily 平替，2026-08-03 拍板）──
     bocha_api_key: str = ""

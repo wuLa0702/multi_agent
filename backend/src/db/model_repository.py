@@ -1,16 +1,19 @@
-"""模型配置仓储：providers / models 表读写（真相源 = SQLite）。
+"""模型配置仓储：providers / models 表读写（真相源 = PostgreSQL）。
 
-模式（20-testing.md / repository.py 同款）：
-- 显式传 conn，写操作 commit，行 → Pydantic 模型
+模式（规则 06 §2 / 20-testing 同款）：
+- 显式传 conn（连接层借出），写操作 commit，行 → Pydantic 模型
 - seed_defaults 首次启动填充：providers 表为空时插入默认厂商与模型
 
 密钥不入库：providers.api_key_env 只存 .env 变量名（如 DEEPSEEK_API_KEY），
 adapter 构造模型时从 settings 按名读取。
+
+方言要点（2026-10-15 PG 迁移）：占位符 `?` → `%s`；
+自增主键取回由 `cursor.lastrowid` → `INSERT ... RETURNING id`。
 """
 
 from __future__ import annotations
 
-import aiosqlite
+from psycopg import AsyncConnection
 
 from src.schemas.model_config import ModelConfig, ModelInfo, ProviderWithModels
 
@@ -54,37 +57,35 @@ _DEFAULT_PROVIDERS: list[dict] = [
 
 
 def _now_iso() -> str:
-    """当前 UTC 时间（ISO 格式，与 repository.py 同约定）。"""
+    """当前 UTC 时间（ISO 格式，与 session_repo 同约定）。"""
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
 
 
-async def seed_defaults(conn: aiosqlite.Connection) -> None:
+async def seed_defaults(conn: AsyncConnection) -> None:
     """首次启动填充默认厂商与模型（providers 表非空则跳过）。
 
     Args:
-        conn: 已初始化 schema 的 SQLite 连接
+        conn: PG 连接（schema 已就绪，连接层借出）
 
     Raises:
-        aiosqlite.Error: 写入失败
+        psycopg.Error: 写入失败
     """
-    row = await conn.execute("SELECT COUNT(*) AS n FROM providers")
-    async with row as cur:
-        found = (await cur.fetchone())["n"]
+    count_cur = await conn.execute("SELECT COUNT(*) AS n FROM providers")
+    found = (await count_cur.fetchone())["n"]
     if found:
         return
 
     now = _now_iso()
     for i, p in enumerate(_DEFAULT_PROVIDERS):
-        cur = await conn.execute(
+        provider_cur = await conn.execute(
             """INSERT INTO providers
                (slug, name, base_url, api_key_env, is_active, sort_order, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 1, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, 1, %s, %s, %s) RETURNING id""",
             (p["slug"], p["name"], p["base_url"], p["api_key_env"], i, now, now),
         )
-        provider_id = cur.lastrowid
-        assert provider_id is not None
+        provider_id = (await provider_cur.fetchone())["id"]
         for j, model_spec in enumerate(p["models"]):
             model_name = model_spec["name"] if isinstance(model_spec, dict) else model_spec
             in_price = model_spec.get("input_price", 0.0) if isinstance(model_spec, dict) else 0.0
@@ -93,7 +94,7 @@ async def seed_defaults(conn: aiosqlite.Connection) -> None:
                 """INSERT INTO models
                    (provider_id, name, is_default, is_active, sort_order,
                     input_price, output_price, created_at, updated_at)
-                   VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, 1, %s, %s, %s, %s, %s)""",
                 # 真实单价（元/千 token，2026-08-12 预填官方定价；厂商调价时改 _DEFAULT_PROVIDERS）
                 (provider_id, model_name, 1 if j == 0 else 0, j, in_price, out_price, now, now),
             )
@@ -101,12 +102,12 @@ async def seed_defaults(conn: aiosqlite.Connection) -> None:
 
 
 async def update_model_price(
-    conn: aiosqlite.Connection, model_id: int, input_price: float, output_price: float
+    conn: AsyncConnection, model_id: int, input_price: float, output_price: float
 ) -> bool:
     """更新模型单价（2026-08-12 成本评审 2.3：用户自定义模型成本核算入口）。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         model_id: 模型 ID
         input_price: 输入单价（元/千 token）
         output_price: 输出单价（元/千 token）
@@ -115,15 +116,15 @@ async def update_model_price(
         True=更新成功；False=模型不存在
     """
     cur = await conn.execute(
-        """UPDATE models SET input_price = ?, output_price = ?, updated_at = ?
-           WHERE id = ?""",
+        """UPDATE models SET input_price = %s, output_price = %s, updated_at = %s
+           WHERE id = %s""",
         (input_price, output_price, _now_iso(), model_id),
     )
     await conn.commit()
     return cur.rowcount > 0
 
 
-def _row_to_model(row: aiosqlite.Row) -> ModelInfo:
+def _row_to_model(row: dict) -> ModelInfo:
     """providers/models 联查行 → ModelInfo（含单价，2026-08-12 F1）。"""
     return ModelInfo(
         id=row["model_id"],
@@ -148,11 +149,11 @@ ORDER BY p.sort_order, m.sort_order
 """
 
 
-async def list_providers_with_models(conn: aiosqlite.Connection) -> list[ProviderWithModels]:
+async def list_providers_with_models(conn: AsyncConnection) -> list[ProviderWithModels]:
     """全量厂商 + 模型（公开视图：不含 base_url/api_key_env 密钥字段）。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
 
     Returns:
         厂商列表（含各自模型），无数据时为空列表
@@ -178,11 +179,11 @@ async def list_providers_with_models(conn: aiosqlite.Connection) -> list[Provide
     return [providers[pid] for pid in order]
 
 
-async def list_model_configs(conn: aiosqlite.Connection) -> list[ModelConfig]:
+async def list_model_configs(conn: AsyncConnection) -> list[ModelConfig]:
     """全量模型完整配置（内部视图：含 base_url/api_key_env，仅供注册表）。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
 
     Returns:
         模型配置列表（按 provider sort_order + model sort_order）

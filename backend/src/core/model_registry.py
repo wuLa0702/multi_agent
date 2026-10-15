@@ -30,13 +30,13 @@ class ModelRegistry:
         self._models_by_id: dict[int, ModelConfig] = {}
         self._loaded = False
 
-    # ── 加载/重置（async：读 SQLite）──
+    # ── 加载/重置（async：读 PostgreSQL）──
 
     async def load(self, conn) -> None:
         """全量重载：seed（幂等）→ 读取 → 重建缓存。
 
         Args:
-            conn: 已初始化 schema 的 SQLite 连接
+            conn: 已初始化 schema 的 PG 连接（连接层借出）
 
         Raises:
             ConfigError: 缓存重建后无任何可用模型

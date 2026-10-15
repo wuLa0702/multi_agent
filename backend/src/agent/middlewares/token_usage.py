@@ -79,25 +79,21 @@ class TokenUsageMiddleware(AgentMiddleware):
 
 
 async def _save_context_used(session_id: str, used: int, total: int) -> None:
-    """把用量写入 sessions 表（连接自开自关，避开请求连接生命周期）。"""
-    from src.core import db as core_db
+    """把用量写入 sessions 表（从连接池借还，避开请求连接生命周期）。"""
+    from src.db import connection as db_conn
 
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         await conn.execute(
-            "UPDATE sessions SET context_used = ? WHERE id = ?",
+            "UPDATE sessions SET context_used = %s WHERE id = %s",
             (min(used, total), session_id),
         )
-        await conn.commit()
-    finally:
-        await conn.close()
 
 
 async def _get_previous_used(conn, session_id: str) -> int:
     """读 sessions.context_used 旧值（本轮增量差量起点）。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         session_id: 会话 ID
 
     Returns:
@@ -118,11 +114,10 @@ async def _log_cost_for_round(session_id: str, model_id: int | None, used: int) 
         model_id: 模型 ID（None → 默认模型）
         used: 执行后全量 context_used
     """
-    from src.core import db as core_db
+    from src.db import connection as db_conn
     from src.core.model_registry import get_registry
 
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         prev = await _get_previous_used(conn, session_id)
         delta = max(used - prev, 0)
         if delta <= 0:
@@ -139,8 +134,6 @@ async def _log_cost_for_round(session_id: str, model_id: int | None, used: int) 
         )
         await conn.commit()
         await _check_cost_alert(conn, session_id)
-    finally:
-        await conn.close()
 
 
 def _resolve_model_config(model_id: int | None):
@@ -176,7 +169,7 @@ async def _check_cost_alert(conn, session_id: str) -> None:
     底层函数，按规范豁免（通用统计封装）。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         session_id: 会话 ID
     """
     from src.core.config import settings

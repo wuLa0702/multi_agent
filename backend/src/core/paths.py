@@ -56,15 +56,6 @@ def get_log_dir() -> Path:
     base.mkdir(parents=True, exist_ok=True)
     return base
 
-def get_db_path() -> Path:
-    """SQLite 数据库文件路径（长期记忆）。"""
-    if settings.db_path and settings.db_path != "./data/wiki.db":
-        p = Path(settings.db_path)
-    else:
-        p = get_app_dir() / "wiki.db"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
-
 def get_workspace_dir() -> Path:
     """沙箱/任务工作目录：云端 /data/workspace，本地 {项目根}/data/workspace。"""
     base = get_app_dir() / "workspace"
@@ -82,18 +73,6 @@ def get_skill_md_dir() -> Path:
     base = get_skills_dir() / "skill_md"
     base.mkdir(parents=True, exist_ok=True)
     return base
-
-def get_checkpointer_path() -> Path:
-    """Checkpointer 数据库路径（P0 断点持久化）：data/checkpoints.db，父目录自动创建。"""
-    p = get_app_dir() / "checkpoints.db"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
-
-def get_store_path() -> Path:
-    """Store 记忆数据库路径（P1 语义记忆）：data/store.db，父目录自动创建。"""
-    p = get_app_dir() / "store.db"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
 
 def get_memory_dir() -> Path:
     """记忆文件目录（v2.0 /memories/ 路由）：data/memory/，父目录自动创建。"""
@@ -151,14 +130,6 @@ def get_eval_report_dir() -> Path:
     base = get_app_dir() / "eval" / "reports"
     base.mkdir(parents=True, exist_ok=True)
     return base
-
-
-# ── 数据库文件名（集中维护——main_agent 测试注入场景/tests 断言拼同名文件）──
-# 2026-08-06 结构优化：文件名散落 main_agent + 3 个测试文件，统一收敛常量，
-# 文件名改名只改本处（文件名联动纪律，见计划-后端结构优化实施 T4）。
-
-CHECKPOINTER_DB_FILE = "checkpoints.db"
-STORE_DB_FILE = "store.db"
 
 
 def get_notifications_log() -> Path:

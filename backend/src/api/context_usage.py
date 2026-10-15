@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from src.agent.middlewares.token_usage import DEFAULT_CONTEXT_WINDOW
-from src.core import db as core_db
+from src.db import connection as db_conn
 
 router = APIRouter(prefix="/v1/context-usage", tags=["context-usage"])
 
@@ -23,14 +23,11 @@ async def get_context_usage(session_id: str = Query(..., description="会话 ID"
         {"session_id": ..., "used": int, "total": int, "percent": float}
         used 为 TokenUsageMiddleware 上次图执行后落库的累计值；未执行过为 0
     """
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         cursor = await conn.execute(
-            "SELECT context_used FROM sessions WHERE id = ?", (session_id,)
+            "SELECT context_used FROM sessions WHERE id = %s", (session_id,)
         )
         row = await cursor.fetchone()
-    finally:
-        await conn.close()
 
     if row is None:
         raise HTTPException(status_code=404, detail={

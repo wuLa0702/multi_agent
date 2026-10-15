@@ -20,7 +20,7 @@
 - agent 单例复用：编译图无状态（无 checkpointer），进程内只构建一次
 - 每次模型调用经 _configurable_model middleware 按 ChatContext.model_id 选模型
   （request.override(model=...) 只替换本次调用，不动 agent 本体）
-- 模型配置真相源 = SQLite（providers/models 表，lifespan 加载进注册表）；
+- 模型配置真相源 = PostgreSQL（providers/models 表，lifespan 加载进注册表）；
   请求不带 model_id → 默认模型
 """
 
@@ -53,14 +53,7 @@ from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
 from src.core.backend import create_backend
 from src.core.config import settings
-from src.core.paths import (
-    get_checkpointer_path,
-    get_memory_sources,
-    get_skill_md_dir,
-    get_store_path,
-    CHECKPOINTER_DB_FILE,
-    STORE_DB_FILE,
-)
+from src.core.paths import get_memory_sources, get_skill_md_dir
 from src.core.permissions import build_main_permissions
 from src.llm.adapter import get_chat_model
 from src.tools.channels.mcp_client import get_mcp_client_manager
@@ -194,16 +187,19 @@ _agents_lock = threading.Lock()  # 双重检查锁（会话维度）：防止并
 # 会话缓存上限（单机单用户场景 32 个并发会话足够；compile 是纯内存操作）
 _AGENT_CACHE_MAX = 32
 
-# Checkpointer（P0 断点持久化，2026-08-04）：
-# ⚠️ 实测修正（评审方式 A 需适配 async）：sync SqliteSaver 在 async astream 下
-# 静默失败（langgraph 3.x async 执行路径要求 AsyncSqliteSaver/aiosqlite）。
-# 正确架构：AsyncSqliteSaver 由 **lifespan 管理生命周期**（与 Redis 连接池同模式）——
+# Checkpointer（P0 断点持久化，2026-08-04；2026-10-15 PG 迁移）：
+# ⚠️ 实测修正（评审方式 A 需适配 async）：sync Saver 在 async astream 下
+# **静默失败**（langgraph 3.x async 执行路径要求 Async* 版本）。这条教训随
+# SQLite → PG 一并沿用——必须 AsyncPostgresSaver。
+# 正确架构：Checkpointer 由 **lifespan 管理生命周期**（与 Redis 连接池同模式）——
 # main.py 启动时 await init_checkpointer()，关闭时 close_checkpointer()。
 # 未初始化（测试/脚本未跑 lifespan）→ 构建不带 checkpointer，降级无断点模式。
-_checkpointer: AsyncSqliteSaver | None = None
+_checkpointer = None
 
-# 对话流并发限流（计划文档 C.1-2）：单机多浏览器并发对话同时断点落库
-# 会触发 SQLite 写锁，Semaphore 限制同时执行的流数量，超出排队。
+# 对话流并发限流（计划文档 C.1-2）：原为「单机多浏览器并发对话同时写
+# SQLite 断点会撞写锁」而设，Semaphore 限制同时执行的流数量，超出排队。
+# ⚠️ 2026-10-15 PG 迁移：PG 支持真正并发写，该前提已消失；取值暂不动
+# （见 core/config.py::stream_concurrency 注释），后续按实测再调。
 # 2026-08-10 拍板：硬编码 4 → settings.stream_concurrency（本地 .env.dev=10，
 # 云端 .env.prod=2，环境保存可调）。
 # 2026-08-11 决策 #3：模块级固定值 → 函数工厂（惰性创建，settings 变化可重建，
@@ -229,33 +225,35 @@ def get_stream_semaphore() -> asyncio.Semaphore:
     return _stream_semaphore
 
 
-async def init_checkpointer(db_path=None) -> None:
+async def init_checkpointer(dsn=None, *, search_path=None) -> None:
     """初始化断点持久化（lifespan 启动调用，幂等）。
 
-    AsyncSqliteSaver + aiosqlite 连接（async 执行路径必需）：
-    - WAL + busy_timeout=5000：缓解并发写锁（计划文档 C.1-1）
+    AsyncPostgresSaver + 独立 PG 连接（async 执行路径必需）：
+    - 连接参数照 langgraph 官方约定（autocommit + prepare_threshold=0 + dict_row）
+    - 断点表建在 pg_langgraph_schema（与业务表同库不同 schema，隔离关注点）
     - 连接生命周期跟随进程（与 core/redis.py 同模式）
 
     Args:
-        db_path: 覆盖数据库路径（测试隔离用 tmp；缺省 data/checkpoints.db）
+        dsn: 覆盖连接串（测试隔离用；缺省 settings.pg_dsn）
+        search_path: 覆盖 schema（测试「每用例独立 schema」用；
+            缺省 settings.pg_langgraph_schema）
     """
     global _checkpointer
     if _checkpointer is not None:
         return
-    import aiosqlite
-    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from psycopg.rows import dict_row
 
-    # ⚠️ 修复（2026-08-04 浏览器实测发现）：不能用 hasattr(__truediv__) 判断
-    # 目录——Path 文件也有 __truediv__，会把 get_checkpointer_path() 的完整
-    # 文件路径误拼成 .../checkpoints.db/checkpoints.db（unable to open）。
-    # 正确判断：is_dir()（仅存在的目录为 True，如测试传 tmp_path）。
-    target = db_path if db_path is not None else get_checkpointer_path()
-    if db_path is not None and db_path.is_dir():
-        target = db_path / CHECKPOINTER_DB_FILE
-    conn = await aiosqlite.connect(str(target))
-    await conn.execute("PRAGMA journal_mode=WAL")
-    await conn.execute("PRAGMA busy_timeout=5000")
-    _checkpointer = AsyncSqliteSaver(conn)
+    from src.db import connection as db_conn
+
+    conn = await db_conn.connect_with_schema(
+        dsn,
+        search_path=search_path or settings.pg_langgraph_schema,
+        autocommit=True,
+        prepare_threshold=0,
+        row_factory=dict_row,
+    )
+    _checkpointer = AsyncPostgresSaver(conn)
     await _checkpointer.setup()
 
 
@@ -335,7 +333,7 @@ async def delete_thread_checkpoints(thread_id: str) -> bool:
         return False
 
 
-# Store 长期记忆（P1，2026-08-04）：SqliteStore 持久化（评审选型拍板），
+# Store 长期记忆（P1，2026-08-04；2026-10-15 PG 迁移 → PostgresStore），
 # 生命周期由 lifespan 管理（与 checkpointer 同模式）；未初始化 → 降级无记忆。
 _store = None
 
@@ -345,28 +343,36 @@ def get_store():
     return _store
 
 
-async def init_store(db_path=None) -> None:
+async def init_store(dsn=None, *, search_path=None) -> None:
     """初始化记忆存储（lifespan 启动调用，幂等）。
 
-    ⚠️ 实测修正（同 Checkpointer 教训）：SqliteStore 不支持 async 方法
-    （aput/asearch 抛 NotImplementedError），async 执行路径必须用
-    AsyncSqliteStore（aiosqlite 连接）。
+    AsyncPostgresStore + 独立 PG 连接：
+    - ⚠️ 实测修正（同 Checkpointer 教训）：Store 的 sync 版不支持 async 方法
+      （aput/asearch 抛 NotImplementedError），async 执行路径必须用 Async* 版
+    - 记忆表建在 pg_langgraph_schema（与业务表同库不同 schema）
+    - 连接参数照 langgraph 官方约定（autocommit + prepare_threshold=0 + dict_row）
+
+    Args:
+        dsn: 覆盖连接串（测试隔离用；缺省 settings.pg_dsn）
+        search_path: 覆盖 schema（测试「每用例独立 schema」用；
+            缺省 settings.pg_langgraph_schema）
     """
     global _store
     if _store is not None:
         return
-    import aiosqlite
-    from langgraph.store.sqlite.aio import AsyncSqliteStore
+    from langgraph.store.postgres.aio import AsyncPostgresStore
+    from psycopg.rows import dict_row
 
-    target = db_path if db_path is not None else get_store_path()
-    if db_path is not None and db_path.is_dir():  # 传目录（tmp_path）→ 拼 store.db
-        target = db_path / STORE_DB_FILE
-    # isolation_level=None：autocommit 连接——AsyncSqliteStore 内部自行管理事务，
-    # 默认 isolation 会触发 "cannot start a transaction within a transaction"
-    conn = await aiosqlite.connect(str(target), isolation_level=None)
-    await conn.execute("PRAGMA journal_mode=WAL")
-    await conn.execute("PRAGMA busy_timeout=5000")
-    _store = AsyncSqliteStore(conn)
+    from src.db import connection as db_conn
+
+    conn = await db_conn.connect_with_schema(
+        dsn,
+        search_path=search_path or settings.pg_langgraph_schema,
+        autocommit=True,
+        prepare_threshold=0,
+        row_factory=dict_row,
+    )
+    _store = AsyncPostgresStore(conn)
     await _store.setup()
 
 
@@ -466,12 +472,12 @@ def _build_agent(thread_id: str):
         # （v2.0：SkillsMiddleware 经 backend 读文件，虚拟路径路由到
         # data/skills/skill_md——真实路径会被 virtual_mode 越权拒绝）
         skills=["/skills/market/"],
-        # Checkpointer（P0 断点持久化）：AsyncSqliteSaver 由 lifespan
+        # Checkpointer（P0 断点持久化）：AsyncPostgresSaver 由 lifespan
         # 初始化（init_checkpointer）；未初始化（测试/脚本）→ 不传，
         # 降级无断点模式。astream 必须带 thread_id（stream_agent_tokens
         # 内部封装），否则直接报错
         checkpointer=_checkpointer,
-        # Store 长期记忆（P1）：SqliteStore 由 lifespan 初始化（init_store）；
+        # Store 长期记忆（P1）：AsyncPostgresStore 由 lifespan 初始化（init_store）；
         # 未初始化 → 降级无记忆。记忆注入/写入在 chat.py（memory_store 封装）
         store=_store,
         # 文件记忆（记忆体系 v3）：AGENTS.md 单文件全量注入（官方
@@ -681,7 +687,7 @@ async def stream_agent_events(
     config = _build_stream_config(context, checkpoint_id, hitl_callback)
     session_id = context.session_id if context else None  # 修订计数定位（v1.2）
     seq = 0
-    async with get_stream_semaphore():  # 并发限流：SQLite 写锁缓解
+    async with get_stream_semaphore():  # 并发限流：同时执行的流数量上限
         interrupted = None
         # 审批恢复（P0 设计 §5.4）：graph_input 为 Command(resume=...) 时直接作
         # astream_events 输入（§3.3-① 实证可行）；否则默认 {"messages": messages}
@@ -834,7 +840,7 @@ async def stream_agent_tokens(
         if checkpoint_id:
             config["configurable"]["checkpoint_id"] = checkpoint_id
 
-    async with get_stream_semaphore():  # 并发限流：SQLite 写锁缓解
+    async with get_stream_semaphore():  # 并发限流：同时执行的流数量上限
         async for evt in agent.astream_events(
             {"messages": messages}, version="v2", context=context, config=config
         ):

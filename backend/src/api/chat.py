@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
+import psycopg
 from fastapi import APIRouter, HTTPException
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -36,7 +36,7 @@ from src.agent.main_agent import (
     stream_agent_events,
     stream_agent_tokens,
 )
-from src.core import db as core_db
+from src.db import connection as db_conn
 from src.core.config import settings
 from src.core.errors import RetryableError
 from src.core.constants import PAGINATION_LIMIT_MAX
@@ -166,29 +166,39 @@ def _validate_request(req: ChatStreamRequest) -> None:
 async def _append_message_safe(conn, msg) -> None:
     """消息落库容错（矩阵：落库失败降级不阻断，响应正常）。
 
-    SQLite 瞬时错误（busy/locked）或外键失败（会话未持久化=内存模式）→
-    跳过落库记日志告警（消息不持久化，但对话继续）。
+    PG 瞬时错误（死锁/序列化失败，属 OperationalError 家族——对应旧 SQLite
+    busy/locked）或外键失败（会话未持久化=内存模式）→ 跳过落库记日志告警
+    （消息不持久化，但对话继续）。
+
+    ⚠️ 2026-10-15 PG 迁移（实测踩坑）：PG 与 SQLite 语义不同——**一条语句失败即
+    把整个事务置为 aborted，后续语句一律抛 InFailedSqlTransaction 直到 rollback**。
+    故捕获后**必须回滚**，否则降级路径看似"跳过落库继续"，实际后续查库全炸、
+    SSE 断流（本坑由 test_chat_resilience 降级用例抓出）。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         msg: Message 实体（session_id/role/content）
     """
     from src.db import session_repo as repo
 
     try:
         await repo.append_message(conn, msg)
-    except (sqlite3.OperationalError, sqlite3.IntegrityError, RetryableError) as exc:
+    except (psycopg.OperationalError, psycopg.IntegrityError, RetryableError) as exc:
+        await conn.rollback()  # 清掉 aborted 事务，恢复连接可用（见 docstring 说明）
         logger.warning("消息落库失败（降级内存，未持久化）：role=%s %s", msg.role, exc)
 
 
 async def _create_session_with_retry(conn, session_id: str) -> None:
-    """会话落库（容错矩阵：SQLite 瞬时错误重试 1 次，仍失败降级内存，不阻断）。
+    """会话落库（容错矩阵：PG 瞬时错误重试 1 次，仍失败降级内存，不阻断）。
 
     计划-容错处理 v1.2 §3.3：会话落库失败 → 重试 1 次 → 降级内存会话
     （仅本次请求降级，后续消息继续尝试落库；失败记日志告警）。
 
+    ⚠️ 重试前必须 `rollback()`：PG 失败语句会 aborted 整个事务，不重置则重试
+    必然抛 InFailedSqlTransaction（同 `_append_message_safe`，2026-10-15 实测）。
+
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         session_id: 新会话 ID
     """
     from src.db import session_repo as repo
@@ -197,7 +207,8 @@ async def _create_session_with_retry(conn, session_id: str) -> None:
         try:
             await repo.create_session(conn, session_id)
             return
-        except (sqlite3.OperationalError, RetryableError) as exc:
+        except (psycopg.OperationalError, RetryableError) as exc:
+            await conn.rollback()  # 重置 aborted 事务，让重试/后续语句可用
             if attempt == 1:
                 logger.warning("会话落库失败重试（%s）：%s", type(exc).__name__, session_id)
                 continue
@@ -328,13 +339,10 @@ async def _generate_title_in_background(session_id: str, first_message: str) -> 
     if not title:
         return
 
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         from src.db import session_repo as repo
 
         await repo.update_session_title(conn, session_id, title)
-    finally:
-        await conn.close()
 
 
 async def _save_memory_in_background(
@@ -379,7 +387,7 @@ async def _resolve_resume_context(
     Args:
         req: 流式对话请求
         session_id: 会话 ID
-        conn: SQLite 连接（新消息模式组装历史用）
+        conn: PG 连接（新消息模式组装历史用）
 
     Returns:
         (is_resume, resume_input, lc_messages, error_event_dict)：
@@ -540,14 +548,14 @@ async def _fetch_latest_cost_alert(conn, session_id: str) -> dict | None:
     中间件落 cost_alerts 已去重（同阈值一次）；本函数只读最新一条。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         session_id: 会话 ID
 
     Returns:
         SSE data dict（CostAlertEvent 序列化）；无告警 None
     """
     cur = await conn.execute(
-        "SELECT threshold, total_cost FROM cost_alerts WHERE session_id = ? "
+        "SELECT threshold, total_cost FROM cost_alerts WHERE session_id = %s "
         "ORDER BY created_at DESC LIMIT 1",
         (session_id,),
     )
@@ -572,7 +580,7 @@ async def _build_done_event(
     带给前端 store 同步；#4 用量告警（2026-08-05）：>80% 窗口 → 前端提示。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         run_id: 本次 run 的 ID
         session_id: 会话 ID
         started_at: 流开始时间戳（耗时计算）
@@ -582,7 +590,7 @@ async def _build_done_event(
     """
     duration_ms = int((time.monotonic() - started_at) * 1000)
     cur = await conn.execute(
-        "SELECT context_used FROM sessions WHERE id = ?", (session_id,)
+        "SELECT context_used FROM sessions WHERE id = %s", (session_id,)
     )
     row = await cur.fetchone()
     return DoneEvent(
@@ -639,8 +647,7 @@ async def _event_stream(
     只做编排：resume 准备 / start / 事件分发（_emit_agent_events）/ 落库 /
     记忆后台（_trigger_memory_after）/ done（_build_done_event）逐段调用。
     """
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         from src.db import session_repo as repo
 
         _cost_alert_sent = False  # 成本告警 run 内发一次（2026-08-11 成本控制 §5.6）
@@ -711,8 +718,6 @@ async def _event_stream(
 
         # 6. done 事件（流内异常时不发；context_used 查库带前端同步）
         yield {"data": (await _build_done_event(conn, run_id, session_id, started_at)).model_dump_json()}
-    finally:
-        await conn.close()
 
 
 # ── 主接口 ──
@@ -726,11 +731,8 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
     """
     _validate_request(req)
 
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         session_id = await _resolve_session(conn, req)
-    finally:
-        await conn.close()
 
     run_id = str(uuid.uuid4())
     return EventSourceResponse(

@@ -1,10 +1,9 @@
 """FastAPI 入口：lifespan 连接管理 + CORS + 路由注册。
 
-架构（12-backend.md）：api → core → {db, llm, mcp, sandbox}，禁止反向依赖。
-- lifespan 启动：Redis 连接预热（失败不阻断——health 降级标记）
+分层（规则 06 §2）：api → agent → 能力层 → db/，禁止反向依赖。
+- lifespan 启动：PG 连接池 + 建表 + Redis 预热（失败不阻断——health 降级标记）
 - lifespan 启动：模型注册表 + MCP 客户端加载（失败不阻断——降级）
-- lifespan 关闭：释放 Redis 连接池
-- SQLite 惰性按请求开连接（单文件库，无常驻连接）
+- lifespan 关闭：释放 Redis 连接池 / PG 连接池
 - /mcp：ASGI 中间件转发 FastMCP http_app（见 McpMountMiddleware 说明）
 
 启动：uvicorn src.api.main:app --reload --port 8010
@@ -33,7 +32,7 @@ from src.api.sessions import router as sessions_router
 from src.api.settings import router as settings_router
 from src.api.skills import router as skills_router
 from src.api.uploads import router as uploads_router
-from src.core import db as core_db
+from src.db import connection as db_conn
 from src.core.config import settings
 from src.agent.main_agent import (
     close_checkpointer,
@@ -119,6 +118,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001 - 启动预热降级：本地没 Redis 也能起，/v1/health 标记 disconnected
         pass
 
+    # PG 连接池（全项目唯一连接出口）+ 建表：必须最先，后续 checkpointer /
+    # 注册表加载都依赖它（业务表所在 schema 由此建立）
+    await db_conn.init_pool()
+    await db_conn.ensure_schema()
+
     # Checkpointer 断点持久化（P0）+ Store 长期记忆（P1）：生命周期随进程
     await init_checkpointer()
     await init_store()
@@ -130,19 +134,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # FastMCP 要求：父 ASGI 应用执行其 lifespan（初始化 session manager task group）
     async with _mcp_http_app.lifespan(_):
         # 模型注册表 + MCP 客户端：seed + 加载（失败不阻断——降级为仅内部工具）
-        conn = await core_db.get_connection()
         try:
-            await get_registry().load(conn)
-            await get_mcp_client_manager().connect_all(conn)
+            async with db_conn.connection() as conn:
+                await get_registry().load(conn)
+                await get_mcp_client_manager().connect_all(conn)
         except Exception:  # noqa: BLE001 - 加载失败降级：运行时模型回落 .env，agent 仅用内部工具
             logging.exception("注册表/MCP 加载失败——运行时模型回落 .env，agent 仅用内部工具")
-        finally:
-            await conn.close()
 
         yield
     await stop_memory_queue()
     await close_store()
     await close_checkpointer()
+    await db_conn.close_pool()
     await close_redis()
 
 

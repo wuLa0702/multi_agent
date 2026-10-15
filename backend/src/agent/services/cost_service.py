@@ -5,23 +5,17 @@
 
 from __future__ import annotations
 
-from src.core import db as core_db
+from src.db import connection as db_conn
 from src.db import cost_repository
 
 
 async def summary(session_id: str) -> dict:
     """会话成本汇总（聚合 token_cost_ledger）。"""
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         return await cost_repository.summary(conn, session_id)
-    finally:
-        await conn.close()
 
 
 async def list_alerts(session_id: str) -> list[dict]:
     """会话成本告警列表（cost_alerts 表，倒序）。"""
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         return await cost_repository.list_alerts(conn, session_id)
-    finally:
-        await conn.close()

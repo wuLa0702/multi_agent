@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.agent.services import skill_service
-from src.core import db as core_db
+from src.db import connection as db_conn
 from src.tools.channels.mcp_client import get_mcp_client_manager
 
 router = APIRouter(prefix="/v1/mcp-servers", tags=["mcp-servers"])
@@ -74,15 +74,12 @@ def _row_to_out(row) -> McpServerOut:
 @router.get("", response_model=McpServerListResponse)
 async def list_mcp_servers() -> McpServerListResponse:
     """连接配置列表（含手动配置与 Skill Market 安装的）。"""
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         cursor = await conn.execute(
             "SELECT id, name, transport, url, is_active, source, version "
             "FROM mcp_servers ORDER BY sort_order, id"
         )
         rows = await cursor.fetchall()
-    finally:
-        await conn.close()
     items = [_row_to_out(r) for r in rows]
     return McpServerListResponse(items=items, total=len(items))
 
@@ -96,11 +93,8 @@ async def update_mcp_server(server_id: int, req: McpServerUpdateRequest):
 
     # 热刷新（失败不阻断，client 内部有降级）
     try:
-        conn = await core_db.get_connection()
-        try:
+        async with db_conn.connection() as conn:
             await get_mcp_client_manager().reload(conn)
-        finally:
-            await conn.close()
     except Exception:  # noqa: BLE001
         pass
     return {"status": "ok", "id": server_id, "is_active": req.is_active}

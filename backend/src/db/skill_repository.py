@@ -1,14 +1,18 @@
 """数据访问层（DAO）：Skill Market 安装记录 + mcp_servers 来源追踪。
 
-规范（12-backend.md）：与 repository.py 同款——显式 conn、参数化 SQL、
-写操作 commit、aiosqlite.Row；时间统一 UTC ISO 字符串。
+规范（规则 06 §2）：与 session_repo 同款——显式接收连接、参数化 SQL、
+写操作 commit、行由连接层 dict_row 提供（`row["col"]` 取值）；
+时间统一 UTC ISO 字符串。
+
+方言要点（2026-10-15 PG 迁移）：占位符 `?` → `%s`；
+自增主键取回由 `cursor.lastrowid` → `INSERT ... RETURNING id`。
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import aiosqlite
+from psycopg import AsyncConnection
 
 from src.schemas.skill import InstalledSkill
 
@@ -20,7 +24,7 @@ def _now_iso() -> str:
 
 # ── 行 → 模型 ──
 
-def _row_to_installed_skill(row: aiosqlite.Row) -> InstalledSkill:
+def _row_to_installed_skill(row: dict) -> InstalledSkill:
     """DB 行 → InstalledSkill 实体。"""
     return InstalledSkill(
         id=row["id"],
@@ -38,7 +42,7 @@ def _row_to_installed_skill(row: aiosqlite.Row) -> InstalledSkill:
 
 # ── installed_skills CRUD ──
 
-async def list_installed(conn: aiosqlite.Connection) -> list[InstalledSkill]:
+async def list_installed(conn: AsyncConnection) -> list[InstalledSkill]:
     """已安装 Skill 列表（更新时间倒序）。"""
     cursor = await conn.execute(
         "SELECT * FROM installed_skills ORDER BY updated_at DESC"
@@ -47,21 +51,21 @@ async def list_installed(conn: aiosqlite.Connection) -> list[InstalledSkill]:
     return [_row_to_installed_skill(r) for r in rows]
 
 
-async def get_installed(conn: aiosqlite.Connection, skill_id: int) -> InstalledSkill | None:
+async def get_installed(conn: AsyncConnection, skill_id: int) -> InstalledSkill | None:
     """按 ID 查已安装 Skill；不存在返回 None。"""
     cursor = await conn.execute(
-        "SELECT * FROM installed_skills WHERE id = ?", (skill_id,)
+        "SELECT * FROM installed_skills WHERE id = %s", (skill_id,)
     )
     row = await cursor.fetchone()
     return _row_to_installed_skill(row) if row else None
 
 
 async def get_installed_by_source(
-    conn: aiosqlite.Connection, source: str, source_url: str
+    conn: AsyncConnection, source: str, source_url: str
 ) -> InstalledSkill | None:
     """按市场来源查已安装 Skill（幂等安装去重用）。"""
     cursor = await conn.execute(
-        "SELECT * FROM installed_skills WHERE source = ? AND source_url = ?",
+        "SELECT * FROM installed_skills WHERE source = %s AND source_url = %s",
         (source, source_url),
     )
     row = await cursor.fetchone()
@@ -69,7 +73,7 @@ async def get_installed_by_source(
 
 
 async def insert_installed(
-    conn: aiosqlite.Connection,
+    conn: AsyncConnection,
     name: str,
     skill_type: str,
     source: str,
@@ -83,12 +87,13 @@ async def insert_installed(
         """INSERT INTO installed_skills
            (name, skill_type, source, source_url, version, install_path,
             is_active, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s) RETURNING id""",
         (name, skill_type, source, source_url, version, install_path, now, now),
     )
+    inserted = await cursor.fetchone()
     await conn.commit()
     return InstalledSkill(
-        id=cursor.lastrowid,
+        id=inserted["id"] if inserted else None,
         name=name,
         skill_type=skill_type,
         source=source,
@@ -101,28 +106,32 @@ async def insert_installed(
     )
 
 
-async def update_active(conn: aiosqlite.Connection, skill_id: int, is_active: bool) -> bool:
+async def update_active(
+    conn: AsyncConnection, skill_id: int, is_active: bool
+) -> bool:
     """更新启用状态；返回是否命中。"""
     cursor = await conn.execute(
-        "UPDATE installed_skills SET is_active = ?, updated_at = ? WHERE id = ?",
+        "UPDATE installed_skills SET is_active = %s, updated_at = %s WHERE id = %s",
         (int(is_active), _now_iso(), skill_id),
     )
     await conn.commit()
     return cursor.rowcount > 0
 
 
-async def delete_installed(conn: aiosqlite.Connection, skill_id: int) -> bool:
+async def delete_installed(conn: AsyncConnection, skill_id: int) -> bool:
     """删除已安装记录；返回是否命中。"""
-    cursor = await conn.execute("DELETE FROM installed_skills WHERE id = ?", (skill_id,))
+    cursor = await conn.execute(
+        "DELETE FROM installed_skills WHERE id = %s", (skill_id,)
+    )
     await conn.commit()
     return cursor.rowcount > 0
 
 
-async def list_mcp_skill_ids(conn: aiosqlite.Connection, server_id: int) -> list[int]:
+async def list_mcp_skill_ids(conn: AsyncConnection, server_id: int) -> list[int]:
     """查某 MCP server（install_path=server_id）关联的 installed_skills id 列表。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         server_id: mcp_servers.id
 
     Returns:
@@ -130,7 +139,7 @@ async def list_mcp_skill_ids(conn: aiosqlite.Connection, server_id: int) -> list
     """
     cursor = await conn.execute(
         "SELECT id FROM installed_skills "
-        "WHERE skill_type='mcp_server' AND install_path = ?",
+        "WHERE skill_type='mcp_server' AND install_path = %s",
         (str(server_id),),
     )
     rows = await cursor.fetchall()
@@ -140,17 +149,17 @@ async def list_mcp_skill_ids(conn: aiosqlite.Connection, server_id: int) -> list
 # ── mcp_servers 来源追踪 ──
 
 async def get_mcp_server_by_source_url(
-    conn: aiosqlite.Connection, source_url: str
-) -> aiosqlite.Row | None:
+    conn: AsyncConnection, source_url: str
+) -> dict | None:
     """按市场条目 URL 查 mcp_servers 行（幂等安装去重用）。"""
     cursor = await conn.execute(
-        "SELECT * FROM mcp_servers WHERE source_url = ?", (source_url,)
+        "SELECT * FROM mcp_servers WHERE source_url = %s", (source_url,)
     )
     return await cursor.fetchone()
 
 
 async def insert_mcp_server(
-    conn: aiosqlite.Connection,
+    conn: AsyncConnection,
     name: str,
     transport: str,
     url: str,
@@ -172,27 +181,30 @@ async def insert_mcp_server(
         """INSERT INTO mcp_servers
            (name, transport, url, command, args, headers, is_active, sort_order,
             source, source_url, version, installed_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s, %s, 1, 0, %s, %s, %s, %s, %s, %s) RETURNING id""",
         (name, transport, url, command, args, headers, source, source_url, version, now, now, now),
     )
+    inserted = await cursor.fetchone()
     await conn.commit()
-    return cursor.lastrowid
+    return inserted["id"]
 
 
 async def update_mcp_server_active(
-    conn: aiosqlite.Connection, server_id: int, is_active: bool
+    conn: AsyncConnection, server_id: int, is_active: bool
 ) -> bool:
     """更新 mcp_servers 启用状态；返回是否命中。"""
     cursor = await conn.execute(
-        "UPDATE mcp_servers SET is_active = ?, updated_at = ? WHERE id = ?",
+        "UPDATE mcp_servers SET is_active = %s, updated_at = %s WHERE id = %s",
         (int(is_active), _now_iso(), server_id),
     )
     await conn.commit()
     return cursor.rowcount > 0
 
 
-async def delete_mcp_server_by_id(conn: aiosqlite.Connection, server_id: int) -> bool:
+async def delete_mcp_server_by_id(conn: AsyncConnection, server_id: int) -> bool:
     """删除 mcp_servers 行；返回是否命中。"""
-    cursor = await conn.execute("DELETE FROM mcp_servers WHERE id = ?", (server_id,))
+    cursor = await conn.execute(
+        "DELETE FROM mcp_servers WHERE id = %s", (server_id,)
+    )
     await conn.commit()
     return cursor.rowcount > 0

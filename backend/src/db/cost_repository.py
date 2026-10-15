@@ -1,16 +1,16 @@
 """成本仓储（成本控制唯一 SQL 出口，2026-08-11）。
 
-06-structure-optimization §2：db/ 是唯一 SQL 出口——api/agent 禁直接写 SQL。
+规则 06 §2：db/ 是唯一 SQL 出口——api/agent 禁直接写 SQL。
 本 repo 收敛成本流水（token_cost_ledger）与告警（cost_alerts）全部读写。
 
 用途：TokenUsageMiddleware（成本核算落流水/告警）+ api/cost（查询）。
+
+方言要点（2026-10-15 PG 迁移）：占位符 `?` → `%s`。
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import aiosqlite
+from psycopg import AsyncConnection
 
 
 def _now_utc_str() -> str:
@@ -21,7 +21,7 @@ def _now_utc_str() -> str:
 
 
 async def insert_cost_ledger(
-    conn: aiosqlite.Connection,
+    conn: AsyncConnection,
     session_id: str,
     model_id: int,
     input_tokens: int,
@@ -35,20 +35,20 @@ async def insert_cost_ledger(
         """INSERT INTO token_cost_ledger
            (session_id, model_id, input_tokens, output_tokens,
             input_cost, output_cost, total_cost, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
         (session_id, model_id, input_tokens, output_tokens,
          input_cost, output_cost, total_cost, _now_utc_str()),
     )
 
 
-async def sum_session_cost(conn: aiosqlite.Connection, session_id: str) -> float:
+async def sum_session_cost(conn: AsyncConnection, session_id: str) -> float:
     """会话累计成本（告警判定 + summary API）。
 
     Returns:
         累计 total_cost（无记录 → 0.0）
     """
     cur = await conn.execute(
-        "SELECT COALESCE(SUM(total_cost),0) AS tc FROM token_cost_ledger WHERE session_id = ?",
+        "SELECT COALESCE(SUM(total_cost),0) AS tc FROM token_cost_ledger WHERE session_id = %s",
         (session_id,),
     )
     row = await cur.fetchone()
@@ -56,7 +56,7 @@ async def sum_session_cost(conn: aiosqlite.Connection, session_id: str) -> float
 
 
 async def highest_alert_threshold(
-    conn: aiosqlite.Connection, session_id: str
+    conn: AsyncConnection, session_id: str
 ) -> float | None:
     """已告警的最高档位阈值（分级告警去重判定：只对已跨越档位去重）。
 
@@ -67,7 +67,7 @@ async def highest_alert_threshold(
         最高已告警阈值；无告警 → None
     """
     cur = await conn.execute(
-        "SELECT MAX(threshold) AS t FROM cost_alerts WHERE session_id = ?",
+        "SELECT MAX(threshold) AS t FROM cost_alerts WHERE session_id = %s",
         (session_id,),
     )
     row = await cur.fetchone()
@@ -75,7 +75,7 @@ async def highest_alert_threshold(
 
 
 async def insert_cost_alert(
-    conn: aiosqlite.Connection,
+    conn: AsyncConnection,
     session_id: str,
     threshold: float,
     total_cost: float,
@@ -83,7 +83,7 @@ async def insert_cost_alert(
     """写成本告警（软告警落库）。"""
     await conn.execute(
         """INSERT INTO cost_alerts (session_id, threshold, total_cost, message, created_at)
-           VALUES (?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s)""",
         (
             session_id, threshold, total_cost,
             f"会话成本已达 ¥{total_cost:.2f}，超阈值 ¥{threshold:.2f}", _now_utc_str(),
@@ -91,7 +91,7 @@ async def insert_cost_alert(
     )
 
 
-async def summary(conn: aiosqlite.Connection, session_id: str) -> dict:
+async def summary(conn: AsyncConnection, session_id: str) -> dict:
     """会话成本汇总（summary API：token 聚合 + 告警计数）。
 
     Returns:
@@ -100,12 +100,12 @@ async def summary(conn: aiosqlite.Connection, session_id: str) -> dict:
     cur = await conn.execute(
         """SELECT COALESCE(SUM(input_tokens),0) AS it, COALESCE(SUM(output_tokens),0) AS ot,
                   COALESCE(SUM(total_cost),0) AS tc FROM token_cost_ledger
-           WHERE session_id = ?""",
+           WHERE session_id = %s""",
         (session_id,),
     )
     row = await cur.fetchone()
     cur2 = await conn.execute(
-        "SELECT COUNT(*) AS n FROM cost_alerts WHERE session_id = ?", (session_id,)
+        "SELECT COUNT(*) AS n FROM cost_alerts WHERE session_id = %s", (session_id,)
     )
     alert = await cur2.fetchone()
     return {
@@ -116,11 +116,11 @@ async def summary(conn: aiosqlite.Connection, session_id: str) -> dict:
     }
 
 
-async def list_alerts(conn: aiosqlite.Connection, session_id: str) -> list[dict]:
+async def list_alerts(conn: AsyncConnection, session_id: str) -> list[dict]:
     """会话告警列表（倒序）。"""
     cur = await conn.execute(
         "SELECT threshold, total_cost, message, created_at FROM cost_alerts "
-        "WHERE session_id = ? ORDER BY created_at DESC",
+        "WHERE session_id = %s ORDER BY created_at DESC",
         (session_id,),
     )
     rows = await cur.fetchall()

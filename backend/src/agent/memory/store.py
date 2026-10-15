@@ -1,4 +1,4 @@
-"""跨会话记忆读写（P1 Store，SqliteStore 持久化，2026-08-04）。
+"""跨会话记忆读写（P1 Store，PostgresStore 持久化，2026-08-04 / 2026-10-15 PG 迁移）。
 
 写入：对话结束后**先经 LLM 抽取**（extract_memory_fact）——判断这段对话是否有
 长期记忆价值（用户事实/偏好/决策），有则把**抽取的一句话事实**写入全局记忆
@@ -78,7 +78,7 @@ async def save_conversation_memory(store: BaseStore, text: str) -> None:
     不接收对话全文（2026-08-04 修正：防全量对话进记忆库）。
 
     Args:
-        store: langgraph store（lifespan 初始化的 SqliteStore）
+        store: langgraph store（lifespan 初始化的 AsyncPostgresStore）
         text: 已抽取的记忆事实（一句话）
     """
     if store is None:
@@ -169,7 +169,7 @@ async def save_typed_memory(
     """类型化写入（对应 namespace，v3 §8.3；related 为 P3 轻量关联链，v2.1 补齐）。
 
     Args:
-        store: langgraph store（lifespan 初始化的 SqliteStore）
+        store: langgraph store（lifespan 初始化的 AsyncPostgresStore）
         memory_type: user_profile / facts（白名单校验）
         fact: 抽取的一句话事实
         related: 关联的既有记忆内容摘要（P3 轻量关联链——同 namespace

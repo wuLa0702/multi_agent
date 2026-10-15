@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 
 from src.agent.main_agent import rebuild_agent
 from src.agent.services import skill_service
-from src.core import db as core_db
+from src.db import connection as db_conn
 from src.tools.channels.mcp_client import get_mcp_client_manager
 from src.schemas.skill import (
     SKILL_TYPE_MCP,
@@ -47,13 +47,11 @@ async def _refresh_agent_tools() -> None:
     reload 失败不阻断（client 内部已有降级路径）；Agent 重建是纯内存操作。
     连接自开自关（reload 需要读 mcp_servers 表）。
     """
-    conn = await core_db.get_connection()
-    try:
-        await get_mcp_client_manager().reload(conn)
-    except Exception:  # noqa: BLE001 —— 降级：工具热刷新失败不阻断管理操作
-        pass
-    finally:
-        await conn.close()
+    async with db_conn.connection() as conn:
+        try:
+            await get_mcp_client_manager().reload(conn)
+        except Exception:  # noqa: BLE001 —— 降级：工具热刷新失败不阻断管理操作
+            pass
     rebuild_agent()
 
 
@@ -89,13 +87,11 @@ async def install(req: InstallRequest):
                          f"市场详情获取失败：{req.source_url}（无法确定连接地址）")
         item = detail
 
-    conn = await core_db.get_connection()
     try:
-        record = await installer.install_skill(conn, item, force=req.force)
+        async with db_conn.connection() as conn:
+            record = await installer.install_skill(conn, item, force=req.force)
     except ValueError as e:
         raise _error(400, "INSTALL_FAILED", str(e)) from e
-    finally:
-        await conn.close()
 
     await _refresh_agent_tools()
     return record
@@ -111,11 +107,8 @@ async def installed_list() -> InstalledSkillListResponse:
 @router.patch("/{skill_id}")
 async def skill_update(skill_id: int, req: SkillUpdateRequest):
     """启用/停用 Skill（同步 mcp_servers 的 is_active）。"""
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         hit = await installer.toggle_skill(conn, skill_id, req.is_active)
-    finally:
-        await conn.close()
     if not hit:
         raise _error(404, "SKILL_NOT_FOUND", f"Skill 不存在：{skill_id}")
 
@@ -126,11 +119,8 @@ async def skill_update(skill_id: int, req: SkillUpdateRequest):
 @router.delete("/{skill_id}")
 async def skill_delete(skill_id: int):
     """卸载 Skill：删除 DB 记录 + 本地文件 + 触发热刷新。"""
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         hit = await installer.uninstall_skill(conn, skill_id)
-    finally:
-        await conn.close()
     if not hit:
         raise _error(404, "SKILL_NOT_FOUND", f"Skill 不存在：{skill_id}")
 

@@ -16,9 +16,9 @@ import json
 import logging
 import threading
 
-import aiosqlite
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from psycopg import AsyncConnection
 from pydantic import PrivateAttr
 
 logger = logging.getLogger(__name__)
@@ -80,11 +80,11 @@ class McpClientManager:
         self._client: MultiServerMCPClient | None = None
         self._tools: list[BaseTool] = []
 
-    async def connect_all(self, conn: aiosqlite.Connection) -> None:
+    async def connect_all(self, conn: AsyncConnection) -> None:
         """读取 mcp_servers 表 active server → 构建 client → 收集工具。
 
         Args:
-            conn: 已初始化 schema 的 SQLite 连接
+            conn: 已初始化 schema 的 PG 连接（连接层借出）
 
         Raises:
             Exception: 连接/取工具失败（由 lifespan 捕获降级为仅内部工具）
@@ -121,7 +121,7 @@ class McpClientManager:
         self._tools = tools
         logger.info("MCP 客户端已连接 %d 个 server，收集 %d 个工具", len(connections) - len(failed), len(tools))
 
-    async def reload(self, conn: aiosqlite.Connection) -> None:
+    async def reload(self, conn: AsyncConnection) -> None:
         """配置变更后重建连接与工具缓存（管理 API 接入后调用）。"""
         await self.connect_all(conn)
 
@@ -140,12 +140,12 @@ class McpClientManager:
 
     @staticmethod
     async def _load_connections(
-        conn: aiosqlite.Connection,
+        conn: AsyncConnection,
     ) -> dict[str, dict]:
         """mcp_servers 表 → MultiServerMCPClient connections 格式。
 
         Args:
-            conn: SQLite 连接
+            conn: PG 连接
 
         Returns:
             {server_name: {transport, url | command/args, ...}}；无启用 server 时为空 dict

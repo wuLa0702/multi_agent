@@ -44,7 +44,8 @@ export interface DeleteResponse {
 export interface HealthResponse {
   status: "ok" | "degraded";
   redis: "connected" | "disconnected";
-  sqlite: "connected" | "disconnected";
+  /** 数据库探活（2026-10-15 PG 迁移：SQLite → PostgreSQL，字段名不绑实现） */
+  database: "connected" | "disconnected";
   env: string;
 }
 

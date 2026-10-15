@@ -15,8 +15,8 @@ import logging
 import re
 from pathlib import Path
 
-import aiosqlite
 import httpx
+from psycopg import AsyncConnection
 
 from src.core.paths import get_skill_md_dir
 from src.db import skill_repository as repo
@@ -126,14 +126,14 @@ def _auth_headers_for(item: SkillMarketItem) -> str:
 
 
 async def install_skill(
-    conn: aiosqlite.Connection,
+    conn: AsyncConnection,
     item: SkillMarketItem,
     force: bool = False,
 ) -> InstalledSkill:
     """安装市场条目到本地；已安装则幂等跳过（force=True 重新拉取覆盖 = 一键升级）。
 
     Args:
-        conn: SQLite 连接（已初始化 schema）
+        conn: PG 连接（已初始化 schema）
         item: 市场条目（已含连接配置或 git_url）
         force: True 时已存在也先卸载再全新安装（升级路径，复用 uninstall 清理逻辑）
 
@@ -201,11 +201,11 @@ async def install_skill(
     raise ValueError(f"未知 skill_type：{item.skill_type}")
 
 
-async def uninstall_skill(conn: aiosqlite.Connection, skill_id: int) -> bool:
+async def uninstall_skill(conn: AsyncConnection, skill_id: int) -> bool:
     """卸载已安装 Skill：删除 DB 记录 + 本地文件。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         skill_id: installed_skills.id
 
     Returns:
@@ -238,11 +238,11 @@ async def uninstall_skill(conn: aiosqlite.Connection, skill_id: int) -> bool:
     return True
 
 
-async def toggle_skill(conn: aiosqlite.Connection, skill_id: int, is_active: bool) -> bool:
+async def toggle_skill(conn: AsyncConnection, skill_id: int, is_active: bool) -> bool:
     """启用/停用 Skill：同步 installed_skills 与关联 mcp_servers。
 
     Args:
-        conn: SQLite 连接
+        conn: PG 连接
         skill_id: installed_skills.id
         is_active: 目标状态
 
@@ -266,7 +266,7 @@ def install_skill_directory(
     """安装完整技能目录（多文件，Skill 体系方案 §4.1/P1）。
 
     Args:
-        conn: SQLite 连接（install 记录落库）
+        conn: PG 连接（install 记录落库）
         name: 技能名
         files: {相对路径: 内容}——{"SKILL.md": ..., "scripts/build_report.py": ...}
         source: 来源标记（market / builtin）

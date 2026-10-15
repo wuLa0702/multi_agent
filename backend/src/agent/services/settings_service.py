@@ -2,23 +2,17 @@
 
 from __future__ import annotations
 
-from src.core import db as core_db
+from src.db import connection as db_conn
 from src.db import settings_repository
 
 
 async def get_all_settings() -> dict[str, str]:
     """读取全部用户可改配置（key/value）。"""
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         return await settings_repository.get_all(conn)
-    finally:
-        await conn.close()
 
 
 async def upsert_settings(values: dict[str, str]) -> None:
     """批量写入配置（幂等 upsert）。"""
-    conn = await core_db.get_connection()
-    try:
+    async with db_conn.connection() as conn:
         await settings_repository.upsert_many(conn, values)
-    finally:
-        await conn.close()
