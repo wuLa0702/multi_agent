@@ -9,7 +9,10 @@
 | 消费者 | 通道 | 内容 |
 |---|---|---|
 | LLM | `ToolMessage.content` | `render(result)` 的中文文本（不塞 JSON） |
-| 程序（审计 / SSE / 编排） | `ToolMessage.artifact` | `result.data`（结构化旁路） |
+| 程序（审计 / SSE / 编排） | `ToolMessage.artifact` | 结构化信封（`status` / `error_code` / `retryable` / `data`） |
+
+**注意是两个通道、不是多份文档**：审计 / SSE / 编排是三个读者，读的是**同一个**
+`artifact`，各取所需。`artifact` 的构造见 `artifact_of()`。
 
 **为什么必须显式包在最外层**：`response_format` 默认值是 `"content"`，且**不会**
 从返回类型注解推断（`langchain_core/tools/convert.py`）。不声明就直接返回信封，
@@ -61,6 +64,30 @@ def as_lc_tool(fn: Callable[..., ToolResult], *, name: str) -> BaseTool:
     def _entry(*args: Any, **kwargs: Any) -> tuple[str, dict[str, Any]]:
         """执行工具，把 `ToolResult` 拆成 `(content, artifact)` 双通道。"""
         result = fn(*args, **kwargs)
-        return render(result), (result.data or {})
+        return render(result), artifact_of(result)
 
     return tool(name, response_format="content_and_artifact")(_entry)
+
+
+def artifact_of(result: ToolResult) -> dict[str, Any]:
+    """信封 → `artifact`（给审计 / SSE / 编排的结构化旁路）。
+
+    **为什么带上 status / error_code 而不是只放 data**：artifact 是程序侧
+    唯一能看到三态的地方。`ToolMessage.status` 只有 `success` / `error`
+    两级（`langchain_core` 语义），`ok` 与 `degraded` 都被压成 `success`——
+    拿它顶替会丢掉「结果不完整」这个信号。
+
+    Args:
+        result: 工具输出信封
+
+    Returns:
+        含 `status` / `error_code` / `retryable` / `data` 四个键的 dict。
+        `message` 与 `tool` **不重复携带**：前者已由 `render()` 进 `content`，
+        后者即 `ToolMessage.name`。`data` 无内容时为 `None`（如实表达"无结构化载荷"）
+    """
+    return {
+        "status": result.status,
+        "error_code": result.error_code,
+        "retryable": result.retryable,
+        "data": result.data,
+    }

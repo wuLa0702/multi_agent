@@ -72,20 +72,51 @@ class TestDualChannel:
         assert message.content == "code=x max_chars=100 flag=False"
         assert "(" not in message.content  # 元组未被 stringify
 
-    def test_artifact_carries_data(self) -> None:
-        """artifact == `result.data`（结构化旁路，供审计 / SSE / 编排）。"""
+    def test_artifact_carries_full_envelope(self) -> None:
+        """artifact 带 status / error_code / retryable / data 四键（程序侧唯一能看到三态处）。"""
         message = _call(as_lc_tool(_sample, name="sample"), {"code": "x"})
-        assert message.artifact == {"code": "x"}
+        assert message.artifact == {
+            "status": "ok",
+            "error_code": "",
+            "retryable": False,
+            "data": {"code": "x"},
+        }
 
-    def test_artifact_empty_when_no_data(self) -> None:
-        """`data=None` → artifact 归一为空 dict（消费方不必判 None）。"""
+    def test_artifact_keeps_error_semantics(self) -> None:
+        """error 态：错误码与可重试性必须带到 artifact（阶段 2.3 审计 / SSE 靠它）。"""
+
+        def failing(code: str) -> ToolResult:
+            """必失败的示例工具。"""
+            return ToolResult(
+                status="error",
+                message="请求超时",
+                error_code="timeout",
+                retryable=True,
+                tool="failing",
+            )
+
+        artifact = _call(as_lc_tool(failing, name="failing"), {"code": "x"}).artifact
+        assert artifact["status"] == "error"
+        assert artifact["error_code"] == "timeout"
+        assert artifact["retryable"] is True
+        assert artifact["data"] is None
+
+    def test_artifact_data_none_when_absent(self) -> None:
+        """无 data → `artifact["data"] is None`（如实表达「无结构化载荷」，不假装空 dict）。"""
 
         def no_data(code: str) -> ToolResult:
             """无 data 的工具。"""
             return ToolResult(status="ok", message="done", tool="no_data")
 
-        message = _call(as_lc_tool(no_data, name="no_data"), {"code": "x"})
-        assert message.artifact == {}
+        artifact = _call(as_lc_tool(no_data, name="no_data"), {"code": "x"}).artifact
+        assert artifact["data"] is None
+        assert artifact["status"] == "ok"
+
+    def test_artifact_does_not_duplicate_message_or_tool(self) -> None:
+        """`message` / `tool` 不重复携带：前者已在 content，后者即 ToolMessage.name。"""
+        message = _call(as_lc_tool(_sample, name="sample"), {"code": "x"})
+        assert set(message.artifact) == {"status", "error_code", "retryable", "data"}
+        assert message.name == "sample"
 
     def test_status_is_not_tool_status(self) -> None:
         """`ToolMessage.status` 是**执行**状态（success/error），与三态 `status` 不同名同物。
