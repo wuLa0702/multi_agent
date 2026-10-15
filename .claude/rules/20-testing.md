@@ -3,7 +3,7 @@
 ## 结构
 ```
 backend/tests/
-├── conftest.py          # 共享 Fixture（mock LLM / tmp_path / :memory:）
+├── conftest.py          # 共享 Fixture（mock LLM / tmp_path / PG 独立 schema）
 ├── fixtures/            # 共享测试数据
 ├── test_agent/          # Agent 核心：Graph/State/子 Agent
 ├── test_api/            # API：SSE 流式 / 事件协议
@@ -16,7 +16,7 @@ backend/tests/
 ## 原则
 - pytest，禁 unittest；文件名/函数名 `test_` 开头；一个测试一个行为
 - LLM 全部 mock，不实际调 API
-- 文件系统用 `tmp_path`，数据库用 `:memory:`
+- 文件系统用 `tmp_path`，数据库用 compose PG + 每测试独立 schema（`:memory:` 已废弃）
 - 每个测试文件覆盖：正常 / 边界（空、大、特殊字符）/ 错误（越权、不存在）/ LLM 异常（超时、空回复）
 
 ## 多 Agent 专项测试
