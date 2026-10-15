@@ -4,10 +4,19 @@
 **都过同一个 `awrap_tool_call` 钩子**（`ToolCallRequest.tool` 由 LangGraph 的
 `ToolNode` 注入）——一处接入即同时覆盖两条路径，不必分别改造。
 
-**与 langchain 自身校验的分工**：langchain 也会按 `args_schema` 校验，但失败会
-抛 `ValidationError`（可中断 run）；本中间件在**中间件链**上再兜一层，把失败
-转成**工具级错误消息**（`ToolMessage(status="error")`）返回，与项目
-「工具失败降级不中断」（`06-structure-optimization.md` §4）一致。
+**与框架默认行为的关系（2026-10-15 读源码校正）**：LangGraph 的 `ToolNode` **本身
+已经**把入参校验失败兜住了——`args_schema` 抛的 `ValidationError` 在 try 内被包成
+`ToolInvocationError`（`langgraph/prebuilt/tool_node.py:964`），再由默认
+`_default_handle_tool_errors` 转成 `ToolMessage(status="error")`（同文件 `:1006`），
+**run 不会中断**。故本中间件的价值不在"防中断"，而在下列差别：
+
+1. **文案中文化**——框架模板为英文（`Error invoking tool 'x' with kwargs {...}`）
+2. **不回显入参**——框架模板把整个 `tool_kwargs` 写回上下文（长参数 = token 膨胀），
+   本中间件只回 `字段 + 原因`
+3. 本中间件产出的 `ToolMessage` 未设 `name`（框架设了）；当前无消费方读取
+
+**保留理由**（co-creator 2026-10-15 拍板 + 上列收益）：它同时是**跨切面收口点**——
+阶段 3 的脱敏 / 埋点将挂在这里，届时不必再动中间件链。
 
 **中间件顺序**：`[ToolAuditMiddleware(), ToolGatewayMiddleware()]`——
 审计在外层（先记下本次调用，即使被网关拦也留痕），网关在内层（校验 + 可能短路）。

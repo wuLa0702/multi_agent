@@ -12,6 +12,9 @@
 后者是输入/权限本身非法（改对输入就过）。
 
 兼容：`retryable` 属性保留（映射 category=="retryable"），旧代码引用不破。
+
+另含**工具归一错误码** `ToolErrorCode`（阶段 2.1 新增）：工具层不抛异常，
+以错误码随 `ToolResult` 返回，供审计 / SSE / 编排程序化消费。
 """
 
 from __future__ import annotations
@@ -79,3 +82,46 @@ class ConfigError(NonRetryableError):
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code="CONFIG_ERROR")
+
+
+class ToolErrorCode:
+    """工具归一错误码（`设计-工具中心阶段2输出侧-v1.md` §3）。
+
+    与上面的异常类**同源不同层**：异常类负责「抛」，本组错误码负责「装」——
+    工具不抛异常，一律降级返回，错误语义经
+    `tools/result.py::ToolResult.error_code` 传给下游（审计 / SSE / 编排）。
+
+    用常量类而非 `enum.StrEnum`：`error_code` 声明为 `str`，而 StrEnum 成员的
+    `__hash__` 取**成员名**（`TIMEOUT`）而非值（`timeout`），与裸字符串混用做
+    `in frozenset(...)` 判定会静默失配。
+    """
+
+    NOT_CONFIGURED = "not_configured"
+    INVALID_ARG = "invalid_arg"
+    DENIED = "denied"
+    UNPAID = "unpaid"
+    NOT_FOUND = "not_found"
+    RATE_LIMITED = "rate_limited"
+    TIMEOUT = "timeout"
+    UPSTREAM_ERROR = "upstream_error"
+    INTERNAL = "internal"
+
+
+# 可重试错误码（对齐 06 §4：瞬时故障 → 重试 N 次，仍失败降级）
+RETRYABLE_TOOL_ERRORS: frozenset[str] = frozenset({
+    ToolErrorCode.TIMEOUT,
+    ToolErrorCode.RATE_LIMITED,
+    ToolErrorCode.UPSTREAM_ERROR,
+})
+
+
+def is_retryable_tool_error(error_code: str) -> bool:
+    """判断工具错误码是否可重试（供填 `ToolResult.retryable`，免去逐工具手写映射）。
+
+    Args:
+        error_code: `ToolErrorCode` 中的取值
+
+    Returns:
+        可重试错误码 → `True`；未知码 → `False`（拿不准就不重试，宁可降级）
+    """
+    return error_code in RETRYABLE_TOOL_ERRORS
