@@ -135,9 +135,14 @@ class TestErrorPaths:
 
 
 class TestRetry:
-    """重试：瞬时故障重试，耗尽后降级为信封（不再是裸字符串）。"""
+    """重试：瞬时故障重试，耗尽后降级为信封（不再是裸字符串）。
 
-    def test_429_retries_then_recovers(self, monkeypatch) -> None:
+    ⚠️ 阶段 4 批次 3 起，重试包装由**注册表派生**（`registry.RetryPolicy`
+    + `_apply_retry` 的幂等门控），不再挂在本文件对应的实现上——故这里经
+    `derived_tool_fn` 取派生后的函数，断言与改造前逐字一致（行为等价锁）。
+    """
+
+    def test_429_retries_then_recovers(self, monkeypatch, derived_tool_fn) -> None:
         """首次 429 → 重试后成功（瞬时故障重试生效）。"""
         _patch_searchpin(monkeypatch, None)
         _patch_bocha_key(monkeypatch)
@@ -150,15 +155,19 @@ class TestRetry:
             return _pages()
 
         monkeypatch.setattr(search_mod.bocha_client, "search", flaky)
-        result = internet_search("测试查询")
+        result = derived_tool_fn("internet_search")("测试查询")
         assert result.status == "ok"
         assert calls["n"] == 2
 
-    def test_exhausted_returns_tool_result_not_str(self, monkeypatch) -> None:
+    def test_exhausted_returns_tool_result_not_str(
+        self, monkeypatch, derived_tool_fn
+    ) -> None:
         """重试耗尽 → **错误信封**（阶段 2 契约：不再是裸字符串）。
 
         回归锁：改造前此处返回 `str`，会被输出适配层取 `.status` 时
         AttributeError 打崩（自检发现的崩溃路径）。
+        批次 3 换包装位置后此锁依然有效——它锁的是 `RetryPolicy.wrap` 必须
+        注入 `exhausted_result`，漏注入就退回裸字符串、此用例立刻红。
         """
         _patch_searchpin(monkeypatch, None)
         _patch_bocha_key(monkeypatch)
@@ -169,13 +178,13 @@ class TestRetry:
             raise _http_error(429)
 
         monkeypatch.setattr(search_mod.bocha_client, "search", always_429)
-        result = internet_search("测试查询")
+        result = derived_tool_fn("internet_search")("测试查询")
 
         assert isinstance(result, type(search_mod.ToolResult(status="ok", message="")))
         assert result.status == "error"
         assert result.error_code == ToolErrorCode.RATE_LIMITED
         assert result.retryable is True
-        assert calls["n"] == 3, "1 次首发 + 2 次重试 = 3（内层 retries=2）"
+        assert calls["n"] == 3, "1 次首发 + 2 次重试 = 3（retries=2）"
 
 
 class TestMountedTool:

@@ -24,6 +24,7 @@ from datetime import datetime
 
 from langchain.agents.middleware import AgentMiddleware
 
+from src.core.errors import is_retryable_tool_error
 from src.tools.error_map import classify_exception
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,23 @@ _SENSITIVE_TOOLS = {
 }
 # 参数截断上限（防审计行无限膨胀；密钥纪律：超长即截断）
 _MAX_ARGS_LEN = 300
+
+
+def _fallback_for(tool: str) -> str:
+    """查工具的降级备选（登记表 `fallback_to` 声明）。
+
+    **惰性导入**：`registry → impl/*.py → audit`（impl 用本模块的 `security_audit`），
+    模块级导入会成环。
+
+    Args:
+        tool: 工具名
+
+    Returns:
+        备选工具名；无声明/未注册 → 空串
+    """
+    from src.tools.registry import fallback_for
+
+    return fallback_for(tool)
 
 
 def log_security_blocked(tool: str, reason: str) -> None:
@@ -95,15 +113,16 @@ class ToolAuditMiddleware(AgentMiddleware):
     记录字段（扁平 JSON 顶层，与 policy_backend 审计同构）：
     ts / thread_id（取自 runtime.context，同 TokenUsageMiddleware 约定）/
     layer=tool_call / phase（start|end）/ tool / decision=audit /
-    start 行：args（敏感工具脱敏截断）｜end 行：status / error_code / duration_ms
+    start 行：args（敏感工具脱敏截断）｜
+    end 行：status / error_code / duration_ms ＋ **失败时** retryable / fallback_to
     """
 
     async def awrap_tool_call(self, request, handler):
         """执行前记 start 行 → 放行 → 执行后记 end 行（含结果与耗时）。
 
-        `status` / `error_code` 取自工具输出的 **artifact 通道**（阶段 2.2 落地）——
-        这正是 `ToolMessage.status`（只有 success/error）盖不住的三态信息
-        （`ok` 与 `degraded` 都会被它压成 `success`）。
+        `status` / `error_code` / `retryable` 取自工具输出的 **artifact 通道**
+        （阶段 2.2 落地）——这正是 `ToolMessage.status`（只有 success/error）
+        盖不住的三态信息（`ok` 与 `degraded` 都会被它压成 `success`）。
 
         审计任一行写失败都只降级 debug，绝不阻断工具（`_safe_call` 收口）。
         工具抛异常时**先记 end 行再原样抛出**——不吞异常，但把失败留痕。
@@ -114,12 +133,21 @@ class ToolAuditMiddleware(AgentMiddleware):
             result = await handler(request)
         except BaseException as exc:
             # 含 CancelledError（进程被杀/取消）——正属 D2 要留痕的「未完成」情形
+            # 异常路径没有信封 → 可重试性由错误码口径推出（单一真相源）
+            code = classify_exception(exc)
             self._safe_call(
-                self._audit_end, request, "error", classify_exception(exc), started
+                self._audit_end,
+                request,
+                "error",
+                code,
+                is_retryable_tool_error(code),
+                started,
             )
             raise
-        status, error_code = self._outcome_of(result)
-        self._safe_call(self._audit_end, request, status, error_code, started)
+        status, error_code, retryable = self._outcome_of(result)
+        self._safe_call(
+            self._audit_end, request, status, error_code, retryable, started
+        )
         return result
 
     @staticmethod
@@ -147,41 +175,59 @@ class ToolAuditMiddleware(AgentMiddleware):
         audit_logger.info(json.dumps(record, ensure_ascii=False, default=str))
 
     def _audit_end(
-        self, request, status: str, error_code: str, started: float
+        self,
+        request,
+        status: str,
+        error_code: str,
+        retryable: bool,
+        started: float,
     ) -> None:
-        """事后行：三态 + 归一错误码 + 耗时（毫秒）。"""
+        """事后行：三态 + 归一错误码 + 耗时（毫秒）＋ 失败时的可挽回信息。
+
+        `retryable` / `fallback_to` **只在有错误码时写**（阶段 4 批次 3）：
+        排查「这次失败能不能救、该换谁」才用得上它们，调用成功时写了只是噪声。
+        两者此前都是死数据（`ToolResult.retryable` 写了无人读、注册表
+        `fallback_to` 声明了无人读）——本批次接上审计这个真实读者。
+        """
         tool_call = getattr(request, "tool_call", None) or {}
+        tool_name = tool_call.get("name", "")
         record = {
             "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
             "thread_id": self._thread_id_from(request),
             "layer": "tool_call",
             "phase": "end",
-            "tool": tool_call.get("name", ""),
+            "tool": tool_name,
             "decision": "audit",
             "status": status,
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
         if error_code:
             record["error_code"] = error_code
+            record["retryable"] = retryable
+            fallback = _fallback_for(tool_name)
+            if fallback:
+                record["fallback_to"] = fallback
         audit_logger.info(json.dumps(record, ensure_ascii=False, default=str))
 
     @staticmethod
-    def _outcome_of(result) -> tuple[str, str]:
-        """工具结果 → `(status, error_code)`，取自 artifact 结构化通道。
+    def _outcome_of(result) -> tuple[str, str, bool]:
+        """工具结果 → `(status, error_code, retryable)`，取自 artifact 结构化通道。
 
         Args:
             result: 工具执行返回值（通常是 `ToolMessage`）
 
         Returns:
-            `(status, error_code)`；读不到信封时 `("unknown", "")`——
-            **如实记录"读不到"，不拿 `ToolMessage.status` 冒充三态**
+            `(status, error_code, retryable)`；读不到信封时 `("unknown", "", False)`
+            ——**如实记录"读不到"，不拿 `ToolMessage.status` 冒充三态**
             （HITL 中断等场景本就没有信封）
         """
         artifact = getattr(result, "artifact", None)
         if not isinstance(artifact, dict):
-            return "unknown", ""
-        return str(artifact.get("status") or "unknown"), str(
-            artifact.get("error_code") or ""
+            return "unknown", "", False
+        return (
+            str(artifact.get("status") or "unknown"),
+            str(artifact.get("error_code") or ""),
+            bool(artifact.get("retryable")),
         )
 
     def _audit_blocked(self, tool: str, reason: str) -> None:

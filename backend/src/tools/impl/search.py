@@ -17,15 +17,13 @@ from __future__ import annotations
 
 import logging
 import os
-from functools import partial
 
 import httpx
 
 from src.core.config import settings
 from src.core.errors import ToolErrorCode
-from src.core.retry import retry_tool
 from src.tools.error_map import classify_exception
-from src.tools.result import ToolResult, exhausted_result
+from src.tools.result import ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -195,9 +193,9 @@ def _bocha_search(query: str, max_results: int = 5) -> ToolResult:
                 error_code=ToolErrorCode.UNPAID,
                 tool=_TOOL_NAME,
             )
-        raise  # 429/5xx → 可重试，交给 retry_tool
+        raise  # 429/5xx → 可重试，交给注册表的重试包装
     except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError):
-        raise  # 网络瞬时故障 → 交给 retry_tool 重试
+        raise  # 网络瞬时故障 → 交给注册表的重试包装
     except Exception as e:  # noqa: BLE001 —— 其余异常就地降级，不冒泡中断 run
         return ToolResult(
             status="error",
@@ -226,11 +224,6 @@ def _bocha_search(query: str, max_results: int = 5) -> ToolResult:
     )
 
 
-@retry_tool(
-    retries=2,
-    extra_exceptions=(httpx.HTTPStatusError,),
-    on_exhausted=partial(exhausted_result, tool=_TOOL_NAME),
-)
 def internet_search(query: str, max_results: int = 5) -> ToolResult:
     """针对给定查询执行一次网络搜索（Searchpin 默认 → 博查降级）。
 
@@ -238,7 +231,8 @@ def internet_search(query: str, max_results: int = 5) -> ToolResult:
     两者都不可用 → 返回明确降级信息，agent 基于已有知识回答。
 
     失败时返回错误信息给 agent（不抛异常）——工具调用失败不应中断整个 run。
-    网络瞬时故障上抛给 @retry_tool 重试（读操作幂等）；配额/授权类就地降级。
+    网络瞬时故障**上抛**，由注册表派生的重试包装接管（`registry.RetryPolicy`，
+    阶段 4 批次 3 起重试不再写在本文件）；配额/授权类就地降级。
     """
     # 1. Searchpin（默认，免费）——失败/无结果自动降级博查
     pages = searchpin_client.search(query, max_results)

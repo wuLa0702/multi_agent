@@ -36,3 +36,14 @@ def test_get_tool_unknown_name_fails_fast() -> None:
     """未知工具名抛 KeyError（配置错误尽早暴露，不让 agent 带病启动）。"""
     with pytest.raises(KeyError, match="未注册工具"):
         registry.get_tool("nonexistent_tool")
+
+
+def test_fallback_for_reads_declaration() -> None:
+    """fallback_for 读登记表声明（阶段 4 批次 3：审计行据此记"该换谁"）。"""
+    assert registry.fallback_for("internet_search") == "fetch_url"
+
+
+def test_fallback_for_absent_or_unknown_returns_empty() -> None:
+    """未声明 / 未注册 → 空串，**不抛异常**（审计是旁路，查不到不该打断工具）。"""
+    assert registry.fallback_for("fetch_url") == "", "fetch_url 未声明备选"
+    assert registry.fallback_for("nonexistent_tool") == ""

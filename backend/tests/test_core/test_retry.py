@@ -117,31 +117,52 @@ class TestRetryToolAsync:
 
 
 class TestRegistryIntegration:
-    """注册表接入：只包读操作幂等工具（v1.2：run_skill_script 排除）。"""
+    """幂等门控（阶段 4 批次 3）：重试包装由注册表派生，`is_idempotent` 是唯一开关。
 
-    def test_registry_retries_search_and_fetch(self) -> None:
-        """internet_search / fetch_url 包重试；run_skill_script 不包（写操作幂等风险）。"""
-        from src.tools.registry import _IMPL_SPECS
+    改造前，重试参数写在 `impl/search.py` / `impl/fetch.py` 的 `@retry_tool`
+    装饰器上，与登记表的 `is_idempotent` 互不相干（同一件事写两遍）——
+    下面几条把"两边必须一致"从**巧合**变成**结构保证 + 快照**。
+    """
 
-        # 重试挂在**实现层**（_IMPL_SPECS）；对外 TOOL_REGISTRY 的 fn 是挂载形态
-        # BaseTool（阶段 2.2.0 起输出适配包在最外层）——故此处查实现层
-        search = _IMPL_SPECS["internet_search"].fn
-        fetch = _IMPL_SPECS["fetch_url"].fn
-        skill = _IMPL_SPECS["run_skill_script"].fn
-        # wraps 保留 __name__，用 __wrapped__ 判断是否被装饰器包装
-        assert hasattr(search, "__wrapped__")  # 已包重试
-        assert hasattr(fetch, "__wrapped__")  # 已包重试
-        assert not hasattr(skill, "__wrapped__")  # 未包（写操作幂等风险）
+    def test_derived_spec_wraps_retry(self) -> None:
+        """派生结果：配了 retry 的被包装，没配的不被包装。"""
+        from src.tools.registry import _IMPL_SPECS, _apply_retry
 
-    def test_retry_wrapping_matches_idempotent_metadata(self) -> None:
-        """不变量：被包重试的工具 == 元数据标 is_idempotent 的工具（防两处脱节）。"""
+        # `_apply_retry` 的输出即"已包重试"的形态（输出适配在其后、更外层）；
+        # retry_tool 用 functools.wraps → `__wrapped__` 是"被包装过"的判据
+        assert hasattr(_apply_retry(_IMPL_SPECS["internet_search"]).fn, "__wrapped__")
+        assert hasattr(_apply_retry(_IMPL_SPECS["fetch_url"]).fn, "__wrapped__")
+        # run_skill_script 脚本含写操作（build_report.py 写文件）→ 不配重试
+        assert not hasattr(
+            _apply_retry(_IMPL_SPECS["run_skill_script"]).fn, "__wrapped__"
+        )
+
+    def test_retry_declaration_requires_idempotent(self) -> None:
+        """不变量（硬）：配 retry ⟹ 声明 is_idempotent（写操作重试有幂等风险）。"""
         from src.tools.registry import _IMPL_SPECS
 
         for name, spec in _IMPL_SPECS.items():
-            wrapped = hasattr(spec.fn, "__wrapped__")
-            assert wrapped == spec.is_idempotent, (
-                f"{name}：重试包装({wrapped}) 与 is_idempotent({spec.is_idempotent}) 不一致"
-            )
+            if spec.retry is not None:
+                assert spec.is_idempotent, f"{name}：配了 retry 却未声明 is_idempotent"
+
+    def test_retry_config_rejected_on_non_idempotent(self) -> None:
+        """门控真会拦：非幂等工具配 retry → ValueError（fail fast，不静默忽略）。"""
+        from dataclasses import replace
+
+        from src.tools.registry import _IMPL_SPECS, RetryPolicy, _apply_retry
+
+        bad = replace(_IMPL_SPECS["run_skill_script"], retry=RetryPolicy())
+        with pytest.raises(ValueError, match="未声明 is_idempotent"):
+            _apply_retry(bad)
+
+    def test_idempotent_tools_snapshot(self) -> None:
+        """快照：当前幂等工具恰好就是那两个读操作（改动时此断言会红→强制人工确认）。"""
+        from src.tools.registry import _IMPL_SPECS
+
+        assert {n for n, s in _IMPL_SPECS.items() if s.is_idempotent} == {
+            "internet_search",
+            "fetch_url",
+        }
 
 
 class TestOnExhausted:

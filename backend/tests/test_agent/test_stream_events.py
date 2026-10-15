@@ -38,7 +38,13 @@ def _tool_end(name: str, output: str) -> dict:
     return {"event": "on_tool_end", "name": name, "data": {"output": output}}
 
 
-def _tool_end_msg(name: str, status: str, error_code: str = "", content: str = "文本") -> dict:
+def _tool_end_msg(
+    name: str,
+    status: str,
+    error_code: str = "",
+    content: str = "文本",
+    retryable: bool = False,
+) -> dict:
     """真实链路形态的 on_tool_end：output 是带 artifact 信封的 ToolMessage。"""
     return {
         "event": "on_tool_end",
@@ -51,7 +57,7 @@ def _tool_end_msg(name: str, status: str, error_code: str = "", content: str = "
                 artifact={
                     "status": status,
                     "error_code": error_code,
-                    "retryable": False,
+                    "retryable": retryable,
                     "data": None,
                 },
             )
@@ -189,3 +195,25 @@ class TestToolOutcome:
 
         assert out[0]["status"] == "running"
         assert out[0]["result_status"] is None
+
+    async def test_retryable_carried_on_failure(self) -> None:
+        """失败的可重试性上事件（阶段 4 批次 3）——与 error_code 同族的运行时事实。"""
+        out = await _collect(
+            [_tool_end_msg("internet_search", "error", "rate_limited", retryable=True)]
+        )
+
+        assert out[0]["error_code"] == "rate_limited"
+        assert out[0]["retryable"] is True
+
+    async def test_retryable_false_on_success_and_start(self) -> None:
+        """成功与事中恒 False（无失败可言）——形状统一，前端不必判键存在。"""
+        out = await _collect([_tool_start("fetch_url", "{}"), _tool_end_msg("fetch_url", "ok")])
+
+        assert out[0]["retryable"] is False, "事中还没结果"
+        assert out[1]["retryable"] is False, "成功无失败可言"
+
+    async def test_no_envelope_retryable_defaults_false(self) -> None:
+        """无信封（测试替身 / 旧形态）→ retryable False（不猜）。"""
+        out = await _collect([_tool_end("fetch_url", "plain text")])
+
+        assert out[0]["retryable"] is False

@@ -13,15 +13,13 @@
 from __future__ import annotations
 
 import re
-from functools import partial
 from html import unescape
 
 import httpx
 
 from src.core.errors import ToolErrorCode
-from src.core.retry import retry_tool
 from src.tools.error_map import classify_exception, code_for_http_status
-from src.tools.result import ToolResult, exhausted_result
+from src.tools.result import ToolResult
 from src.tools.validators import validate_url
 
 _TOOL_NAME = "fetch_url"
@@ -54,11 +52,6 @@ def clean_html(html: str, max_chars: int | None = _MAX_BODY_CHARS) -> str:
     return text if max_chars is None else text[:max_chars]
 
 
-@retry_tool(
-    retries=2,
-    extra_exceptions=(httpx.HTTPStatusError,),
-    on_exhausted=partial(exhausted_result, tool=_TOOL_NAME),
-)
 def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> ToolResult:
     """受控抓取网页正文（服务端执行，自动过工具审计）。
 
@@ -70,8 +63,9 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> ToolResult:
         `ok` 信封（正文完整）/ `degraded` 信封（正文被截断）/ `error` 信封；
         失败不抛异常（工具降级不中断 run），`data` 带 `{url, text, truncated}`
 
-    P1 容错（2026-08-12 批次2.5 R-4）：网络瞬时故障（超时/连接/5xx）**上抛给
-    @retry_tool 重试**（读操作幂等）——重试耗尽才降级；HTTP 4xx/非法 URL 就地降级。
+    P1 容错（2026-08-12 批次2.5 R-4）：网络瞬时故障（超时/连接/5xx）**上抛**，
+    由注册表派生的重试包装接管（`registry.RetryPolicy`，阶段 4 批次 3 起重试不再
+    写在本文件）——重试耗尽才降级；HTTP 4xx/非法 URL 就地降级。
     """
     from src.core.config import settings  # 超时统一（P1-d）：settings.tool_timeout_seconds
 
@@ -113,7 +107,7 @@ def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> ToolResult:
             tool=_TOOL_NAME,
         )
     except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError):
-        raise  # 网络瞬时故障 → retry_tool 重试
+        raise  # 网络瞬时故障 → 交给注册表的重试包装
     except Exception as exc:  # noqa: BLE001 - 其余网络异常统一降级提示
         return ToolResult(
             status="error",

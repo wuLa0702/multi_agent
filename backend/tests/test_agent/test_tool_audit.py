@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from langchain_core.messages import ToolMessage
 
@@ -130,6 +131,103 @@ class TestTwoLineAudit:
         end = _records(audit_records)[-1]
         assert end["status"] == "unknown"
         assert "error_code" not in end
+
+
+class TestRecoveryHints:
+    """失败行的可挽回信息（阶段 4 批次 3）：`retryable` + `fallback_to`。
+
+    这两个信号此前是**死数据**（`ToolResult.retryable` 写了无人读、注册表
+    `fallback_to` 声明了无人读）——本批次接上审计这个真实读者，故在此立锁。
+    """
+
+    @staticmethod
+    def _failing(name: str, error_code: str, retryable: bool):
+        """造一个"失败信封"的 handler。"""
+
+        async def handler(request):
+            return ToolMessage(
+                content="失败",
+                tool_call_id="tc1",
+                name=name,
+                artifact={
+                    "status": "error",
+                    "error_code": error_code,
+                    "retryable": retryable,
+                    "data": None,
+                },
+            )
+
+        return handler
+
+    async def test_failure_row_carries_retryable_and_fallback(
+        self, audit_records
+    ) -> None:
+        """失败行带可重试性与降级备选（internet_search 声明了 fallback_to）。"""
+        await ToolAuditMiddleware().awrap_tool_call(
+            _make_request("internet_search"),
+            self._failing("internet_search", "rate_limited", True),
+        )
+
+        end = _records(audit_records)[-1]
+        assert end["error_code"] == "rate_limited"
+        assert end["retryable"] is True
+        assert end["fallback_to"] == "fetch_url", "登记表声明 internet_search → fetch_url"
+
+    async def test_not_retryable_is_recorded_as_false(self, audit_records) -> None:
+        """不可重试也要**如实写 False**（缺字段≠False，排查时不能靠猜）。"""
+        await ToolAuditMiddleware().awrap_tool_call(
+            _make_request("internet_search"),
+            self._failing("internet_search", "unpaid", False),
+        )
+
+        assert _records(audit_records)[-1]["retryable"] is False
+
+    async def test_no_fallback_declared_omits_field(self, audit_records) -> None:
+        """未声明降级备选 → 不写该字段（fetch_url 没配 fallback_to）。"""
+        await ToolAuditMiddleware().awrap_tool_call(
+            _make_request("fetch_url"),
+            self._failing("fetch_url", "timeout", True),
+        )
+
+        end = _records(audit_records)[-1]
+        assert end["retryable"] is True
+        assert "fallback_to" not in end
+
+    async def test_success_row_has_no_recovery_hints(self, audit_records) -> None:
+        """成功行不写这两个字段——无失败可挽回，写了只是噪声。"""
+        await ToolAuditMiddleware().awrap_tool_call(
+            _make_request("internet_search"), _fake_handler
+        )
+
+        end = _records(audit_records)[-1]
+        assert "retryable" not in end
+        assert "fallback_to" not in end
+
+    async def test_exception_path_derives_retryable_from_code(self, audit_records) -> None:
+        """异常路径无信封 → 可重试性由错误码口径推出（与信封口径同一真相源）。"""
+        middleware = ToolAuditMiddleware()
+
+        async def timeout(request):
+            raise httpx.TimeoutException("timeout")
+
+        with pytest.raises(httpx.TimeoutException):
+            await middleware.awrap_tool_call(_make_request("fetch_url"), timeout)
+
+        end = _records(audit_records)[-1]
+        assert end["error_code"] == "timeout"
+        assert end["retryable"] is True, "超时属可重试性质"
+
+    async def test_unclassified_exception_is_not_retryable(self, audit_records) -> None:
+        """未识别异常 → internal → retryable=False（不无脑标可重试）。"""
+        middleware = ToolAuditMiddleware()
+
+        async def boom(request):
+            raise RuntimeError("炸了")
+
+        with pytest.raises(RuntimeError):
+            await middleware.awrap_tool_call(_make_request("fetch_url"), boom)
+
+        assert _records(audit_records)[-1]["retryable"] is False
 
 
 class TestFailurePaths:

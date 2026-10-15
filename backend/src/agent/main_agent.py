@@ -535,29 +535,31 @@ def _build_stream_config(
     return config
 
 
-def _tool_outcome(output: Any) -> tuple[str, str | None, str]:
-    """工具输出 → `(生命周期 status, 结果三态, 归一错误码)`（阶段 2.3.2）。
+def _tool_outcome(output: Any) -> tuple[str, str | None, str, bool]:
+    """工具输出 → `(生命周期 status, 结果三态, 归一错误码, 可重试)`（阶段 2.3.2/4 批次 3）。
 
     三态取自工具输出的 **artifact 结构化通道**（阶段 2 双通道落地，
     见 `tools/adapter.py::artifact_of`）——`ToolMessage.status` 只有
     success/error，`degraded` 会被它压成 success，故必须从 artifact 取。
+    `retryable` 同源：它是"这次失败能不能救"的运行时事实（阶段 4 批次 3 接的
+    真实读者，此前写了无人读）。
 
     Args:
         output: `on_tool_end` 的 `data.output`（真实链路为 `ToolMessage`）
 
     Returns:
-        `(status, result_status, error_code)`：
+        `(status, result_status, error_code, retryable)`：
         有信封 → 生命周期按三态映射（`error`→`error`，其余 `completed`），
-        三态与错误码原样带出；无信封（非 ToolMessage，如测试替身）→
-        三态 `None` + 空错误码 + `completed`，**不猜**
+        三态/错误码/可重试原样带出；无信封（非 ToolMessage，如测试替身）→
+        三态 `None` + 空错误码 + `retryable=False` + `completed`，**不猜**
     """
     artifact = getattr(output, "artifact", None)
     if not isinstance(artifact, dict):
-        return "completed", None, ""
+        return "completed", None, "", False
     result_status = artifact.get("status") or None
     error_code = str(artifact.get("error_code") or "")
     lifecycle = "error" if result_status == "error" else "completed"
-    return lifecycle, result_status, error_code
+    return lifecycle, result_status, error_code, bool(artifact.get("retryable"))
 
 
 def _tool_output_text(output: Any) -> str:
@@ -600,6 +602,7 @@ def _dispatch_stream_event(
             # 形状与 on_tool_end 一致（前端不必判键存在）；结果还没出来 → 三态留空
             "result_status": None,
             "error_code": "",
+            "retryable": False,
             "input": _truncate(str(evt.get("data", {}).get("input", ""))),
             "output": None,
             "id": seq,
@@ -608,13 +611,14 @@ def _dispatch_stream_event(
         trace_event(session_id, evt)  # 推理层 trace
         seq += 1
         output = evt.get("data", {}).get("output", "")
-        lifecycle, result_status, error_code = _tool_outcome(output)
+        lifecycle, result_status, error_code, retryable = _tool_outcome(output)
         return seq, {
             "type": "tool_call",
             "tool": evt.get("name", ""),
             "status": lifecycle,
             "result_status": result_status,
             "error_code": error_code,
+            "retryable": retryable,
             "input": "",
             "output": _truncate(_tool_output_text(output)),
             "id": seq,

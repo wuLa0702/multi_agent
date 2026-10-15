@@ -11,18 +11,33 @@
 domain 支撑分层归纳；is_idempotent / fallback_to 支撑重试与降级；
 risk_level / requires_approval 支撑审批；size 支撑大/小工具划分。
 
-**两层结构**（阶段 2.2.0）：`_IMPL_SPECS` 声明「实现 + 重试」，`TOOL_REGISTRY`
-在其上再包一层**输出适配**（`as_lc_tool` → `content_and_artifact`，见
-`docs/决策/2026-10-14-设计-工具中心阶段2输出侧-v1.md`）后作为对外唯一真相源。
+**三层结构**（阶段 4 批次 3 定稿）：
+
+```
+_IMPL_SPECS（人手写）          fn = 裸实现函数
+     │  _apply_retry          ← 幂等门控：is_idempotent 才允许配 retry（否则 fail fast）
+     ▼
+（派生态）                     fn = retry(fn)
+     │  _with_output_adapter  ← as_lc_tool → content_and_artifact
+     ▼
+TOOL_REGISTRY（对外真相源）     fn = 挂载形态 BaseTool
+```
+
+**重试参数也声明在本表**（`RetryPolicy`），不再写在实现文件里——此前
+`impl/search.py` / `impl/fetch.py` 各自挂 `@retry_tool` 装饰器，与这里的
+`is_idempotent` 构成**第三处「同一件事写两遍」**（批次 3 收敛，同批次 2 的审批）。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Literal
+from functools import partial
+from typing import Callable, Literal
 
+import httpx
 from langchain_core.tools import BaseTool
 
+from src.core.retry import DEFAULT_DELAYS, DEFAULT_RETRIES, retry_tool
 from src.tools.adapter import as_lc_tool
 from src.tools.impl.ask_human import ask_human
 from src.tools.impl.fetch import fetch_url
@@ -37,8 +52,54 @@ from src.tools.impl.sandbox import (
 from src.tools.impl.search import internet_search
 from src.tools.impl.skill import run_skill_script
 from src.tools.impl.wiki import write_wiki
+from src.tools.result import exhausted_result
 
 HITL_DOMAIN = "hitl"
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """幂等读操作的自动重试参数（`ToolSpec.retry` 的值类型）。
+
+    **只在 `is_idempotent=True` 时可配**——由 `_apply_retry` 强制（fail fast）；
+    写操作重试有幂等风险（`run_skill_script` v1.2 评审即因此排除）。
+
+    **为什么本类放 registry 而不是 `core/retry.py`**：`wrap()` 要注入
+    `exhausted_result`（`tools/result.py`），而 `core/` 是底座层、禁依赖业务目录
+    （06-structure-optimization §2）——故「策略声明」留在登记表，底座只提供
+    `retry_tool` 机制本身。
+
+    Attributes:
+        retries: 最大重试次数（首发之外）
+        delays: 每次重试的退避秒数
+        extra_exceptions: 该工具额外视为可重试的异常（如 HTTPStatusError——
+            对本工具是瞬时故障，对底座不是通用网络异常）
+    """
+
+    retries: int = DEFAULT_RETRIES
+    delays: tuple[float, ...] = DEFAULT_DELAYS
+    extra_exceptions: tuple[type[Exception], ...] = ()
+
+    def wrap(self, fn: Callable, *, tool: str) -> Callable:
+        """把裸实现函数包成重试版本。
+
+        `on_exhausted` **必须**注入 `exhausted_result`：重试耗尽要返回**错误信封**
+        而非裸字符串——裸字符串会让输出适配层取 `.status` 时 AttributeError
+        打崩 run（阶段 2 自检发现的崩溃路径）。
+
+        Args:
+            fn: 裸实现函数（返回 `ToolResult`）
+            tool: 工具名（耗尽信封的 `tool` 字段，供审计/事件定位）
+
+        Returns:
+            重试包装后的函数（签名与 docstring 经 `functools.wraps` 保留）
+        """
+        return retry_tool(
+            retries=self.retries,
+            delays=self.delays,
+            extra_exceptions=self.extra_exceptions,
+            on_exhausted=partial(exhausted_result, tool=tool),
+        )(fn)
 
 
 @dataclass(frozen=True)
@@ -47,11 +108,13 @@ class ToolSpec:
 
     Attributes:
         name: 工具名（LLM 看到的函数名，全局唯一）
-        fn: 挂载形态 `BaseTool`——由 `_IMPL_SPECS` 经「按需包 retry → 包输出适配
-            （`as_lc_tool`，`content_and_artifact`）」派生，**不是**裸实现函数
+        fn: 两种形态——`_IMPL_SPECS` 里是**裸实现函数**；`TOOL_REGISTRY` 里是
+            **挂载形态 `BaseTool`**（经「幂等门控包 retry → 包输出适配」两级派生）
         domain: 能力域（search / sandbox / file / skill / wiki / report / hitl）
         description: 一句话描述（给 LLM，压缩后）
-        is_idempotent: 幂等性——决定能否自动重试（写操作 False）
+        is_idempotent: 幂等性——重复执行是否安全（写操作 False）。
+            **同时是重试的门控**：`retry` 只允许配在幂等工具上
+        retry: 自动重试参数（None = 不重试）。幂等读操作才配——见 `RetryPolicy`
         risk_level: 风险级（low / medium / high）——审批依据
         size: 粒度（small=可自由编排 / big=强事务整体动作）
         fallback_to: 降级备选工具名（显式声明，不靠猜）
@@ -70,6 +133,7 @@ class ToolSpec:
     domain: str
     description: str
     is_idempotent: bool = False
+    retry: RetryPolicy | None = None
     risk_level: Literal["low", "medium", "high"] = "low"
     size: Literal["small", "big"] = "small"
     fallback_to: str | None = None
@@ -78,37 +142,40 @@ class ToolSpec:
     mount_main: bool = True
 
 
-# ── 实现层声明（fn = 实现函数；重试包装按需在此显式挂）──
-# 重试（计划-容错处理 v1.2）：只包读操作幂等工具——internet_search / fetch_url
-# 是读操作（幂等）→ 瞬时故障重试；run_skill_script 脚本含写操作
-# （build_report.py 写文件）→ 重试幂等风险，排除（v1.2 评审）。
-# 沙箱纯计算工具不包（本地执行无网络瞬时故障）。
+# ── 实现层声明（fn = 裸实现函数；重试由 `retry` 字段声明，包装在派生时生成）──
+# 重试（计划-容错处理 v1.2 + 阶段 4 批次 3）：只包读操作幂等工具——
+# internet_search / fetch_url 是读操作（幂等）→ 瞬时故障重试；
+# run_skill_script 脚本含写操作（build_report.py 写文件）→ 重试幂等风险，排除。
+# 沙箱纯计算工具不配（本地执行无网络瞬时故障）。
+# ⚠️ 批次 3 前，重试参数写在 `impl/search.py` / `impl/fetch.py` 的 `@retry_tool`
+# 装饰器里，与下面的 `is_idempotent` 脱节——现全部收敛到本表。
 #
 # ⚠️ 条目顺序即挂载顺序：`tools_for_main()` 按此顺序返回，须与重构前手写清单一致。
 _IMPL_SPECS: dict[str, ToolSpec] = {
     # ── 搜索域（mount_main=False：仅搜索子代理按 YAML 取用）──
-    # P4 闭环（2026-10-15）：此处原为 `retry_tool()(internet_search)`，与外层
-    # 模块内的 `@retry_tool(retries=2, extra_exceptions=HTTPStatusError)` 构成
-    # 双重包装。实测证明**外层是空转**（内层已把异常吞成降级返回值，外层永不
-    # 触发：探测到博查仅被调用 3 次 = 1 首发 + 2 重试，恰为内层参数）。
-    # 且内层带 HTTP 细节（extra_exceptions），保留内层删外层 = 零行为变更。
+    # 重试参数原写在 `impl/search.py` 的 `@retry_tool(retries=2,
+    # extra_exceptions=HTTPStatusError, on_exhausted=exhausted_result)` 上
+    # （P4 闭环：曾与登记表的外层包装构成双重包装，实测外层空转已删）。
+    # 批次 3 把参数搬到此处——`_apply_retry` 按 `is_idempotent` 门控后生成包装，
+    # 行为逐项等价（retries / delays / extra_exceptions / on_exhausted 全保留）。
     "internet_search": ToolSpec(
         name="internet_search",
         fn=internet_search,
         domain="search",
         description="博查网络搜索：关键词 → 结构化结果（标题/链接/摘要）",
         is_idempotent=True,
+        retry=RetryPolicy(extra_exceptions=(httpx.HTTPStatusError,)),
         fallback_to="fetch_url",
         mount_main=False,
     ),
-    # P4 闭环（2026-10-15，同 internet_search）：删掉外层 `retry_tool()`——
-    # 实测其空转（内层已把异常吞成降级返回值），内层自带 HTTP 细节，零行为变更。
+    # 重试参数同 internet_search（原挂在 impl/fetch.py 的装饰器上）。
     "fetch_url": ToolSpec(
         name="fetch_url",
         fn=fetch_url,
         domain="search",
         description="受控抓取网页正文（搜索发现 + 抓取获取 双工具分工）",
         is_idempotent=True,
+        retry=RetryPolicy(extra_exceptions=(httpx.HTTPStatusError,)),
         mount_main=False,
     ),
     # ── 沙箱域（副作用操作，不可重试，需审批）──
@@ -204,6 +271,31 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
 }
 
 
+def _apply_retry(spec: ToolSpec) -> ToolSpec:
+    """幂等门控：`is_idempotent` 是重试的唯一开关（声明在表，不写在实现里）。
+
+    包装在最内层（先于输出适配）——保持「retry 最内、输出适配最外」的既有层次。
+
+    Args:
+        spec: 实现层声明（`fn` 为裸实现函数）
+
+    Returns:
+        `retry` 为 None → 原样返回；否则 `fn` 换成重试包装后的函数
+
+    Raises:
+        ValueError: 配了 `retry` 却没声明 `is_idempotent`——写操作重试有幂等风险，
+            必须显式声明幂等才允许。**fail fast**：静默忽略等于"配了却不生效"
+    """
+    if spec.retry is None:
+        return spec
+    if not spec.is_idempotent:
+        raise ValueError(
+            f"{spec.name}：配了 retry 但未声明 is_idempotent"
+            "（写操作重试有幂等风险，须显式声明幂等才允许）"
+        )
+    return replace(spec, fn=spec.retry.wrap(spec.fn, tool=spec.name))
+
+
 def _with_output_adapter(spec: ToolSpec) -> ToolSpec:
     """实现函数 → 挂载形态 `BaseTool`（输出适配包在最外层，见 `tools/adapter.py`）。
 
@@ -220,9 +312,11 @@ def _with_output_adapter(spec: ToolSpec) -> ToolSpec:
     return replace(spec, fn=as_lc_tool(spec.fn, name=spec.name))
 
 
-# 对外唯一真相源：键 → 挂载形态（实现 + 重试 + 输出适配）。
+# 对外唯一真相源：键 → 挂载形态（裸实现 → 幂等门控包重试 → 包输出适配）。
+# 派生顺序不可颠倒：retry 必须在最内（耗尽信封是 ToolResult，输出适配才拆得动）。
 TOOL_REGISTRY: dict[str, ToolSpec] = {
-    name: _with_output_adapter(spec) for name, spec in _IMPL_SPECS.items()
+    name: _with_output_adapter(_apply_retry(spec))
+    for name, spec in _IMPL_SPECS.items()
 }
 
 
@@ -241,6 +335,23 @@ def get_tool(name: str) -> BaseTool:
     if name not in TOOL_REGISTRY:
         raise KeyError(f"未注册工具：{name}，可选：{sorted(TOOL_REGISTRY)}")
     return TOOL_REGISTRY[name].fn
+
+
+def fallback_for(name: str) -> str:
+    """查工具的降级备选（登记表 `fallback_to` 声明）；无声明 / 未注册 → 空串。
+
+    **消费方**：审计事后行（工具失败时记下"该换谁"）——`fallback_to` 此前是
+    死数据（声明了无人读）。**本函数只读声明，不执行降级**：真要换工具是编排层
+    的决定（07-tool-center §4），归后续（P11）。
+
+    Args:
+        name: 工具名
+
+    Returns:
+        备选工具名；无则空串（不抛异常——审计是旁路，查不到不应打断）
+    """
+    spec = TOOL_REGISTRY.get(name)
+    return spec.fallback_to if spec is not None and spec.fallback_to else ""
 
 
 def tools_for_main() -> list[BaseTool]:

@@ -227,6 +227,25 @@ def audit_records():
 
 
 @pytest.fixture
+def derived_tool_fn():
+    """取注册表**派生后**的工具实现函数（阶段 4 批次 3）。
+
+    重试包装自批次 3 起由注册表派生（`_apply_retry`），不再写在
+    `impl/search.py` / `impl/fetch.py` 的装饰器上——验重试行为必须走派生链，
+    直接调裸实现是测不到重试的（那是改造前的形态）。
+
+    用法：
+        result = derived_tool_fn("internet_search")("测试查询")
+    """
+    from src.tools.registry import _IMPL_SPECS, _apply_retry
+
+    def _get(name: str):
+        return _apply_retry(_IMPL_SPECS[name]).fn
+
+    return _get
+
+
+@pytest.fixture
 async def seeded_registry(pg_schema):
     """基于本用例 schema 加载默认 seed 的模型注册表（模型 ID 测试用）。
 

@@ -92,14 +92,19 @@ class TestFetchUrl:
         monkeypatch.setattr(httpx, "get", lambda *a, **k: _FakeResp(403, ""))
         assert fetch_url("https://x.com/private").error_code == ToolErrorCode.DENIED
 
-    def test_timeout_exhausted(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """超时 → retry_tool 重试（P1 容错 R-4）→ 耗尽降级为**错误信封**。"""
+    def test_timeout_exhausted(
+        self, monkeypatch: pytest.MonkeyPatch, derived_tool_fn
+    ) -> None:
+        """超时 → 重试（P1 容错 R-4）→ 耗尽降级为**错误信封**。
+
+        ⚠️ 批次 3 起重试由注册表派生（不再挂在实现上）→ 走 `derived_tool_fn`。
+        """
 
         def _raise(*a, **k):
             raise httpx.TimeoutException("timeout")
 
         monkeypatch.setattr(httpx, "get", _raise)
-        result = fetch_url("https://slow.com")
+        result = derived_tool_fn("fetch_url")("https://slow.com")
 
         assert result.status == "error"
         assert result.error_code == ToolErrorCode.TIMEOUT

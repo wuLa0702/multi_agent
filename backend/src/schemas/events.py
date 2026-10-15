@@ -73,11 +73,17 @@ class ToolCallEvent(SSEEvent):
     `degraded`（结果被截断 / 走了兜底）塞不进生命周期字段——调用是"跑完了"的，
     只是结果不完整，故独立一个字段承载。取不到信封时 `result_status=None`（不猜）。
 
+    `retryable`（阶段 4 批次 3）：失败**性质**是否可挽回——属"这次调用发生了什么"
+    的运行时事实，故与 `error_code` 同行；成功时恒 False（无失败可言）。
+    ⚠️ 静态声明（如注册表 `fallback_to`）**不进事件**：那是工具固有属性、不随调用变，
+    放这里等于每次调用重复一个常量，属新增死数据。
+
     Attributes:
         tool: 工具名（如 run_code_in_sandbox）
         status: 生命周期 running / completed / error
         result_status: 工具输出三态 ok / degraded / error（无信封时 None）
         error_code: 归一错误码（`ToolErrorCode`，仅失败时有值）
+        retryable: 失败是否属可重试性质（成功 / 无信封时 False）
         input: 入参截断 ≤300（密钥纪律，同 ToolAudit 脱敏）
         output: 结果截断 ≤300
         id: 事件序号（前端去重/排序）
@@ -91,6 +97,9 @@ class ToolCallEvent(SSEEvent):
         description="工具输出三态（degraded=结果不完整）；无信封时 None",
     )
     error_code: str = Field(default="", description="归一错误码（仅失败时有值）")
+    retryable: bool = Field(
+        default=False, description="失败是否可重试（成功/无信封时 False）"
+    )
     input: str = Field(default="", description="入参（截断 ≤300，脱敏）")
     output: str | None = Field(default=None, description="结果（截断 ≤300）")
     id: int = Field(description="事件序号（流内自增，前端去重/排序）")
