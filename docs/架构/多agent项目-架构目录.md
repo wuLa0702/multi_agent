@@ -6,6 +6,7 @@
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.14 | 2026-10-15 | **§2 工具中心一级收拢**：`tools/` 平铺的 6 个文件收进两个二级目录——`contract/`（`result`·`adapter`·`error_map`，工具"长什么样"）+ `guardrails/`（`validators`·`audit`·`gateway`，进/出边界的约束）；`registry.py` 留一级（门面）。纯移动（`git mv` 保历史）+ 40 处 import 路径同步，**零行为变更**（168 用例绿）|
 > | v2.13 | 2026-10-15 | **§2 目录树对齐实际（工具中心收拢遗留）**：`backend/src/` 子树重写——删去**已不存在的 `mcp/`**（registry/server/http_base/adapters/tools）与 `src/skills/`、`agent/planner·summarizer·approve`、`core/langsmith·security`，改为实际的 `tools/`（registry/adapter/result/error_map/audit/gateway/validators/impl/channels/market）+ `wiki/` + `agent/` 8 子域 + 四层标注；§2 落地状态对照表 4 行更新 + 2 行划删（📦 目录已不存在）＋ 新增 tools/ 与 wiki/ 两行；§2.1 能力表「代码工具」行改为 `tools/impl/` + `tools/registry.py`；**§1 依赖链 1 处 + §5 依赖链 1 处**由 `{mcp, sandbox, memory, db}` 改为 `{tools, wiki, sandbox, memory, db}`；§1 架构图两处过时框同步（前端 Vue3 → React 19；MCP 网关 → 工具中心）；tests/ 分层行补 test_skills/test_tools |
 > | v2.12 | 2026-10-15 | **SQLite → PostgreSQL 全量迁移**（工作单 `docs/决策/2026-10-15-计划-PG迁移-v1.md`）：§2 落地状态对照表 `core/db.py` → **`db/connection.py`**（连接池单例，唯一连接出口）、`db/schema.py · repository.py` 保持；§2.1 能力表「mcp_servers 表（SQLite）」→ PostgreSQL；§3 基础设施新增 `postgres` 服务（pgvector/pgvector:pg16，宿主 5433，业务表 `public` / 断点记忆表 `langgraph` 同库不同 schema）；§6.1 决策 #7 数据库由「Redis + SQLite」改为「**Redis + PostgreSQL（+ pgvector）**」；§5 工程经验「Checkpointer（SQLite）」表述同步 |
 > | v2.11 | 2026-08-12 | §2 落地状态对照表新增 `agent/services/` 数据服务层（2026-08-12 结构重构：api→agent 能力子域→db 跨层收敛，api 禁直调 db/）|
@@ -141,13 +142,15 @@ multi-agent-project/
 │   │   │   ├── subagents/          # 声明式子代理（*.yaml + loader）
 │   │   │   └── tasks/              # 辅助任务（会话标题生成等）
 │   │   ├── tools/                  # 【能力层】工具中心（唯一登记处）
-│   │   │   ├── registry.py         # ToolSpec 登记表：工具是什么的唯一真相源
-│   │   │   ├── adapter.py          # 输出适配：ToolResult → content_and_artifact
-│   │   │   ├── result.py           # ToolResult 三态信封 + LLM 文本渲染
-│   │   │   ├── error_map.py        # 异常 / HTTP 状态 → 归一错误码
-│   │   │   ├── audit.py            # 工具审计（两行制，只审计不拦截）
-│   │   │   ├── gateway.py          # 调度中心中间件（失败回灌 LLM 的摘要口径）
-│   │   │   ├── validators.py       # 否定禁止校验（路径/URL 收口）
+│   │   │   ├── registry.py         # ToolSpec 登记表：工具是什么的唯一真相源（门面，留一级）
+│   │   │   ├── contract/           # 契约（工具"长什么样"）
+│   │   │   │   ├── result.py       #   ToolResult 三态信封 + LLM 文本渲染
+│   │   │   │   ├── adapter.py      #   输出适配：ToolResult → content_and_artifact
+│   │   │   │   └── error_map.py    #   异常 / HTTP 状态 → 归一错误码
+│   │   │   ├── guardrails/         # 护栏（调用进/出边界的约束）
+│   │   │   │   ├── validators.py   #   入口校验（路径/URL 否定禁止收口）
+│   │   │   │   ├── audit.py        #   审计两行制（只审计不拦截）
+│   │   │   │   └── gateway.py      #   调度中心（失败回灌 LLM 的摘要口径）
 │   │   │   ├── impl/               # 工具实现（11 个：搜索/抓取/沙箱 4/技能/wiki/研报 2/澄清）
 │   │   │   ├── channels/           # 接入协议通道（MCP 双向已实现；REST/A2A 占位）
 │   │   │   └── market/             # Skill Market（市场适配 + 安装）
