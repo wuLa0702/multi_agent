@@ -121,12 +121,13 @@ class TestRegistryIntegration:
 
     def test_registry_retries_search_and_fetch(self) -> None:
         """internet_search / fetch_url 包重试；run_skill_script 不包（写操作幂等风险）。"""
-        from src.tools.registry import TOOL_REGISTRY
+        from src.tools.registry import _IMPL_SPECS
 
-        # ToolSpec.fn 才是实现函数（阶段 0.1 起注册表值是 ToolSpec，非裸函数）
-        search = TOOL_REGISTRY["internet_search"].fn
-        fetch = TOOL_REGISTRY["fetch_url"].fn
-        skill = TOOL_REGISTRY["run_skill_script"].fn
+        # 重试挂在**实现层**（_IMPL_SPECS）；对外 TOOL_REGISTRY 的 fn 是挂载形态
+        # BaseTool（阶段 2.2.0 起输出适配包在最外层）——故此处查实现层
+        search = _IMPL_SPECS["internet_search"].fn
+        fetch = _IMPL_SPECS["fetch_url"].fn
+        skill = _IMPL_SPECS["run_skill_script"].fn
         # wraps 保留 __name__，用 __wrapped__ 判断是否被装饰器包装
         assert hasattr(search, "__wrapped__")  # 已包重试
         assert hasattr(fetch, "__wrapped__")  # 已包重试
@@ -134,9 +135,9 @@ class TestRegistryIntegration:
 
     def test_retry_wrapping_matches_idempotent_metadata(self) -> None:
         """不变量：被包重试的工具 == 元数据标 is_idempotent 的工具（防两处脱节）。"""
-        from src.tools.registry import TOOL_REGISTRY
+        from src.tools.registry import _IMPL_SPECS
 
-        for name, spec in TOOL_REGISTRY.items():
+        for name, spec in _IMPL_SPECS.items():
             wrapped = hasattr(spec.fn, "__wrapped__")
             assert wrapped == spec.is_idempotent, (
                 f"{name}：重试包装({wrapped}) 与 is_idempotent({spec.is_idempotent}) 不一致"

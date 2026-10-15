@@ -75,6 +75,10 @@ class TestFetchUrl:
 
 def test_fetch_url_registered() -> None:
     """注册表含 fetch_url（决策 #1：搜索发现 + 抓取获取 双工具）。"""
+    from langchain_core.tools import BaseTool
+
     from src.tools.registry import get_tool
 
-    assert callable(get_tool("fetch_url"))
+    tool = get_tool("fetch_url")
+    assert isinstance(tool, BaseTool)
+    assert tool.name == "fetch_url"

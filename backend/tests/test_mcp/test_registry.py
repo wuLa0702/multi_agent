@@ -13,11 +13,23 @@ def test_registry_contains_known_tools() -> None:
     assert "run_code_in_sandbox" in registry.TOOL_REGISTRY
 
 
-def test_get_tool_returns_implementation() -> None:
-    """按名称取到实现函数（可调用，非占位）。"""
+def test_get_tool_returns_mounted_base_tool() -> None:
+    """按名称取到挂载形态工具（阶段 2.2.0 起为 BaseTool，非裸实现函数）。"""
+    from langchain_core.tools import BaseTool
+
     tool = registry.get_tool("internet_search")
-    assert callable(tool)
-    assert tool.__name__ == "internet_search"
+    assert isinstance(tool, BaseTool)
+    assert tool.name == "internet_search"
+
+
+def test_get_tool_returns_content_and_artifact_tool() -> None:
+    """不变量：取到的工具必须声明 content_and_artifact（阶段 2 双通道的前提）。
+
+    若退回默认 `content`，工具返回的元组会被 `_stringify` 成
+    `"('文本', {...})"` 塞给 LLM。
+    """
+    for name in registry.TOOL_REGISTRY:
+        assert registry.get_tool(name).response_format == "content_and_artifact", name
 
 
 def test_get_tool_unknown_name_fails_fast() -> None:

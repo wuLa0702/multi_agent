@@ -10,14 +10,21 @@
 元数据口径见 `docs/决策/2026-10-14-设计-工具中心职责边界-v1.md`：
 domain 支撑分层归纳；is_idempotent / fallback_to 支撑重试与降级；
 risk_level / requires_approval 支撑审批；size 支撑大/小工具划分。
+
+**两层结构**（阶段 2.2.0）：`_IMPL_SPECS` 声明「实现 + 重试」，`TOOL_REGISTRY`
+在其上再包一层**输出适配**（`as_lc_tool` → `content_and_artifact`，见
+`docs/决策/2026-10-14-设计-工具中心阶段2输出侧-v1.md`）后作为对外唯一真相源。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
+from langchain_core.tools import BaseTool
+
+from src.core.retry import retry_tool
+from src.tools.adapter import as_lc_tool
 from src.tools.impl.ask_human import ask_human
 from src.tools.impl.fetch import fetch_url
 from src.tools.impl.publish_report import publish_report
@@ -31,7 +38,6 @@ from src.tools.impl.sandbox import (
 from src.tools.impl.search import internet_search
 from src.tools.impl.skill import run_skill_script
 from src.tools.impl.wiki import write_wiki
-from src.core.retry import retry_tool
 
 HITL_DOMAIN = "hitl"
 
@@ -42,7 +48,8 @@ class ToolSpec:
 
     Attributes:
         name: 工具名（LLM 看到的函数名，全局唯一）
-        fn: 实现函数（已按需包 retry 等治理包装）
+        fn: 挂载形态 `BaseTool`——由 `_IMPL_SPECS` 经「按需包 retry → 包输出适配
+            （`as_lc_tool`，`content_and_artifact`）」派生，**不是**裸实现函数
         domain: 能力域（search / sandbox / file / skill / wiki / report / hitl）
         description: 一句话描述（给 LLM，压缩后）
         is_idempotent: 幂等性——决定能否自动重试（写操作 False）
@@ -54,7 +61,7 @@ class ToolSpec:
     """
 
     name: str
-    fn: Callable[..., str]
+    fn: BaseTool
     domain: str
     description: str
     is_idempotent: bool = False
@@ -65,13 +72,14 @@ class ToolSpec:
     mount_main: bool = True
 
 
-# ── 重试包装（计划-容错处理 v1.2）：只包读操作幂等工具 ──
-# internet_search / fetch_url 是读操作（幂等）→ 瞬时故障重试；run_skill_script
-# 脚本含写操作（build_report.py 写文件）→ 重试幂等风险，排除（v1.2 评审）。
+# ── 实现层声明（fn = 实现函数；重试包装在此显式挂）──
+# 重试（计划-容错处理 v1.2）：只包读操作幂等工具——internet_search / fetch_url
+# 是读操作（幂等）→ 瞬时故障重试；run_skill_script 脚本含写操作
+# （build_report.py 写文件）→ 重试幂等风险，排除（v1.2 评审）。
 # 沙箱纯计算工具不包（本地执行无网络瞬时故障）。
 #
 # ⚠️ 条目顺序即挂载顺序：`tools_for_main()` 按此顺序返回，须与重构前手写清单一致。
-TOOL_REGISTRY: dict[str, ToolSpec] = {
+_IMPL_SPECS: dict[str, ToolSpec] = {
     # ── 搜索域（mount_main=False：仅搜索子代理按 YAML 取用）──
     "internet_search": ToolSpec(
         name="internet_search",
@@ -166,14 +174,36 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
 }
 
 
-def get_tool(name: str) -> Callable[..., str]:
-    """按名称取工具实现。
+def _with_output_adapter(spec: ToolSpec) -> ToolSpec:
+    """实现函数 → 挂载形态 `BaseTool`（输出适配包在最外层，见 `tools/adapter.py`）。
+
+    只做一件事：把 `spec.fn`（实现）换成「执行后拆分 content / artifact」的
+    langchain 工具。**幂等/重试等策略不在此处**——`_IMPL_SPECS` 里已显式挂好，
+    保持「重试在最内、输出适配在最外」的既有层次，本步不引入行为变更。
+
+    Args:
+        spec: 实现层声明（`fn` 为普通函数）
+
+    Returns:
+        `fn` 替换为 `BaseTool` 的同名 `ToolSpec`（`name` 单一来源，不重复书写）
+    """
+    return replace(spec, fn=as_lc_tool(spec.fn, name=spec.name))
+
+
+# 对外唯一真相源：键 → 挂载形态（实现 + 重试 + 输出适配）。
+TOOL_REGISTRY: dict[str, ToolSpec] = {
+    name: _with_output_adapter(spec) for name, spec in _IMPL_SPECS.items()
+}
+
+
+def get_tool(name: str) -> BaseTool:
+    """按名称取工具（挂载形态 `BaseTool`）。
 
     Args:
         name: 注册表内的工具名（YAML tools 字段 / agent 挂载清单）
 
     Returns:
-        工具实现函数
+        可直接交给 langchain 挂载的 `BaseTool`
 
     Raises:
         KeyError: 未知工具名（配置错误，fail fast——不让 agent 带病启动）
@@ -183,14 +213,14 @@ def get_tool(name: str) -> Callable[..., str]:
     return TOOL_REGISTRY[name].fn
 
 
-def tools_for_main() -> list[Callable[..., str]]:
+def tools_for_main() -> list[BaseTool]:
     """主 Agent 挂载清单（_build_agent 的唯一来源，不含 HITL 域）。
 
     HITL 门控留给编排层（main_agent 按 settings.hitl_enabled 决定是否追加
     `hitl_tools()`）——注册表只做"表"，不做策略。
 
     Returns:
-        mount_main=True 且非 HITL 域的工具实现，顺序同 TOOL_REGISTRY
+        mount_main=True 且非 HITL 域的挂载形态工具，顺序同 TOOL_REGISTRY
     """
     return [
         spec.fn
@@ -199,10 +229,10 @@ def tools_for_main() -> list[Callable[..., str]]:
     ]
 
 
-def hitl_tools() -> list[Callable[..., str]]:
+def hitl_tools() -> list[BaseTool]:
     """HITL 域工具（编排层按 hitl_enabled 门控挂载）。
 
     Returns:
-        domain == HITL_DOMAIN 的工具实现
+        domain == HITL_DOMAIN 的挂载形态工具
     """
     return [spec.fn for spec in TOOL_REGISTRY.values() if spec.domain == HITL_DOMAIN]

@@ -38,7 +38,7 @@ tools:
 
         assert spec["name"] == "test_agent"
         assert spec["tools"] == [spec["tools"][0]]  # 单工具
-        assert spec["tools"][0].__name__ == "internet_search"
+        assert spec["tools"][0].name == "internet_search"
 
     def test_missing_required_field_fails_fast(self, tmp_path: Path) -> None:
         """缺 description 字段：KeyError（fail fast）。"""
@@ -135,7 +135,7 @@ system_prompt: B 代理。
         assert [s["name"] for s in specs] == ["review_agent", "search_agent"]
         assert all(isinstance(s["runnable"], GuardedSubAgent) for s in specs), "统一挂容错包装"
         search_kwargs = next(k for k in captured if k["name"] == "search_agent")
-        assert search_kwargs["tools"][0].__name__ == "internet_search"
+        assert search_kwargs["tools"][0].name == "internet_search"
         assert search_kwargs["model"].model == "deepseek-v4-flash"
 
 

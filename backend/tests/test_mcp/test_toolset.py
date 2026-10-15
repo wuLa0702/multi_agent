@@ -20,25 +20,25 @@ def test_tools_for_main_matches_legacy_manifest() -> None:
         "write_wiki",
         "generate_report",
     ]
-    assert [t.__name__ for t in registry.tools_for_main()] == expected
+    assert [t.name for t in registry.tools_for_main()] == expected
 
 
 def test_hitl_tools_matches_legacy_manifest() -> None:
     """HITL 域工具与重构前门控追加清单一致。"""
-    assert [t.__name__ for t in registry.hitl_tools()] == ["ask_human", "publish_report"]
+    assert [t.name for t in registry.hitl_tools()] == ["ask_human", "publish_report"]
 
 
 def test_hitl_tools_excluded_from_main() -> None:
     """HITL 工具不出现在主清单里（门控由编排层追加，注册表不重复给）。"""
-    main_names = {t.__name__ for t in registry.tools_for_main()}
+    main_names = {t.name for t in registry.tools_for_main()}
     assert main_names.isdisjoint({"ask_human", "publish_report"})
 
 
 def test_search_tools_not_mounted_on_main() -> None:
     """搜索域工具不挂主 Agent（仅子代理按 YAML 取用），但仍可从注册表取到。"""
-    main_names = {t.__name__ for t in registry.tools_for_main()}
+    main_names = {t.name for t in registry.tools_for_main()}
     assert main_names.isdisjoint({"internet_search", "fetch_url"})
-    assert registry.get_tool("internet_search").__name__ == "internet_search"
+    assert registry.get_tool("internet_search").name == "internet_search"
 
 
 def test_spec_name_matches_registry_key() -> None:
