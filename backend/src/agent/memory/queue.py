@@ -10,13 +10,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+
+from src.core.audit import emit
 
 logger = logging.getLogger(__name__)
-audit_logger = logging.getLogger("audit")
 
 # 并发 worker 数（后台任务不堆积；学习 demo 并发 2 足够）
 _WORKER_COUNT = 2
@@ -102,16 +101,21 @@ class MemoryTaskQueue:
             self._queue.task_done()
 
     def _audit(self, event: str, task: MemoryTask, detail: str) -> None:
-        """任务审计行（layer=memory_agent，与 policy_backend 同构扁平 JSON）。"""
-        record = {
-            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "layer": "memory_agent",
-            "event": event,
-            "session_id": task.session_id,
-            "fingerprint": task.fingerprint,
-            "detail": detail,
-        }
-        audit_logger.info(json.dumps(record, ensure_ascii=False))
+        """任务审计行（经唯一入口 `emit()`；layer=memory_agent）。
+
+        Args:
+            event: 生命周期动作（enqueue / start / completed / failed）
+                → 拼成点分事件名 `memory.<动作>`
+            task: 任务（取 session_id 与 fingerprint）
+            detail: 结果摘要（如 completed 时的结果前 200 字）
+        """
+        emit(
+            "memory_agent",
+            f"memory.{event}",
+            session_id=task.session_id,
+            fingerprint=task.fingerprint,
+            detail=detail,
+        )
 
 
 # 进程内单例（lifespan 启动 worker，关闭时 stop）

@@ -69,7 +69,9 @@ async def test_worker_consumes_and_records(audit_records) -> None:
 
     assert q.stats["completed"] == 1 and q.stats["running"] == 0
     events = [json.loads(r.getMessage()) for r in audit_records]
-    assert [e["event"] for e in events] == ["enqueue", "start", "completed"]
+    assert [e["event"] for e in events] == [
+        "memory.enqueue", "memory.start", "memory.completed",
+    ], "事件名点分化（批次 1 消方言）"
     assert events[-1]["layer"] == "memory_agent"
     assert "已写入 user_profile" in events[-1]["detail"]
 
@@ -89,7 +91,7 @@ async def test_worker_failure_not_bubbles(audit_records) -> None:
 
     assert q.stats["failed"] == 1, "失败入 failed 计数"
     events = [json.loads(r.getMessage()) for r in audit_records]
-    assert events[-1]["event"] == "failed"
+    assert events[-1]["event"] == "memory.failed"
 
 
 # ── memory_agent 构建 ──
