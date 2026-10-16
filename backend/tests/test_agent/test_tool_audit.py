@@ -51,10 +51,10 @@ class TestStartLine:
 
         rec = _records(audit_records)[-1]
         assert rec["layer"] == "tool_call"
-        assert rec["phase"] == "start"
+        assert rec["event"] == "tool_call.start", "事件名点分化（批次 1 消方言）"
         assert rec["tool"] == "internet_search"
-        assert rec["thread_id"] == "s1"
-        assert rec["decision"] == "audit"
+        assert rec["session_id"] == "s1", "thread_id → session_id（同一值改名）"
+        assert "decision" not in rec, "固定值 decision='audit' 已删（无信息）"
         assert "args" not in rec, "非敏感工具不记参数"
 
     def test_sanitizes_sensitive_args(self, audit_records) -> None:
@@ -80,8 +80,8 @@ class TestTwoLineAudit:
         )
 
         assert result.content == "ok"
-        phases = [r["phase"] for r in _records(audit_records)]
-        assert phases == ["start", "end"]
+        events = [r["event"] for r in _records(audit_records)]
+        assert events == ["tool_call.start", "tool_call.end"], "两行制：事前后各一行（点分事件名）"
 
     @pytest.mark.parametrize(
         ("status", "error_code"),
@@ -103,7 +103,7 @@ class TestTwoLineAudit:
         await middleware.awrap_tool_call(_make_request("fetch_url"), handler)
 
         end = _records(audit_records)[-1]
-        assert end["phase"] == "end"
+        assert end["event"] == "tool_call.end"
         assert end["status"] == status
         if error_code:
             assert end["error_code"] == error_code
@@ -244,7 +244,7 @@ class TestFailurePaths:
             await middleware.awrap_tool_call(_make_request("fetch_url"), boom)
 
         end = _records(audit_records)[-1]
-        assert end["phase"] == "end"
+        assert end["event"] == "tool_call.end"
         assert end["status"] == "error"
         assert end["error_code"] == "internal", "未识别异常归 internal（error_map 口径）"
 
@@ -258,13 +258,13 @@ class TestFailurePaths:
         with pytest.raises(KeyboardInterrupt):
             await middleware.awrap_tool_call(_make_request("run_command_in_sandbox"), cancelled)
 
-        assert _records(audit_records)[-1]["phase"] == "end"
+        assert _records(audit_records)[-1]["event"] == "tool_call.end"
 
     async def test_audit_failure_never_blocks(self, monkeypatch) -> None:
         """T6：审计 logger 打炸 → 工具仍正常执行（两行都炸也不阻断）。"""
         middleware = ToolAuditMiddleware()
         monkeypatch.setattr(
-            "src.tools.guardrails.audit.audit_logger.info",
+            "src.core.audit.audit_logger.info",
             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit boom")),
         )
 
@@ -273,11 +273,35 @@ class TestFailurePaths:
         )
         assert result.content == "ok", "审计失败不得阻断工具执行"
 
+    async def test_programming_error_is_logged_not_hidden(
+        self, monkeypatch, caplog
+    ) -> None:
+        """`ValueError`（`emit()` 的编程错误）→ 记 **error** 而非 debug。
+
+        它与"磁盘满"性质不同：那是不该发生却发生了的 bug，静默降级成 debug
+        会让它永远没人发现（批次 1 补充的分级留痕）。
+        前提仍不变：**绝不阻断工具**。
+        """
+        middleware = ToolAuditMiddleware()
+
+        def _bad_emit(*a, **k):
+            raise ValueError("审计字段与核心字段重名")
+
+        monkeypatch.setattr("src.tools.guardrails.audit.emit", _bad_emit)
+
+        with caplog.at_level("ERROR", logger="src.tools.guardrails.audit"):
+            result = await middleware.awrap_tool_call(
+                _make_request("internet_search"), _fake_handler
+            )
+
+        assert result.content == "ok", "仍不得阻断工具"
+        assert any(r.levelname == "ERROR" for r in caplog.records), "编程错误必须提级留痕"
+
     async def test_audit_failure_does_not_mask_tool_error(self, monkeypatch) -> None:
         """审计自身炸了，也不能把工具的真实异常盖掉（异常必须原样传出）。"""
         middleware = ToolAuditMiddleware()
         monkeypatch.setattr(
-            "src.tools.guardrails.audit.audit_logger.info",
+            "src.core.audit.audit_logger.info",
             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit boom")),
         )
 

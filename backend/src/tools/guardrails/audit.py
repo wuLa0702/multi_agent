@@ -1,8 +1,13 @@
 """工具调用审计中间件（P1）：记录每次工具调用的 name + 敏感参数（脱敏）。
 
-阶段 2.3.1（2026-10-15）：改造为**两行制**（事前 `phase=start` / 事后 `phase=end`），
+阶段 2.3.1（2026-10-15）：改造为**两行制**（事前 / 事后），
 事后行补上工具输出的**三态 `status` + 归一 `error_code` + `duration_ms`**——
 数据源是阶段 2 落地的 artifact 结构化通道。详见 `ToolAuditMiddleware` 类 docstring。
+
+审计落地批次 1（2026-10-16）：本模块三处写入统一改经 `core.audit.emit()`
+——事件名点分化（`tool_call.start` / `tool_call.end` / `security.blocked`），
+`thread_id` → `session_id`，删掉固定值 `decision="audit"`（无信息）。
+**本模块不再直接调用 `audit_logger`**（由反绕过锁测试守护）。
 
 覆盖边界（深化方案 §3.3）：MCP 自定义工具、沙箱 run_code_in_sandbox 等不经
 backend 的文件 IO——backend 层物理不可达，统一在此记审计（只审计不拦截，
@@ -17,18 +22,16 @@ sync 钩子在异步上下文不触发）。
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-from datetime import datetime
 
 from langchain.agents.middleware import AgentMiddleware
 
+from src.core.audit import emit
 from src.core.errors import is_retryable_tool_error
 from src.tools.contract.error_map import classify_exception
 
 logger = logging.getLogger(__name__)
-audit_logger = logging.getLogger("audit")
 
 # 需要记录参数的工具（写操作/执行类）；其余工具只记名（防上下文膨胀）
 # P1 扩充：run_command_in_sandbox（命令本身）、upload/download（文件同步）
@@ -60,13 +63,7 @@ def _fallback_for(tool: str) -> str:
 
 def log_security_blocked(tool: str, reason: str) -> None:
     """安全拦截审计（模块级，工具实现也可调；安全机制 D5）。"""
-    audit_logger.info(json.dumps({
-        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "layer": "security",
-        "event": "blocked",
-        "tool": tool,
-        "reason": reason,
-    }, ensure_ascii=False, default=str))
+    emit("security", "security.blocked", tool=tool, reason=reason)
 
 
 def security_audit(tool: str):
@@ -106,15 +103,15 @@ class ToolAuditMiddleware(AgentMiddleware):
     """工具调用审计：只审计不拦截（旁路能力，失败绝不影响工具执行）。
 
     **两行制**（阶段 2.3.1，对齐审计决策 D2 —— `决策-审计与可观测-方向-v1` §4）：
-    每次调用写**两行**——`phase="start"`（执行前）+ `phase="end"`（执行后）。
+    每次调用写**两行**——`tool_call.start`（执行前）+ `tool_call.end`（执行后）。
     两行才留得下「操作开始了但没结束」这个信号：进程被杀 / 沙箱挂死时，
     单行合并方案什么都留不下，而那恰是审计最需要留的情形。
 
-    记录字段（扁平 JSON 顶层，与 policy_backend 审计同构）：
-    ts / thread_id（取自 runtime.context，同 TokenUsageMiddleware 约定）/
-    layer=tool_call / phase（start|end）/ tool / decision=audit /
-    start 行：args（敏感工具脱敏截断）｜
-    end 行：status / error_code / duration_ms ＋ **失败时** retryable / fallback_to
+    记录字段（扁平 JSON 顶层，经 `core.audit.emit()` 统一出口）：
+    核心 7 字段（ts 毫秒 / trace_id / seq / layer=tool_call / event / status /
+    session_id——取自 runtime.context，同 TokenUsageMiddleware 约定）＋
+    start 行：tool、args（敏感工具脱敏截断）｜
+    end 行：tool、duration_ms ＋ **失败时** error_code / retryable / fallback_to
     """
 
     async def awrap_tool_call(self, request, handler):
@@ -152,9 +149,17 @@ class ToolAuditMiddleware(AgentMiddleware):
 
     @staticmethod
     def _safe_call(fn, *args) -> None:
-        """审计旁路收口：任何异常只降级 debug，不冒泡（含非 Exception 类异常）。"""
+        """审计旁路收口：任何异常都**不冒泡**（审计失败绝不影响工具执行）。
+
+        **但两类异常分级留痕**（2026-10-16 批次 1 补充）：
+        - `ValueError` = `emit()` 的**编程错误**（审计字段与核心字段重名）
+          → 记 **error**：它不该被当"旁路失败"静默降级，否则永远没人发现
+        - 其余（磁盘满等运行时故障）→ 记 **debug**（预期内的降级路径）
+        """
         try:
             fn(*args)
+        except ValueError:
+            logger.error("工具审计编程错误（不影响执行）", exc_info=True)
         except Exception:  # noqa: BLE001 —— 审计是旁路能力，失败不影响工具执行
             logger.debug("工具审计失败（不影响执行）", exc_info=True)
 
@@ -162,17 +167,15 @@ class ToolAuditMiddleware(AgentMiddleware):
         """事前行：工具名 + 会话定位 + 敏感工具脱敏入参。"""
         tool_call = getattr(request, "tool_call", None) or {}
         name = tool_call.get("name", "")
-        record = {
-            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "thread_id": self._thread_id_from(request),
-            "layer": "tool_call",
-            "phase": "start",
-            "tool": name,
-            "decision": "audit",
-        }
+        fields: dict = {"tool": name}
         if name in _SENSITIVE_TOOLS:
-            record["args"] = self._sanitize_args(name, tool_call.get("args", {}) or {})
-        audit_logger.info(json.dumps(record, ensure_ascii=False, default=str))
+            fields["args"] = self._sanitize_args(name, tool_call.get("args", {}) or {})
+        emit(
+            "tool_call",
+            "tool_call.start",
+            session_id=self._session_id_from(request),
+            **fields,
+        )
 
     def _audit_end(
         self,
@@ -191,23 +194,23 @@ class ToolAuditMiddleware(AgentMiddleware):
         """
         tool_call = getattr(request, "tool_call", None) or {}
         tool_name = tool_call.get("name", "")
-        record = {
-            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "thread_id": self._thread_id_from(request),
-            "layer": "tool_call",
-            "phase": "end",
+        fields: dict = {
             "tool": tool_name,
-            "decision": "audit",
-            "status": status,
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
         if error_code:
-            record["error_code"] = error_code
-            record["retryable"] = retryable
+            fields["error_code"] = error_code
+            fields["retryable"] = retryable
             fallback = _fallback_for(tool_name)
             if fallback:
-                record["fallback_to"] = fallback
-        audit_logger.info(json.dumps(record, ensure_ascii=False, default=str))
+                fields["fallback_to"] = fallback
+        emit(
+            "tool_call",
+            "tool_call.end",
+            status=status,
+            session_id=self._session_id_from(request),
+            **fields,
+        )
 
     @staticmethod
     def _outcome_of(result) -> tuple[str, str, bool]:
@@ -235,8 +238,13 @@ class ToolAuditMiddleware(AgentMiddleware):
         log_security_blocked(tool, reason)
 
     @staticmethod
-    def _thread_id_from(request) -> str:
-        """会话定位：runtime.context.session_id（中间件是编译时单例，会话经请求级 context）。"""
+    def _session_id_from(request) -> str:
+        """会话定位：runtime.context.session_id（中间件是编译时单例，会话经请求级 context）。
+
+        Note:
+            原名 `_thread_id_from`——批次 1 随字段口径统一改名（`thread_id` 与
+            `session_id` 本就是同一值，见设计稿 §3.1）。
+        """
         runtime = getattr(request, "runtime", None)
         context = getattr(runtime, "context", None) if runtime is not None else None
         return getattr(context, "session_id", "") if context is not None else ""

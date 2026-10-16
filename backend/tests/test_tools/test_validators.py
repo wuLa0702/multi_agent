@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from src.tools.guardrails import validators
@@ -66,10 +67,19 @@ def test_validate_sandbox_path_blocks_absolute() -> None:
 # ── 统一审计 ──
 
 def test_block_is_audited(caplog) -> None:
-    """拦截必须落 security/blocked 审计（@security_audit 统一记）。"""
+    """拦截必须落 `security.blocked` 审计（@security_audit 统一记）。
+
+    审计落地批次 1：断言从**原始 JSON 文本**改为**解析后按字段判**
+    （文本断言会随字段顺序/格式微调而脆断；按字段判才是语义断言）。
+    """
     with caplog.at_level(logging.INFO, logger="audit"):
         validators.validate_url("file:///etc/passwd")
-    assert any('"event": "blocked"' in r.message and "fetch_url" in r.message for r in caplog.records)
+
+    records = [json.loads(r.getMessage()) for r in caplog.records if r.name == "audit"]
+    assert any(
+        r["layer"] == "security" and r["event"] == "security.blocked" and r["tool"] == "fetch_url"
+        for r in records
+    ), f"应落 security.blocked 审计：{records}"
 
 
 def test_pass_is_not_audited(caplog) -> None:
