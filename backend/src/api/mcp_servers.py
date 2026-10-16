@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.agent.services import mcp_service, skill_service
+from src.api.error_handlers import api_error
 from src.db import connection as db_conn
 
 router = APIRouter(prefix="/v1/mcp-servers", tags=["mcp-servers"])
@@ -56,19 +57,9 @@ class PendingToolsResponse(BaseModel):
     total: int
 
 
-class ErrorResponse(BaseModel):
-    """统一错误响应（契约 §3.3）。"""
-
-    error: str
-    detail: str
-    code: str
-
-
 def _error(status: int, code: str, detail: str) -> HTTPException:
-    return HTTPException(
-        status_code=status,
-        detail=ErrorResponse(error="ErrorResponse", detail=detail, code=code).model_dump(),
-    )
+    """统一错误（契约 §3.3）；信封构造委托 `api_error`，本文件不再自建模型。"""
+    return api_error(status, code, detail)
 
 
 def _row_to_out(row) -> McpServerOut:

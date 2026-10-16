@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from src.agent.services import cost_service
+from src.api.error_handlers import api_error
 
 router = APIRouter(prefix="/v1/cost", tags=["cost"])
 
@@ -23,9 +24,8 @@ async def get_cost_summary(session_id: str = Query(..., description="会话 ID")
     s = await cost_service.summary(session_id)
 
     if s["input_tokens"] == 0 and s["output_tokens"] == 0 and s["total_cost"] == 0:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "会话无成本记录", "detail": f"session_id={session_id} 无成本流水", "code": "COST_NOT_FOUND"},
+        raise api_error(
+            404, "COST_NOT_FOUND", f"session_id={session_id} 无成本流水", error="会话无成本记录"
         )
     return {
         "session_id": session_id,

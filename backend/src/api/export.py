@@ -9,9 +9,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from src.api.error_handlers import api_error
 from src.wiki.export_service import WikiExportError, export_to_wiki
 from src.wiki.read_service import WikiPageNotFoundError, get_page_from_wiki
 
@@ -38,14 +39,14 @@ async def export_wiki(req: WikiExportRequest) -> dict:
         HTTPException: 400 内容为空；502 wiki 不可达/写入失败
     """
     if not req.content.strip():
-        raise HTTPException(status_code=400, detail="内容为空，无法导出")
+        raise api_error(400, "BAD_REQUEST", "内容为空，无法导出")
     try:
         result = await export_to_wiki(
             req.path, req.content, req.title, req.page_type
         )
     except WikiExportError as exc:
         # 不可达（可重试）→ 502；写入失败 → 502（前端提示）
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise api_error(502, "WIKI_UNAVAILABLE", str(exc)) from exc
     return {"status": "ok", "path": result.get("path") or req.path}
 
 
@@ -62,7 +63,7 @@ async def read_wiki_page(page_path: str) -> dict:
     try:
         page = await get_page_from_wiki(page_path)
     except WikiPageNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise api_error(404, "WIKI_PAGE_NOT_FOUND", str(exc)) from exc
     except WikiExportError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise api_error(502, "WIKI_UNAVAILABLE", str(exc)) from exc
     return {"status": "ok", "page": page}

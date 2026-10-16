@@ -2,7 +2,7 @@
 
 覆盖（20-testing.md：正常 / 边界 / 错误）：
 - 正常：创建 / 列表 / PATCH 标题 / DELETE / 消息分页
-- 边界：PATCH 空标题 400、limit 超上限 422、cursor 翻页 has_more 语义
+- 边界：PATCH 空标题 400、limit 超上限 400、cursor 翻页 has_more 语义
 - 错误：不存在会话 → 404 SESSION_NOT_FOUND（DELETE / PATCH / messages 三处）
 """
 
@@ -236,7 +236,9 @@ async def test_delete_missing_session_404(app_env_dev) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.delete("/v1/sessions/no-such-id")
     assert resp.status_code == 404
-    assert resp.json()["detail"]["code"] == "SESSION_NOT_FOUND"
+    # 契约 §3.3：错误体是**扁平** {error, detail, code}（2026-10-16 前被 FastAPI
+    # 多包一层成 {"detail": {...}}，本断言曾锁死该错误形态）
+    assert resp.json()["code"] == "SESSION_NOT_FOUND"
 
 
 @pytest.mark.asyncio
@@ -245,7 +247,9 @@ async def test_patch_missing_session_404(app_env_dev) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.patch("/v1/sessions/no-such-id", json={"title": "x"})
     assert resp.status_code == 404
-    assert resp.json()["detail"]["code"] == "SESSION_NOT_FOUND"
+    # 契约 §3.3：错误体是**扁平** {error, detail, code}（2026-10-16 前被 FastAPI
+    # 多包一层成 {"detail": {...}}，本断言曾锁死该错误形态）
+    assert resp.json()["code"] == "SESSION_NOT_FOUND"
 
 
 @pytest.mark.asyncio
@@ -254,7 +258,9 @@ async def test_messages_missing_session_404(app_env_dev) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/sessions/no-such-id/messages")
     assert resp.status_code == 404
-    assert resp.json()["detail"]["code"] == "SESSION_NOT_FOUND"
+    # 契约 §3.3：错误体是**扁平** {error, detail, code}（2026-10-16 前被 FastAPI
+    # 多包一层成 {"detail": {...}}，本断言曾锁死该错误形态）
+    assert resp.json()["code"] == "SESSION_NOT_FOUND"
 
 
 # ── 边界 ──
@@ -268,11 +274,12 @@ async def test_patch_empty_title_400(app_env_dev, session_id) -> None:
 
 
 @pytest.mark.asyncio
-async def test_messages_limit_over_cap_422(app_env_dev, session_id) -> None:
-    """边界：limit 超过 200 上限 → 422（Query le 校验）。"""
+async def test_messages_limit_over_cap_400(app_env_dev, session_id) -> None:
+    """边界：limit 超过 200 上限 → 400（Query le 校验；2026-10-16 起统一为 400）。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(f"/v1/sessions/{session_id}/messages?limit=201")
-    assert resp.status_code == 422
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "BAD_REQUEST"
 
 
 @pytest.mark.asyncio

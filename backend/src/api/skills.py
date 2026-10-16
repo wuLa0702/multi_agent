@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from src.agent.services import mcp_service, skill_service
+from src.api.error_handlers import api_error
 from src.schemas.skill import (
     SKILL_TYPE_MCP,
     SKILL_TYPE_MD,
@@ -31,11 +32,8 @@ router = APIRouter(prefix="/v1/skills", tags=["skills"])
 
 
 def _error(status: int, code: str, detail: str) -> HTTPException:
-    """统一错误响应（契约 §3.3：error/detail/code）。"""
-    return HTTPException(
-        status_code=status,
-        detail={"error": "ErrorResponse", "detail": detail, "code": code},
-    )
+    """统一错误（契约 §3.3）；信封构造委托 `api_error`，本文件不再手写 dict。"""
+    return api_error(status, code, detail)
 
 
 async def _refresh_agent_tools() -> None:

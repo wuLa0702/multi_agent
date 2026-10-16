@@ -34,6 +34,8 @@ dependencies = [
     "pydantic-settings>=2.4",       # .env 配置中心（多 provider）
     "httpx>=0.27",                  # 搜索/抓取工具 + 容错重试（实际 0.28.1）
     "pyyaml>=6.0",                  # 声明式子 Agent YAML 配置
+    "structlog>=24.1",              # 结构化日志 + 上下文注入（2026-10-16 接入，
+                                    # 替换自研 trace_id 注入；见 .claude/rules/08）
 
     # 已移除（2026-08-05 最小集审计，与 requirements.txt 对齐）：
     # - langsmith：src 无直接 import（tracing 由 langchain 传递依赖提供）

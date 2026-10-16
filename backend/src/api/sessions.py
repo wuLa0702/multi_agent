@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from src.agent.services import session_service
+from src.api.error_handlers import api_error
 from src.schemas.message import Message
 from src.schemas.session import Session
 
@@ -59,23 +60,10 @@ class DeleteResponse(BaseModel):
     status: str = "ok"
 
 
-class ErrorResponse(BaseModel):
-    """统一错误响应（契约 §3.3）。"""
-
-    error: str
-    detail: str
-    code: str
-
-
 def _raise_404(session_id: str) -> None:
     """会话不存在（契约 §7：SESSION_NOT_FOUND）。"""
-    raise HTTPException(
-        status_code=404,
-        detail=ErrorResponse(
-            error="会话不存在",
-            detail=f"session_id={session_id} 未找到",
-            code="SESSION_NOT_FOUND",
-        ).model_dump(),
+    raise api_error(
+        404, "SESSION_NOT_FOUND", f"session_id={session_id} 未找到", error="会话不存在"
     )
 
 
@@ -126,24 +114,11 @@ async def update_session_title(
         HTTPException: 404 会话不存在；400 参数为空/标题超长
     """
     if req.title is None and req.is_pinned is None:
-        raise HTTPException(
-            status_code=400,
-            detail=ErrorResponse(
-                error="参数缺失",
-                detail="title 或 is_pinned 至少提供一个",
-                code="BAD_REQUEST",
-            ).model_dump(),
-        )
+        raise api_error(400, "BAD_REQUEST", "title 或 is_pinned 至少提供一个", error="参数缺失")
     if req.title is not None and not (1 <= len(req.title) <= 100):
-        # 契约 §4.4：标题 1-100 字符；手动校验统一 400（Pydantic 自动校验是 422）
-        raise HTTPException(
-            status_code=400,
-            detail=ErrorResponse(
-                error="参数非法",
-                detail="标题长度需在 1-100 字符之间",
-                code="BAD_REQUEST",
-            ).model_dump(),
-        )
+        # 契约 §4.4：标题 1-100 字符；手动校验统一 400
+        # （注：Pydantic 自动校验原本是 422，2026-10-16 起经全局处理器也统一为 400）
+        raise api_error(400, "BAD_REQUEST", "标题长度需在 1-100 字符之间", error="参数非法")
     updated = await session_service.update_session(session_id, req.title, req.is_pinned)
     if updated is None:
         _raise_404(session_id)

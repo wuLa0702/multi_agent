@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from src.api.error_handlers import api_error
 from src.core.paths import get_uploads_dir
 
 router = APIRouter(prefix="/v1/uploads", tags=["uploads"])
@@ -30,19 +31,9 @@ class UploadResponse(BaseModel):
     size: int
 
 
-class ErrorResponse(BaseModel):
-    """统一错误响应。"""
-
-    error: str
-    detail: str
-    code: str
-
-
 def _error(status: int, code: str, detail: str) -> HTTPException:
-    return HTTPException(
-        status_code=status,
-        detail=ErrorResponse(error="ErrorResponse", detail=detail, code=code).model_dump(),
-    )
+    """统一错误（契约 §3.3）；信封构造委托 `api_error`，本文件不再自建模型。"""
+    return api_error(status, code, detail)
 
 
 def _sanitize_name(name: str) -> str:

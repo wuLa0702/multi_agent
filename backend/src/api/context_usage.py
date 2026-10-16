@@ -7,10 +7,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from src.agent.middlewares.token_usage import DEFAULT_CONTEXT_WINDOW
+from src.api.error_handlers import api_error
 from src.db import connection as db_conn
+from src.db import session_repo
 
 router = APIRouter(prefix="/v1/context-usage", tags=["context-usage"])
 
@@ -22,19 +24,17 @@ async def get_context_usage(session_id: str = Query(..., description="会话 ID"
     Returns:
         {"session_id": ..., "used": int, "total": int, "percent": float}
         used 为 TokenUsageMiddleware 上次图执行后落库的累计值；未执行过为 0
+
+    Raises:
+        HTTPException(404): 会话不存在（SESSION_NOT_FOUND）
     """
     async with db_conn.connection() as conn:
-        cursor = await conn.execute(
-            "SELECT context_used FROM sessions WHERE id = %s", (session_id,)
-        )
-        row = await cursor.fetchone()
+        # SQL 下沉 `db/`（2026-10-16 B5）：本查询与 chat.py 的 done 事件同源
+        used = await session_repo.find_context_used(conn, session_id)
 
-    if row is None:
-        raise HTTPException(status_code=404, detail={
-            "error": "ErrorResponse", "detail": "会话不存在", "code": "SESSION_NOT_FOUND",
-        })
+    if used is None:
+        raise api_error(404, "SESSION_NOT_FOUND", "会话不存在")
 
-    used = row["context_used"] or 0
     total = DEFAULT_CONTEXT_WINDOW
     return {
         "session_id": session_id,

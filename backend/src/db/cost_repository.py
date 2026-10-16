@@ -125,3 +125,25 @@ async def list_alerts(conn: AsyncConnection, session_id: str) -> list[dict]:
     )
     rows = await cur.fetchall()
     return [dict(r) for r in rows]
+
+
+async def latest_alert(conn: AsyncConnection, session_id: str) -> dict | None:
+    """会话**最新**一条成本告警；无告警 → None。
+
+    SSE `cost_alert` 事件用（`api/chat.py`）：中间件落库时已按阈值去重，
+    故"最新一条"即本 run 的告警。2026-10-16 由 api 层裸 SQL 下沉（B5）。
+
+    Args:
+        conn: PG 连接
+        session_id: 会话 ID
+
+    Returns:
+        `{"threshold": float, "total_cost": float}`；无记录 → None
+    """
+    cur = await conn.execute(
+        "SELECT threshold, total_cost FROM cost_alerts WHERE session_id = %s "
+        "ORDER BY created_at DESC LIMIT 1",
+        (session_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
