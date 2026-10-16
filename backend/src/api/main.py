@@ -25,6 +25,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from src.api.chat import router as chat_router
 from src.api.cost import router as cost_router
 from src.api.context_usage import router as context_usage_router
+from src.api.error_handlers import install_error_handlers
 from src.api.export import router as export_router
 from src.api.health import router as health_router
 from src.api.mcp_servers import router as mcp_servers_router
@@ -199,6 +200,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 错误响应统一收口（2026-10-16，见 docs/临时/2026-10-16-汇总问题-v1.md B1/B4）：
+# 把 HTTPException / Pydantic 校验失败 / 未捕获异常都归一为**扁平** ErrorResponse。
+# ⚠️ 必须在首次请求前注册（Starlette 首次请求后冻结中间件栈）。
+install_error_handlers(app)
 
 app.include_router(health_router)
 app.include_router(chat_router)

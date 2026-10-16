@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 import psycopg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from pydantic import BaseModel, Field
 from redis.exceptions import RedisError
@@ -36,6 +36,7 @@ from src.agent.main_agent import (
     stream_agent_events,
     stream_agent_tokens,
 )
+from src.api.error_handlers import api_error
 from src.db import connection as db_conn
 from src.core.config import settings
 from src.core.errors import RetryableError
@@ -99,14 +100,6 @@ class ApproveRequest(BaseModel):
     )
 
 
-class ErrorResponse(BaseModel):
-    """统一错误响应（契约 §3.3）。"""
-
-    error: str
-    detail: str
-    code: str
-
-
 # ── 辅助函数（2026-08-04 拆分：每个 <80 行，职责单一）──
 
 def _history_to_langchain(history: list[Message]) -> list[BaseMessage]:
@@ -124,42 +117,30 @@ def _history_to_langchain(history: list[Message]) -> list[BaseMessage]:
 def _validate_request(req: ChatStreamRequest) -> None:
     """请求阶段校验（互斥约束，契约 §5.1）；失败抛 HTTPException(400)。"""
     if req.message and req.resume_run_id:
-        raise HTTPException(
-            status_code=400,
-            detail=ErrorResponse(
-                error="参数冲突",
-                detail="message 与 resume_run_id 互斥，只能提供其一",
-                code="BAD_REQUEST",
-            ).model_dump(),
+        raise api_error(
+            400, "BAD_REQUEST",
+            "message 与 resume_run_id 互斥，只能提供其一",
+            error="参数冲突",
         )
     if not req.message and not req.resume_run_id:
-        raise HTTPException(
-            status_code=400,
-            detail=ErrorResponse(
-                error="参数缺失",
-                detail="message 或 resume_run_id 至少提供一个",
-                code="BAD_REQUEST",
-            ).model_dump(),
+        raise api_error(
+            400, "BAD_REQUEST",
+            "message 或 resume_run_id 至少提供一个",
+            error="参数缺失",
         )
     if req.model_id is not None and get_registry().get_model(req.model_id) is None:
-        raise HTTPException(
-            status_code=400,
-            detail=ErrorResponse(
-                error="参数非法",
-                detail=f"model_id={req.model_id} 不存在，请先 GET /v1/providers 查询可用模型",
-                code="BAD_REQUEST",
-            ).model_dump(),
+        raise api_error(
+            400, "BAD_REQUEST",
+            f"model_id={req.model_id} 不存在，请先 GET /v1/providers 查询可用模型",
+            error="参数非法",
         )
     if req.resume_run_id and not req.session_id:
         # 审批断点恢复（P0 真实现）：resume 必须带 session_id（== thread_id，
         # checkpoint 按执行线隔离，计划文档 A.3）
-        raise HTTPException(
-            status_code=400,
-            detail=ErrorResponse(
-                error="参数缺失",
-                detail="resume_run_id（审批断点恢复）必须同时提供 session_id",
-                code="BAD_REQUEST",
-            ).model_dump(),
+        raise api_error(
+            400, "BAD_REQUEST",
+            "resume_run_id（审批断点恢复）必须同时提供 session_id",
+            error="参数缺失",
         )
 
 
@@ -233,13 +214,8 @@ async def _resolve_session(conn, req: ChatStreamRequest) -> str:
     if req.session_id is None:
         await _create_session_with_retry(conn, session_id)
     elif await repo.get_session(conn, session_id) is None:
-        raise HTTPException(
-            status_code=404,
-            detail=ErrorResponse(
-                error="会话不存在",
-                detail=f"session_id={session_id} 未找到",
-                code="SESSION_NOT_FOUND",
-            ).model_dump(),
+        raise api_error(
+            404, "SESSION_NOT_FOUND", f"session_id={session_id} 未找到", error="会话不存在"
         )
     return session_id
 
@@ -768,14 +744,14 @@ async def approve(req: ApproveRequest) -> dict:
     decision: dict[str, Any] = {"type": req.action}
     if req.action == "edit":
         if not req.edited_arguments:
-            raise HTTPException(400, detail="edit 决策必须携带 edited_arguments")
+            raise api_error(400, "BAD_REQUEST", "edit 决策必须携带 edited_arguments")
         tool_name = await _resolve_tool_name(req.checkpoint_id)  # Redis 读工具名
         decision["edited_action"] = {"name": tool_name, "args": req.edited_arguments}
     if req.action == "reject" and req.note:
         decision["message"] = req.note
     if req.action == "respond":
         if not req.note:
-            raise HTTPException(400, detail="respond 决策必须携带 note（人类回答）")
+            raise api_error(400, "BAD_REQUEST", "respond 决策必须携带 note（人类回答）")
         decision["message"] = req.note
     try:
         accepted = await add_decision(req.checkpoint_id, req.call_id, decision)
@@ -785,11 +761,11 @@ async def approve(req: ApproveRequest) -> dict:
             if session_id:
                 await incr_revision(session_id)
     except KeyError:
-        raise HTTPException(404, detail="审批已过期或不存在，请重开对话")
+        raise api_error(404, "APPROVAL_NOT_FOUND", "审批已过期或不存在，请重开对话")
     except ValueError as exc:
-        raise HTTPException(400, detail=str(exc))
+        raise api_error(400, "BAD_REQUEST", str(exc))
     except RedisError:
-        raise HTTPException(503, detail="审批服务暂不可用，请稍后重试")
+        raise api_error(503, "SERVICE_UNAVAILABLE", "审批服务暂不可用，请稍后重试")
     return {"status": "ok", "accepted": accepted}
 
 

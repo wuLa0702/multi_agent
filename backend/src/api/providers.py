@@ -7,10 +7,11 @@ core/model_registry.py）；API key 永不返回（密钥只存 .env）。
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, Path
 from pydantic import BaseModel, Field
 
 from src.agent.services import model_service
+from src.api.error_handlers import api_error
 from src.db import connection as db_conn
 from src.core.model_registry import get_registry
 from src.schemas.model_config import ProvidersResponse
@@ -54,10 +55,7 @@ async def update_model_price(
         model_id, req.input_price, req.output_price
     )
     if not ok:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "模型不存在", "detail": f"model_id={model_id} 未找到", "code": "MODEL_NOT_FOUND"},
-        )
+        raise api_error(404, "MODEL_NOT_FOUND", f"model_id={model_id} 未找到", error="模型不存在")
     async with db_conn.connection() as conn:
         await get_registry().load(conn)  # reload 使单价生效（成本核算读 registry 缓存）
     return {"status": "ok", "model_id": model_id}

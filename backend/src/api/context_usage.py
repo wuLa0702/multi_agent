@@ -7,9 +7,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from src.agent.middlewares.token_usage import DEFAULT_CONTEXT_WINDOW
+from src.api.error_handlers import api_error
 from src.db import connection as db_conn
 
 router = APIRouter(prefix="/v1/context-usage", tags=["context-usage"])
@@ -30,9 +31,7 @@ async def get_context_usage(session_id: str = Query(..., description="会话 ID"
         row = await cursor.fetchone()
 
     if row is None:
-        raise HTTPException(status_code=404, detail={
-            "error": "ErrorResponse", "detail": "会话不存在", "code": "SESSION_NOT_FOUND",
-        })
+        raise api_error(404, "SESSION_NOT_FOUND", "会话不存在")
 
     used = row["context_used"] or 0
     total = DEFAULT_CONTEXT_WINDOW

@@ -57,14 +57,15 @@ class TestModelPriceApi:
 
     @pytest.mark.asyncio
     async def test_update_price_negative_rejected(self, seeded) -> None:
-        """负单价 → 422（ge=0 校验）。"""
+        """负单价 → 400（ge=0 校验；2026-10-16 起 Pydantic 校验统一返回 400）。"""
         cfg = seeded.get_default_model()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.patch(
                 f"/v1/providers/models/{cfg.id}/price",
                 json={"input_price": -1, "output_price": 0.01},
             )
-        assert resp.status_code == 422
+        assert resp.status_code == 400
+        assert resp.json()["code"] == "BAD_REQUEST"
 
 # ── 按需声明：本模块测试需要数据库（2026-10-15 起 pg_schema 不再 autouse）──
 @pytest.fixture(autouse=True)
