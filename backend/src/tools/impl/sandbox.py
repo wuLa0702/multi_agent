@@ -58,8 +58,12 @@ def _thread_id_from(config: RunnableConfig | None) -> str:
     return "default"
 
 
-def _truncate_output(text: str) -> tuple[str, bool]:
+def truncate_output(text: str) -> tuple[str, bool]:
     """输出截断（§3.2 输出上限）：超过 sandbox_output_limit 截断并提示取回方式。
+
+    **沙箱域的统一护栏**（2026-10-15 由 `_truncate_output` 提为公共，闭环 P12）：
+    沙箱 4 个工具 + `run_skill_script` 共用同一实现——技能脚本同样在沙箱执行，
+    截断口径理应一致（此前 skill 侧漏了这道护栏，脚本 stdout 可能撑爆上下文）。
 
     Args:
         text: 原始输出
@@ -120,7 +124,7 @@ def _output_result(raw: str, *, tool: str, data_key: str) -> ToolResult:
     Returns:
         未截断 → `ok`；被截断 → `degraded`（拿到结果但不完整）
     """
-    text, truncated = _truncate_output(raw)
+    text, truncated = truncate_output(raw)
     return ToolResult(
         status="degraded" if truncated else "ok",
         message=text,

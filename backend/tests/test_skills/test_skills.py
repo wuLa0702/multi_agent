@@ -167,8 +167,41 @@ def test_run_skill_script_success(script_env) -> None:
         "skill": "research-report",
         "script": "build_report.py",
         "output": "out:build_report.py sample_data.json",
+        "truncated": False,
     }
     assert script_env["run_script"] == 1
+
+
+def test_run_skill_script_truncates_long_output(script_env, monkeypatch) -> None:
+    """P12 闭环：超限输出 → 截断 + `degraded`（与沙箱 4 个工具口径一致）。
+
+    此前本工具**不截断**，脚本 stdout 可能撑爆上下文；现复用沙箱的
+    `truncate_output`（同一实现，非复制）。
+    """
+    monkeypatch.setattr(settings, "sandbox_output_limit", 10)
+    monkeypatch.setattr(
+        skill.sandbox_adapter,
+        "run_script",
+        lambda sandbox, files, entry: "x" * 50,
+    )
+
+    result = skill.run_skill_script("research-report", "build_report.py")
+
+    assert result.status == "degraded", "拿到了结果但不完整"
+    assert result.data["truncated"] is True
+    # 用 startswith + "第 11 个 x 不存在" 精确判定：
+    # ⚠️ 不能用 count("x")——提示语里的 "sandbox" 自带一个 x（本用例首版就误判成 11 个）
+    assert result.message.startswith("x" * 10), "只留 limit 内的前缀"
+    assert "x" * 11 not in result.message, "超出上限的部分已被截掉"
+    assert "输出已截断" in result.message, "告知模型怎么取全量"
+    assert result.data["output"] == result.message, "data 与 message 同步截断（不是只有一处）"
+
+
+def test_run_skill_script_short_output_stays_ok(script_env) -> None:
+    """短输出不受截断影响（护栏不能误伤正常用例）。"""
+    result = skill.run_skill_script("research-report", "build_report.py")
+    assert result.status == "ok"
+    assert result.data["truncated"] is False
 
 
 def test_run_skill_script_not_found(script_env) -> None:

@@ -8,10 +8,11 @@
 磁盘直读 + 路径校验）；执行：沙箱池（隔离，内容拷入容器不执行磁盘文件）。
 
 **输出（阶段 2.2.7）**：返回 `ToolResult` 信封。路径穿越 / 脚本不存在 /
-沙箱未配置 / 执行异常 → `error` + 归一错误码。
+沙箱未配置 / 执行异常 → `error` + 归一错误码；输出超限 → `degraded`（截断留痕）。
 
-⚠️ 已知不一致（记在分支笔记 P12）：本工具**不截断**脚本输出，而沙箱 4 个
-工具都经 `_truncate_output`——本次「最简短迁移」不夹带行为变更，留待后续拍板。
+✅ P12 已闭环（2026-10-15）：本工具原先**不截断**脚本输出，而沙箱 4 个工具都截断
+——脚本 stdout 可能撑爆上下文。现复用沙箱的 `truncate_output`（**同一实现**，
+不复制一份），口径与沙箱对齐。
 """
 
 from __future__ import annotations
@@ -23,13 +24,14 @@ from langchain_core.runnables import RunnableConfig
 from src.core.config import settings
 from src.core.errors import ToolErrorCode
 from src.core.paths import get_skill_md_dir
+from src.tools.contract.result import ToolResult
 from src.tools.impl.sandbox import (
     _NOT_CONFIGURED_MESSAGE,
     _thread_id_from,
     sandbox_adapter,
     sandbox_pool,
+    truncate_output,
 )
-from src.tools.contract.result import ToolResult
 
 _TOOL_NAME = "run_skill_script"
 
@@ -97,10 +99,18 @@ def run_skill_script(
         output = sandbox_adapter.run_script(
             sandbox, {script_name: content}, f"{script_name} {script_args}".strip()
         )
+        # 截断护栏（P12 闭环）：与沙箱 4 个工具同一实现——脚本 stdout 可能很长，
+        # 超限即 truncated → degraded（如实告知"拿到了但不完整"）
+        text, truncated = truncate_output(output)
         return ToolResult(
-            status="ok",
-            message=output,
-            data={"skill": skill_name, "script": script_name, "output": output},
+            status="degraded" if truncated else "ok",
+            message=text,
+            data={
+                "skill": skill_name,
+                "script": script_name,
+                "output": text,
+                "truncated": truncated,
+            },
             tool=_TOOL_NAME,
         )
     except Exception as e:  # noqa: BLE001 —— 工具失败降级为错误信息，不冒泡中断 run
