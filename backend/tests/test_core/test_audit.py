@@ -5,8 +5,14 @@
 2. 层自有字段平铺
 3. **保留名冲突 → ValueError**（编程错误必须暴露，不静默丢字段）
 4. 写失败**不冒泡**（审计是旁路）
-5. `seq` 在**并发子任务**下不重复（这是设计稿 §3.1 点名的静默丢事件陷阱）
+5. `seq` 在**并发子任务**下不重复（设计稿 §3.1 点名的静默丢事件陷阱）
 6. ContextVar 绑定 / 孤儿标记 / 未绑定时的如实留空
+
+⚠️ **记录捕获用 `audit_records` fixture，不用 caplog**：
+audit logger 被 `setup_logging()` 设为 `propagate=False`（`core/logging.py:144`），
+而 caplog 的 handler 挂在 root → 捕不到。`src/api/main.py:57` 在**模块导入时**即调
+`setup_logging()`，故全量跑时（`test_api` 先于 `test_core`）caplog 方案会**假失败**
+——本项目既有 fixture `audit_records` 正为此存在（见 conftest 的 docstring）。
 """
 
 from __future__ import annotations
@@ -27,64 +33,55 @@ def _fresh_context():
     audit.bind_context("", session_id="", orphan=False)
 
 
-def _records(caplog) -> list[dict]:
-    """从 caplog 取审计行（注入的 logger 会 propagate 到 root）。"""
-    return [
-        json.loads(r.getMessage())
-        for r in caplog.records
-        if r.name == "audit"
-    ]
+def _records(audit_records) -> list[dict]:
+    """fixture 记录 → 扁平 dict 列表（每行一个完整 JSON）。"""
+    return [json.loads(r.getMessage()) for r in audit_records]
 
 
 class TestRecordShape:
     """行结构：核心字段齐备 + 精度 + 命名。"""
 
-    def test_core_fields_present(self, caplog) -> None:
+    def test_core_fields_present(self, audit_records) -> None:
         """每行必含 7 个核心字段（缺一即破坏下游契约）。"""
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit("tool_call", "tool_call.start", status=None, tool="x")
+        audit.emit("tool_call", "tool_call.start", status=None, tool="x")
 
-        rec = _records(caplog)[-1]
+        rec = _records(audit_records)[-1]
         for field in ("ts", "trace_id", "seq", "layer", "event", "status", "session_id"):
             assert field in rec, f"核心字段缺失：{field}"
         assert rec["layer"] == "tool_call"
         assert rec["event"] == "tool_call.start"
 
-    def test_ts_has_millisecond_precision(self, caplog) -> None:
+    def test_ts_has_millisecond_precision(self, audit_records) -> None:
         """ts 必须到毫秒——只到秒会导致同秒内多事件**无法排序**（现状缺陷）。"""
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit("tool_call", "tool_call.start")
+        audit.emit("tool_call", "tool_call.start")
 
-        ts = _records(caplog)[-1]["ts"]
+        ts = _records(audit_records)[-1]["ts"]
         assert "." in ts and len(ts.split(".")[-1][:3]) == 3, f"非毫秒精度：{ts}"
 
-    def test_layer_fields_flattened(self, caplog) -> None:
+    def test_layer_fields_flattened(self, audit_records) -> None:
         """层自有字段平铺在顶层（与既有扁平 JSON 风格一致）。"""
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit(
-                "tool_call", "tool_call.end", status="degraded",
-                tool="fetch_url", duration_ms=812,
-            )
+        audit.emit(
+            "tool_call", "tool_call.end", status="degraded",
+            tool="fetch_url", duration_ms=812,
+        )
 
-        rec = _records(caplog)[-1]
+        rec = _records(audit_records)[-1]
         assert rec["tool"] == "fetch_url"
         assert rec["duration_ms"] == 812
         assert rec["status"] == "degraded"
 
-    def test_no_orphan_key_by_default(self, caplog) -> None:
+    def test_no_orphan_key_by_default(self, audit_records) -> None:
         """非孤儿不写 `orphan` 键（避免噪声字段）。"""
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit("tool_call", "tool_call.start")
+        audit.emit("tool_call", "tool_call.start")
 
-        assert "orphan" not in _records(caplog)[-1]
+        assert "orphan" not in _records(audit_records)[-1]
 
-    def test_orphan_flagged(self, caplog) -> None:
+    def test_orphan_flagged(self, audit_records) -> None:
         """孤儿（无上游触发）→ `orphan=true`（设计稿 B6：禁止留空、如实标记）。"""
         audit.bind_context("cron-abc", orphan=True)
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit("sandbox", "sandbox.gc")
+        audit.emit("sandbox", "sandbox.gc")
 
-        assert _records(caplog)[-1]["orphan"] is True
+        assert _records(audit_records)[-1]["orphan"] is True
 
 
 # 7 个核心字段分三类，**行为各不相同**（测试要把这层说准，不能一锅端）：
@@ -107,17 +104,16 @@ class TestReservedNameGuard:
 
     def test_guard_domain_is_exactly_those_three(self) -> None:
         """自检：守卫域 = `{ts, trace_id, seq}`——**不是全部 7 个**
-        （防有人误以为 7 个都受守卫，从而漏掉另外两类的保护机制）。"""
+        （防有人误以为 7 个都受守卫，从而漏掉另外两类各自的保护机制）。"""
         assert _GUARDED == {"ts", "trace_id", "seq"}
         assert _POSITIONAL | _KEYWORD_ONLY | _GUARDED == set(audit.CORE_FIELDS)
 
     @pytest.mark.parametrize("param", sorted(_KEYWORD_ONLY))
-    def test_keyword_only_names_are_legitimate(self, param: str, caplog) -> None:
+    def test_keyword_only_names_are_legitimate(self, param: str, audit_records) -> None:
         """② 关键字形参：**合法传参**（不是冲突）——传了就用传的。"""
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit("tool_call", "tool_call.start", **{param: "合法值"})
+        audit.emit("tool_call", "tool_call.start", **{param: "合法值"})
 
-        assert _records(caplog)[-1][param] == "合法值"
+        assert _records(audit_records)[-1][param] == "合法值"
 
     @pytest.mark.parametrize("param", sorted(_POSITIONAL))
     def test_positional_names_cannot_be_passed_twice(self, param: str) -> None:
@@ -147,14 +143,14 @@ class TestFailureIsolation:
 class TestSeqUniqueness:
     """🔴 `seq` 的并发陷阱（设计稿 §3.1）：写错会**静默丢事件**。"""
 
-    def test_seq_monotonic(self, caplog) -> None:
-        with caplog.at_level("INFO", logger="audit"):
-            for _ in range(3):
-                audit.emit("tool_call", "tool_call.start")
+    def test_seq_monotonic(self, audit_records) -> None:
+        """同一 trace 内单调递增。"""
+        for _ in range(3):
+            audit.emit("tool_call", "tool_call.start")
 
-        assert [r["seq"] for r in _records(caplog)] == [1, 2, 3]
+        assert [r["seq"] for r in _records(audit_records)] == [1, 2, 3]
 
-    async def test_seq_unique_across_concurrent_tasks(self, caplog) -> None:
+    async def test_seq_unique_across_concurrent_tasks(self, audit_records) -> None:
         """请求内并发（并行子代理）→ 各子任务**共享同一个计数器**，seq 不重复。
 
         若把计数器实现成 `ContextVar[int]`（子任务各持副本），本用例会看到重复值
@@ -167,60 +163,59 @@ class TestSeqUniqueness:
                 audit.emit("tool_call", "tool_call.start")
                 await asyncio.sleep(0)  # 让出控制权，制造真正的交错
 
-        with caplog.at_level("INFO", logger="audit"):
-            await asyncio.gather(*(worker() for _ in range(4)))
+        await asyncio.gather(*(worker() for _ in range(4)))
 
-        seqs = [r["seq"] for r in _records(caplog)]
+        seqs = [r["seq"] for r in _records(audit_records)]
         assert len(seqs) == 20
         assert len(set(seqs)) == 20, f"seq 重复（会静默丢事件）：{sorted(seqs)}"
 
-    def test_bind_context_resets_seq(self, caplog) -> None:
+    def test_bind_context_resets_seq(self, audit_records) -> None:
         """重新 bind（新请求 / worker 取新任务）→ seq 从 1 重新开始。"""
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit("tool_call", "tool_call.start")
-            audit.bind_context("t2")
-            audit.emit("tool_call", "tool_call.start")
+        audit.emit("tool_call", "tool_call.start")
+        audit.bind_context("t2")
+        audit.emit("tool_call", "tool_call.start")
 
-        assert [r["seq"] for r in _records(caplog)] == [1, 1]
+        assert [r["seq"] for r in _records(audit_records)] == [1, 1]
 
 
 class TestContextBinding:
     """trace_id / session_id 的绑定与"如实留空"。"""
 
-    def test_unbound_writes_empty_string(self, caplog) -> None:
+    def test_unbound_writes_empty_string(self, audit_records) -> None:
         """未绑定 → 写**空串**，不编造（设计稿 B6：孤儿也可，但不许瞎填）。"""
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit("tool_call", "tool_call.start")
+        audit.emit("tool_call", "tool_call.start")
 
-        assert _records(caplog)[-1]["trace_id"] == ""
+        assert _records(audit_records)[-1]["trace_id"] == ""
 
-    def test_bound_trace_and_session_propagate(self, caplog) -> None:
+    def test_bound_trace_and_session_propagate(self, audit_records) -> None:
+        """绑定后写入该 trace / session。"""
         audit.bind_context("trace-1", session_id="s-42")
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit("tool_call", "tool_call.start")
+        audit.emit("tool_call", "tool_call.start")
 
-        rec = _records(caplog)[-1]
+        rec = _records(audit_records)[-1]
         assert rec["trace_id"] == "trace-1"
         assert rec["session_id"] == "s-42"
 
-    def test_explicit_session_id_overrides_context(self, caplog) -> None:
+    def test_explicit_session_id_overrides_context(self, audit_records) -> None:
         """显式传 session_id 优先于 context（如 PolicyBackend 自带 thread_id）。"""
         audit.bind_context("trace-1", session_id="from-context")
-        with caplog.at_level("INFO", logger="audit"):
-            audit.emit("file_access", "file_access", session_id="explicit")
+        audit.emit("file_access", "file_access", session_id="explicit")
 
-        assert _records(caplog)[-1]["session_id"] == "explicit"
+        assert _records(audit_records)[-1]["session_id"] == "explicit"
 
-    def test_trace_id_propagates_into_child_task(self, caplog) -> None:
-        """请求内派生的子任务**自动继承** trace_id（create_task 复制 context）。"""
-        async def main() -> None:
-            audit.bind_context("trace-parent", session_id="s1")
-            await asyncio.create_task(child())
+    def test_trace_id_propagates_into_child_task(self, audit_records) -> None:
+        """请求内派生的子任务**自动继承** trace_id（create_task 复制 context）。
+
+        与"长驻消费者"是两回事（后者必须显式携带，见设计稿 §4.2）。
+        """
 
         async def child() -> None:
             audit.emit("tool_call", "tool_call.start")
 
-        with caplog.at_level("INFO", logger="audit"):
-            asyncio.run(main())
+        async def parent() -> None:
+            audit.bind_context("trace-parent", session_id="s1")
+            await asyncio.create_task(child())
 
-        assert _records(caplog)[-1]["trace_id"] == "trace-parent"
+        asyncio.run(parent())
+
+        assert _records(audit_records)[-1]["trace_id"] == "trace-parent"
