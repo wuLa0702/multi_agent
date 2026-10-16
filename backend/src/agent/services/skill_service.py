@@ -13,6 +13,12 @@ async def list_installed_skills() -> list[InstalledSkill]:
         return await skill_repository.list_installed(conn)
 
 
+async def list_mcp_servers() -> list[dict]:
+    """MCP 连接配置列表（对外视图列，**不含鉴权 headers**）。"""
+    async with db_conn.connection() as conn:
+        return await skill_repository.list_mcp_servers(conn)
+
+
 async def update_mcp_server_active(server_id: int, is_active: bool) -> bool:
     """切换 MCP server 启用状态；失败返回 False。"""
     async with db_conn.connection() as conn:

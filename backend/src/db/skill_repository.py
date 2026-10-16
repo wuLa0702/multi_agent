@@ -148,6 +148,27 @@ async def list_mcp_skill_ids(conn: AsyncConnection, server_id: int) -> list[int]
 
 # ── mcp_servers 来源追踪 ──
 
+async def list_mcp_servers(conn: AsyncConnection) -> list[dict]:
+    """MCP 连接配置列表（手动配置 + Skill Market 安装的）。
+
+    ⚠️ **只取对外视图的 7 列**——`headers`（含 `Authorization` 明文）**不得外泄**，
+    故不写 `SELECT *`（`get_mcp_server_by_source_url` 是内部去重用，不对外）。
+
+    Args:
+        conn: PG 连接
+
+    Returns:
+        行 dict 列表（键：id / name / transport / url / is_active / source / version）；
+        排序 `sort_order, id`（手动配置与市场安装共用同一序列）
+    """
+    cursor = await conn.execute(
+        "SELECT id, name, transport, url, is_active, source, version "
+        "FROM mcp_servers ORDER BY sort_order, id"
+    )
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
 async def get_mcp_server_by_source_url(
     conn: AsyncConnection, source_url: str
 ) -> dict | None:
