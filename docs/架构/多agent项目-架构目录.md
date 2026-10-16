@@ -6,6 +6,7 @@
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.16 | 2026-10-16 | **§2 审计与可观测落地**：§2 目录树 `core/` 补 `audit.py`（唯一写入入口 `emit()`）与 `audit_stream.py`（双写第二路）；`db/` 仓储清单补 `audit`。**审计流由两条（`file_access_audit.jsonl` / `agent_trace.jsonl`）收敛为**：底账 JSONL 统一事件模型 + 派生索引 PG `audit_events` |
 > | v2.15 | 2026-10-15 | **§2 MCP 工具治理落地**：§2 目录树 `db/` 子树补 `mcp_meta_repository`；§2.1 能力落地表「远程 MCP 工具」行更新为**连接表 + 治理表**双表，并写明"未登记不挂载 + 市场安装自动登记"两条路径 |
 > | v2.14 | 2026-10-15 | **§2 工具中心一级收拢**：`tools/` 平铺的 6 个文件收进两个二级目录——`contract/`（`result`·`adapter`·`error_map`，工具"长什么样"）+ `guardrails/`（`validators`·`audit`·`gateway`，进/出边界的约束）；`registry.py` 留一级（门面）。纯移动（`git mv` 保历史）+ 40 处 import 路径同步，**零行为变更**（168 用例绿）|
 > | v2.13 | 2026-10-15 | **§2 目录树对齐实际（工具中心收拢遗留）**：`backend/src/` 子树重写——删去**已不存在的 `mcp/`**（registry/server/http_base/adapters/tools）与 `src/skills/`、`agent/planner·summarizer·approve`、`core/langsmith·security`，改为实际的 `tools/`（registry/adapter/result/error_map/audit/gateway/validators/impl/channels/market）+ `wiki/` + `agent/` 8 子域 + 四层标注；§2 落地状态对照表 4 行更新 + 2 行划删（📦 目录已不存在）＋ 新增 tools/ 与 wiki/ 两行；§2.1 能力表「代码工具」行改为 `tools/impl/` + `tools/registry.py`；**§1 依赖链 1 处 + §5 依赖链 1 处**由 `{mcp, sandbox, memory, db}` 改为 `{tools, wiki, sandbox, memory, db}`；§1 架构图两处过时框同步（前端 Vue3 → React 19；MCP 网关 → 工具中心）；tests/ 分层行补 test_skills/test_tools |
@@ -159,12 +160,14 @@ multi-agent-project/
 │   │   ├── sandbox/                # 【能力层】沙箱适配层
 │   │   ├── llm/                    # 【底座层】LLM 适配（唯一 LLM 出口）+ 出站脱敏
 │   │   ├── core/                   # 【底座层】横切基建
+│   │   │   ├── audit.py            #   审计**唯一写入入口** emit()（2026-10-16 批次 1）
+│   │   │   ├── audit_stream.py     #   审计双写第二路：投递/worker/死信/重放/保留
 │   │   │   ├── config.py paths.py logging.py errors.py constants.py
 │   │   │   ├── redis.py retry.py permissions.py model_registry.py backend.py
 │   │   ├── db/                     # 【底座层】唯一 SQL 出口
 │   │   │   ├── connection.py       # PG 连接池单例（2026-10-15 迁移；原 core/db.py）
 │   │   │   ├── schema.py           # 表结构集中定义
-│   │   │   └── *_repository.py     # 各域仓储（session/model/settings/skill/cost/mcp_meta）
+│   │   │   └── *_repository.py     # 各域仓储（session/model/settings/skill/cost/mcp_meta/audit）
 │   │   └── schemas/                # 【底座层】Pydantic 数据模型（2026-08-03 由 models/ 更名）
 │   ├── tests/                      # 分层测试（实际结构，按被测模块分）
 │   │   ├── test_agent/ test_api/ test_core/ test_mcp/
