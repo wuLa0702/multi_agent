@@ -13,7 +13,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from src.core.audit import emit
+from src.core.audit import bind_context, bind_orphan, current_trace_id, emit
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +27,20 @@ _SEEN_MAX = 1000
 
 @dataclass
 class MemoryTask:
-    """记忆抽取任务：对话历史 + 会话定位 + 指纹（幂等去重）。"""
+    """记忆抽取任务：对话历史 + 会话定位 + 指纹（幂等去重）。
+
+    Attributes:
+        trace_id: 发起该任务的请求的审计贯穿 ID（`enqueue` 时从上下文**显式带上**）。
+            ⚠️ 为什么必须随消息传：worker 是 **lifespan 创建的长驻任务**，
+            其 context 是进程启动时的，**不会**自动继承某个请求的 trace_id
+            （`create_task` 只复制创建那一刻的 context，见设计稿 §4.2）。
+    """
 
     session_id: str
     user_message: str
     assistant_text: str
     fingerprint: str   # session_id + 消息 hash（防重复入队）
+    trace_id: str = ""  # 入队时由 enqueue 盖章（调用方不必自己填）
 
 
 class MemoryTaskQueue:
@@ -61,6 +69,10 @@ class MemoryTaskQueue:
         if task.fingerprint in self._seen:
             logger.debug("记忆任务去重：fingerprint=%s", task.fingerprint)
             return False
+        # 盖上发起请求的 trace_id（调用方不必自己填）：入队发生在**请求上下文内**，
+        # 此刻 ContextVar 里就是该请求的 id；worker 取出后再显式恢复（见 run_worker）
+        if not task.trace_id:
+            task.trace_id = current_trace_id()
         try:
             self._queue.put_nowait(task)
         except asyncio.QueueFull:
@@ -85,6 +97,13 @@ class MemoryTaskQueue:
         """
         while True:
             task = await self._queue.get()
+            # 🔴 显式恢复 trace 上下文（设计稿 §4.2）：worker 是 lifespan 长驻任务，
+            # context 是进程启动时的，**不会**自动继承入队请求的 trace_id。
+            # 有则恢复；没有（在请求外入队）→ 按 B6 生成**孤儿** trace（禁止留空）。
+            if task.trace_id:
+                bind_context(task.trace_id, session_id=task.session_id)
+            else:
+                bind_orphan(session_id=task.session_id)
             self.stats["pending"] -= 1
             self.stats["running"] += 1
             self._audit("start", task, "")

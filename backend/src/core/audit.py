@@ -32,6 +32,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import uuid
 from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
@@ -78,6 +79,26 @@ def bind_context(
     _SESSION_ID.set(session_id)
     _ORPHAN.set(orphan)
     _SEQ.set(itertools.count(1))
+
+
+def bind_orphan(session_id: str = "") -> str:
+    """为**无上游**的后台任务绑定一个新的孤儿 trace（设计稿 B6）。
+
+    适用：定时任务 / 进程启动期动作 / 任何拿不到发起者 trace 的场景。
+    规则：
+    - **禁止留空**——留空等于回到"无法关联"（缺口 1），故这里**主动生成**新 id
+    - 打标 `orphan=true`：让"这条是源头"一目了然，孤儿率过高即说明某条链路没接上
+    - 有 `session_id` 则一并带上 → **弱关联**（能回溯到会话，只是不知哪次请求触发）
+
+    Args:
+        session_id: 已知的会话（可空）
+
+    Returns:
+        新生成的 trace_id（调用方可记录/透传）
+    """
+    trace_id = str(uuid.uuid4())
+    bind_context(trace_id, session_id=session_id, orphan=True)
+    return trace_id
 
 
 def current_trace_id() -> str:

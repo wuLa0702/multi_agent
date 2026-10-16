@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -33,6 +34,7 @@ from src.api.settings import router as settings_router
 from src.api.skills import router as skills_router
 from src.api.uploads import router as uploads_router
 from src.db import connection as db_conn
+from src.core.audit import bind_context
 from src.core.config import settings
 from src.agent.main_agent import (
     close_checkpointer,
@@ -226,3 +228,55 @@ class McpMountMiddleware:
 
 # MCP Server：暴露内部工具（internet_search / run_code_in_sandbox）给外部 Agent
 app.add_middleware(McpMountMiddleware, mcp_app=_mcp_http_app)
+
+
+def _incoming_trace_id(scope: dict) -> str:
+    """从请求头取 `X-Trace-Id`；无则生成 UUID4。
+
+    Args:
+        scope: ASGI scope（headers 是原始 bytes 键值对）
+
+    Returns:
+        透传的 trace_id 或新生成的
+    """
+    for key, value in scope.get("headers") or []:
+        if key.lower() == b"x-trace-id":
+            incoming = value.decode("latin-1").strip()
+            if incoming:
+                return incoming
+    return str(uuid.uuid4())
+
+
+class TraceIdMiddleware:
+    """请求入口中间件：为每个 HTTP 请求绑定审计 `trace_id`（设计稿 §4.1）。
+
+    规则：
+    - 请求头带 `X-Trace-Id` → **复用**（跨系统串联：前端 / 网关 / 其他服务传下来）
+    - 未带 → 生成 UUID4
+    - 绑定进 ContextVar（`core.audit.bind_context`）→ 本请求内所有 `emit()` 自动带上，
+      请求内派生的子任务（`create_task`）**自动继承**
+
+    ⚠️ **纯 ASGI 中间件**（与 `McpMountMiddleware` 同款），不用 FastAPI 的
+    `BaseHTTPMiddleware`——后者会再包一层 anyio task group，多一层任务边界，
+    **contextvar 的传播语义反而绕**；直接调内层 app 保留原始执行上下文。
+
+    ⚠️ **长驻消费者（记忆 worker）不适用**：worker 在进程启动时创建，取不到请求
+    上下文 → 那条路必须**随消息显式携带** trace_id（见设计稿 §4.2）。
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            # websocket / lifespan 不绑（无"请求"语义）
+            await self.app(scope, receive, send)
+            return
+        bind_context(_incoming_trace_id(scope))
+        await self.app(scope, receive, send)
+
+
+# 审计贯穿：请求入口绑定 trace_id
+# ⚠️ 注册顺序：`add_middleware` 是**后加的先执行**（Starlette 由外向内包裹），
+#    故放在 McpMount 之后 → 先绑 trace，覆盖**全部**请求（含转发给 MCP 的那条）
+app.add_middleware(TraceIdMiddleware)
