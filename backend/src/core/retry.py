@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -70,7 +71,8 @@ def retry_tool(
         return f"工具调用失败（{type(last_exc).__name__}）：{last_exc}。请稍后重试。"
 
     def decorator(func: Callable) -> Callable:
-        if asyncio.iscoroutinefunction(func):
+        # `inspect.iscoroutinefunction`（非 asyncio 版）：后者 3.12 起弃用、3.16 移除
+        if inspect.iscoroutinefunction(func):
             @wraps(func)
             async def async_wrapper(*args, **kwargs):
                 last_exc: Exception | None = None
