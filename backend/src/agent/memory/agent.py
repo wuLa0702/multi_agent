@@ -20,9 +20,9 @@ from langchain_core.language_models import BaseChatModel
 
 from src.agent.memory.store import MEMORY_NAMESPACES, save_typed_memory
 from src.agent.prompts import MEMORY_AGENT_PROMPT
+from src.core.audit import emit
 
 logger = logging.getLogger(__name__)
-audit_logger = logging.getLogger("audit")
 
 # 工具集最小化（挂载层面单一约束，v1.1 诚实表述）：只挂记忆工具
 _MEMORY_TOOLS = ("search_memory", "read_memory_file", "write_store",
@@ -126,9 +126,18 @@ async def write_store(memory_type: str, fact: str, related: str = "") -> str:
     # P3 质量评估：只审计不拦截（v2.1 定位）——低分也写，审计标注供整理参考
     quality = score_memory_quality(fact, memory_type)
     if quality < 3:
-        audit_logger.info(
-            "memory_agent 低质记忆审计 type=%s quality=%d fact=%s",
-            memory_type, quality, fact[:80],
+        # 批次 1 两处修正（原实现有两个问题）：
+        # ① 格式——原文是一句**纯文本**（`audit_logger.info("memory_agent 低质记忆审计 …")`），
+        #    混在 JSON 审计流里，按 JSON 解析的下游会在它这里炸
+        # ② 内容越界——原记录 `fact[:80]` 是**记忆正文片段**，违反设计稿 §3.5
+        #    边界「审计不记内容」。改记 `fact_len`：足以判断"短"，
+        #    但不泄漏正文（要查正文去 Store）
+        emit(
+            "memory_agent",
+            "memory.low_quality",
+            memory_type=memory_type,
+            quality=quality,
+            fact_len=len(fact),
         )
     await save_typed_memory(store, memory_type, fact, related=related)
     suffix = f"，关联：{related[:20]}" if related else ""

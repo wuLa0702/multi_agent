@@ -283,4 +283,11 @@ async def test_write_store_low_quality_audits_not_blocks(mocker, audit_records) 
     result = await memory_agent.write_store("facts", "短")   # 低质（<3）
 
     assert "已写入 facts" in result, "低分也写（不拦截）"
-    assert any("低质记忆审计" in r.getMessage() for r in audit_records), "审计标注"
+
+    records = [json.loads(r.getMessage()) for r in audit_records]
+    hit = [r for r in records if r.get("event") == "memory.low_quality"]
+    assert hit, "应落 memory.low_quality 审计（批次 1 起为 JSON，不再是纯文本行）"
+    assert hit[-1]["quality"] < 3
+    assert hit[-1]["fact_len"] == 1, "只记长度"
+    # 🔴 边界锁：审计**不得**出现记忆正文（设计稿 §3.5「审计不记内容」）
+    assert "短" not in json.dumps(hit[-1], ensure_ascii=False), "不得记录记忆正文片段"
