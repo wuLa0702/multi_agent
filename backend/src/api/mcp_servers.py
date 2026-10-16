@@ -12,7 +12,6 @@ from pydantic import BaseModel
 
 from src.agent.services import mcp_service, skill_service
 from src.api.error_handlers import api_error
-from src.db import connection as db_conn
 
 router = APIRouter(prefix="/v1/mcp-servers", tags=["mcp-servers"])
 
@@ -78,12 +77,9 @@ def _row_to_out(row) -> McpServerOut:
 @router.get("", response_model=McpServerListResponse)
 async def list_mcp_servers() -> McpServerListResponse:
     """连接配置列表（含手动配置与 Skill Market 安装的）。"""
-    async with db_conn.connection() as conn:
-        cursor = await conn.execute(
-            "SELECT id, name, transport, url, is_active, source, version "
-            "FROM mcp_servers ORDER BY sort_order, id"
-        )
-        rows = await cursor.fetchall()
+    # SQL 下沉 `db/skill_repository`（2026-10-16 B5）：与同文件 PATCH/DELETE 同一条路
+    # （api → skill_service → skill_repository），读写不再分属两层
+    rows = await skill_service.list_mcp_servers()
     items = [_row_to_out(r) for r in rows]
     return McpServerListResponse(items=items, total=len(items))
 
