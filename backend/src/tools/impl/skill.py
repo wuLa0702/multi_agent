@@ -18,8 +18,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 from langchain_core.runnables import RunnableConfig
+from pydantic import Field
 
 from src.core.config import settings
 from src.core.errors import ToolErrorCode
@@ -48,10 +50,19 @@ def _invalid_script_path(script_name: str) -> str:
 
 
 def run_skill_script(
-    skill_name: str,
-    script_name: str,
+    skill_name: Annotated[
+        str,
+        Field(description="技能名（对应 data/skills/skill_md/<技能名>/ 目录）；须为已安装的技能"),
+    ],
+    script_name: Annotated[
+        str,
+        Field(description="技能 scripts/ 目录下的脚本文件名；**禁含 ../ 与绝对路径**（会被安全校验拦截）"),
+    ],
     *,
-    script_args: str = "",
+    script_args: Annotated[
+        str,
+        Field(description="传给脚本的命令行参数字符串；不传则为空（脚本自行用默认值）"),
+    ] = "",
     config: RunnableConfig | None = None,
 ) -> ToolResult:
     """执行技能脚本（读文件 → 沙箱执行，一步封装）。

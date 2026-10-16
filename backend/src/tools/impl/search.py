@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Annotated
 
 import httpx
+from pydantic import Field
 
 from src.core.config import settings
 from src.core.errors import ToolErrorCode
@@ -224,7 +226,16 @@ def _bocha_search(query: str, max_results: int = 5) -> ToolResult:
     )
 
 
-def internet_search(query: str, max_results: int = 5) -> ToolResult:
+def internet_search(
+    query: Annotated[
+        str,
+        Field(description="搜索关键词（自然语言即可，越具体越准；例：LangGraph 1.x 中断恢复机制）"),
+    ],
+    max_results: Annotated[
+        int,
+        Field(description="返回结果条数上限；不传默认 5，建议 3–10（过多会挤占上下文）"),
+    ] = 5,
+) -> ToolResult:
     """针对给定查询执行一次网络搜索（Searchpin 默认 → 博查降级）。
 
     Searchpin（免费默认）失败/无结果 → 自动降级博查（付费）；

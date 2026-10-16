@@ -12,6 +12,10 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
+from pydantic import Field
+
 from src.core.errors import ToolErrorCode
 from src.tools.contract.result import ToolResult
 from src.wiki.export_service import WikiExportError, export_to_wiki
@@ -19,7 +23,20 @@ from src.wiki.export_service import WikiExportError, export_to_wiki
 _TOOL_NAME = "write_wiki"
 
 
-def write_wiki(path: str, content: str, title: str = "") -> ToolResult:
+def write_wiki(
+    path: Annotated[
+        str,
+        Field(description="wiki 页面路径（如 调研结论-LangGraph / 知识-向量检索）；不含扩展名，斜杠分隔层级"),
+    ],
+    content: Annotated[
+        str,
+        Field(description="页面正文（Markdown 格式）；**不得为空**，空内容会返回 invalid_arg 错误"),
+    ],
+    title: Annotated[
+        str,
+        Field(description="页面标题；不传则用 path 作为标题"),
+    ] = "",
+) -> ToolResult:
     """把内容写入 wiki 知识库页面。
 
     Args:

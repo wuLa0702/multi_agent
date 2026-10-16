@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import re
 from html import unescape
+from typing import Annotated
 
 import httpx
+from pydantic import Field
 
 from src.core.errors import ToolErrorCode
 from src.tools.contract.error_map import classify_exception, code_for_http_status
@@ -52,7 +54,16 @@ def clean_html(html: str, max_chars: int | None = _MAX_BODY_CHARS) -> str:
     return text if max_chars is None else text[:max_chars]
 
 
-def fetch_url(url: str, max_chars: int = _MAX_BODY_CHARS) -> ToolResult:
+def fetch_url(
+    url: Annotated[
+        str,
+        Field(description="目标 URL，**仅支持纯 http/https 开头的地址**（禁止 file:// / javascript: 等协议）"),
+    ],
+    max_chars: Annotated[
+        int,
+        Field(description=f"正文截断上限（字符数）；不传默认 {_MAX_BODY_CHARS}，超出会返回 degraded 态"),
+    ] = _MAX_BODY_CHARS,
+) -> ToolResult:
     """受控抓取网页正文（服务端执行，自动过工具审计）。
 
     Args:
