@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     # 快照模板 ID（P2）：依赖预装后 create_snapshot 生成，配置后起沙箱跳过拉镜像/装依赖
     sandbox_snapshot_id: str = ""
 
+    # ── 审计双写（2026-10-16 设计-审计与可观测 §5）──
+    # ⚠️ JSONL **底账恒开**（不受此开关影响）；本开关只管**第二路**（投递 → PG）。
+    # False = 只写 JSONL（排查 / 无 Redis 环境；PG 可事后由 rebuild_from_jsonl 追平）
+    audit_stream_enabled: bool = True
+    # worker 部署形态：embedded = FastAPI 内后台任务（首版）；
+    # standalone = 独立进程（上云后切换，**代码不变**，只是启动位置不同）
+    audit_worker_mode: str = "embedded"
+
     # ── 事件流增强（2026-08-05 引入方案；默认开——多事件分发）──
     # True = token 走 v2 chunk 流（打字机不退化）+ 多事件分发
     #   （tool_call/subagent 事件，契约 v3 落地）

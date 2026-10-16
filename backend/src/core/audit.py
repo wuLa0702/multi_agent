@@ -33,6 +33,7 @@ import itertools
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
@@ -79,6 +80,26 @@ def bind_context(
     _SESSION_ID.set(session_id)
     _ORPHAN.set(orphan)
     _SEQ.set(itertools.count(1))
+
+
+#: 投递回调（双写第二路）。**默认 None = 只写 JSONL**——单测/脚本即此态，
+#: 不依赖 Redis；生产由 lifespan 安装（见 `core/audit_stream.py`）。
+_sink: Callable[[dict], None] | None = None
+
+
+def install_sink(sink: Callable[[dict], None] | None) -> None:
+    """安装/卸载审计投递回调（lifespan 调用；传 None 即卸载，测试可用）。
+
+    Args:
+        sink: 接收扁平审计行的同步回调；None = 只写 JSONL 不投递
+    """
+    global _sink
+    _sink = sink
+
+
+def has_sink() -> bool:
+    """是否已安装投递回调（供测试与健康检查判断双写是否在跑）。"""
+    return _sink is not None
 
 
 def bind_orphan(session_id: str = "") -> str:
@@ -207,3 +228,13 @@ def emit(
         audit_logger.info(json.dumps(record, ensure_ascii=False, default=str))
     except Exception:  # noqa: BLE001 —— 旁路能力：写失败只告警，绝不断业务
         logger.error("审计写入失败（不影响业务）", exc_info=True)
+
+    # ② 投递（双写的第二路）：把同一份事件交给 sink 送进队列 → 由 worker 入 PG。
+    #    ⚠️ **顺序不可颠倒**：底账（①）先落且成功，才投递。崩在两者之间 → 最坏
+    #    「JSONL 有、PG 无」（可重放追平）；绝不会「PG 有、JSONL 无」。
+    #    sink 默认 None（未安装 = 只写 JSONL，单测/脚本即此态，不依赖 Redis）。
+    if _sink is not None:
+        try:
+            _sink(record)
+        except Exception:  # noqa: BLE001 —— 投递失败降级：底账已有，PG 可事后重放补齐
+            logger.warning("审计投递失败（降级：底账已落，PG 可重放补齐）", exc_info=True)

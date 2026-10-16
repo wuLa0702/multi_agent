@@ -33,8 +33,10 @@ from src.api.sessions import router as sessions_router
 from src.api.settings import router as settings_router
 from src.api.skills import router as skills_router
 from src.api.uploads import router as uploads_router
+from src.db import audit_repository
 from src.db import connection as db_conn
-from src.core.audit import bind_context
+from src.core import audit_stream
+from src.core.audit import bind_context, install_sink
 from src.core.config import settings
 from src.agent.main_agent import (
     close_checkpointer,
@@ -134,6 +136,23 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # （方案 §7.6：启动 create_task ×N 不 await；关闭先 join 再 cancel）
     await start_memory_queue()
 
+    # 审计双写第二路（2026-10-16 设计 §5）：装投递 sink + 起消费 worker
+    # ⚠️ 顺序：先确保消费组存在，再装 sink（否则先投递的消息无组可读）
+    audit_task: asyncio.Task | None = None
+    if settings.audit_stream_enabled:
+        try:
+            await asyncio.to_thread(audit_stream.ensure_group)
+            install_sink(audit_stream.stream_sink)
+            if settings.audit_worker_mode == "embedded":
+                audit_task = asyncio.create_task(
+                    audit_stream.run_worker(_audit_insert), name="audit-worker"
+                )
+            logging.info(
+                "审计双写已启用（worker_mode=%s）", settings.audit_worker_mode
+            )
+        except Exception:  # noqa: BLE001 —— 降级：审计仍写 JSONL（底账不受影响）
+            logging.exception("审计双写启动失败——降级为只写 JSONL（可事后重放追平）")
+
     # FastMCP 要求：父 ASGI 应用执行其 lifespan（初始化 session manager task group）
     async with _mcp_http_app.lifespan(_):
         # 模型注册表 + MCP 客户端 + MCP 治理元数据：seed + 加载
@@ -149,6 +168,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             logging.exception("注册表/MCP 加载失败——运行时模型回落 .env，agent 仅用内部工具")
 
         yield
+    # 审计 worker 先停（在关池之前）：装 sink 卸载 → 不再投递 → 再取消 worker
+    install_sink(None)
+    if audit_task is not None:
+        audit_task.cancel()
     await stop_memory_queue()
     await close_store()
     await close_checkpointer()
@@ -228,6 +251,22 @@ class McpMountMiddleware:
 
 # MCP Server：暴露内部工具（internet_search / run_code_in_sandbox）给外部 Agent
 app.add_middleware(McpMountMiddleware, mcp_app=_mcp_http_app)
+
+
+async def _audit_insert(record: dict) -> bool:
+    """审计 worker 的入库回调：一行事件 → PG（幂等）。
+
+    每条开一次连接（从池借出，非新建）。审计属低频事件（估算 < 1 万条/天），
+    该开销可忽略——**不做批量攒批**是刻意的：攒批会让"崩溃丢失的窗口"变大。
+
+    Args:
+        record: 扁平审计行
+
+    Returns:
+        True = 新插入；False = 幂等跳过（同 `(trace_id, seq)` 已存在）
+    """
+    async with db_conn.connection() as conn:
+        return await audit_repository.insert_event(conn, record)
 
 
 def _incoming_trace_id(scope: dict) -> str:
