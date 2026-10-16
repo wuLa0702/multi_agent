@@ -36,8 +36,10 @@ from src.agent.main_agent import (
     stream_agent_events,
     stream_agent_tokens,
 )
+from src.agent.middlewares.token_usage import DEFAULT_CONTEXT_WINDOW
 from src.api.error_handlers import api_error
 from src.db import connection as db_conn
+from src.db import cost_repository, session_repo
 from src.core.config import settings
 from src.core.errors import RetryableError
 from src.core.constants import PAGINATION_LIMIT_MAX
@@ -530,12 +532,8 @@ async def _fetch_latest_cost_alert(conn, session_id: str) -> dict | None:
     Returns:
         SSE data dict（CostAlertEvent 序列化）；无告警 None
     """
-    cur = await conn.execute(
-        "SELECT threshold, total_cost FROM cost_alerts WHERE session_id = %s "
-        "ORDER BY created_at DESC LIMIT 1",
-        (session_id,),
-    )
-    row = await cur.fetchone()
+    # SQL 下沉 `db/cost_repository`（2026-10-16 B5）
+    row = await cost_repository.latest_alert(conn, session_id)
     if row is None:
         return None
     return {
@@ -565,17 +563,17 @@ async def _build_done_event(
         DoneEvent 实例（调用方 model_dump_json）
     """
     duration_ms = int((time.monotonic() - started_at) * 1000)
-    cur = await conn.execute(
-        "SELECT context_used FROM sessions WHERE id = %s", (session_id,)
-    )
-    row = await cur.fetchone()
+    # SQL 下沉 `db/session_repo`（2026-10-16 B5）——与 api/context_usage.py 同一条查询
+    context_used = await session_repo.find_context_used(conn, session_id)
     return DoneEvent(
         run_id=run_id,
         session_id=session_id,
         duration_ms=duration_ms,
-        context_used=row["context_used"] if row else None,
-        context_warning=(
-            row["context_used"] > 0.8 * 128_000 if row and row["context_used"] else False
+        context_used=context_used,
+        # 用量告警（2026-08-05 #4）：>80% 窗口 → 前端提示。窗口值复用唯一常量
+        # （原为硬编码 128_000，与 context_usage.py 的 DEFAULT_CONTEXT_WINDOW 重复）
+        context_warning=bool(
+            context_used and context_used > 0.8 * DEFAULT_CONTEXT_WINDOW
         ),
     )
 

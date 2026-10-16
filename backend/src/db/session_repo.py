@@ -74,10 +74,29 @@ async def create_session(
     return Session(id=session_id, title=title, created_at=now, updated_at=now)
 
 
-async def get_context_used(conn: AsyncConnection, session_id: str) -> int:
-    """读会话当前上下文用量（成本核算差量起点，2026-08-11）。
+async def find_context_used(conn: AsyncConnection, session_id: str) -> int | None:
+    """读会话当前上下文用量；**会话不存在 → None**（与"存在但用量为 0"区分）。
 
     只读单列，避免整 Session 对象构造（datetime 解析成本）。
+    需区分 404 的调用方（`api/context_usage.py`）用本函数；
+    只要数值、无记录即当 0 的调用方用 `get_context_used`。
+
+    Args:
+        conn: PG 连接
+        session_id: 会话 ID
+
+    Returns:
+        context_used；会话不存在 → None
+    """
+    cur = await conn.execute(
+        "SELECT context_used FROM sessions WHERE id = %s", (session_id,)
+    )
+    row = await cur.fetchone()
+    return int(row["context_used"] or 0) if row else None
+
+
+async def get_context_used(conn: AsyncConnection, session_id: str) -> int:
+    """读会话当前上下文用量（成本核算差量起点，2026-08-11）。
 
     Args:
         conn: PG 连接
@@ -86,11 +105,7 @@ async def get_context_used(conn: AsyncConnection, session_id: str) -> int:
     Returns:
         context_used（无记录 → 0）
     """
-    cur = await conn.execute(
-        "SELECT context_used FROM sessions WHERE id = %s", (session_id,)
-    )
-    row = await cur.fetchone()
-    return int(row["context_used"] or 0) if row else 0
+    return await find_context_used(conn, session_id) or 0
 
 
 async def get_session(conn: AsyncConnection, session_id: str) -> Session | None:
