@@ -5,6 +5,8 @@
 2. 边界条件：超过 max_bytes 触发滚动生成备份文件
 3. 错误路径：滚动文件保留数不超过 backupCount + 1
 4. v3：setup_logging 注册 audit logger（JSONL / 透传 formatter / propagate=False）
+5. v4（2026-10-16）：structlog 接入 —— trace_id 注入（未绑定占位 / 已绑定原样 /
+   端到端渲染进日志行）
 """
 
 from __future__ import annotations
@@ -12,7 +14,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from src.core.logging import SizeTimedRotatingFileHandler, setup_logging
+from src.core.audit import bind_context
+from src.core.logging import (
+    NO_TRACE_ID,
+    SizeTimedRotatingFileHandler,
+    _build_formatter,
+    add_trace_id,
+    setup_logging,
+)
 
 
 def test_handler_encoding_is_utf8(tmp_path: Path) -> None:
@@ -90,3 +99,47 @@ def test_setup_logging_registers_audit_handler(tmp_path: Path, monkeypatch) -> N
         root.handlers.extend(root_handlers)
         audit.handlers.clear()
         audit.handlers.extend(audit_handlers)
+
+
+# ── v4（2026-10-16）：structlog 接入 + trace_id 注入 ──────────────────────────
+#
+# ContextVar 是全局的，用例结束必须还原（`bind_context("")`），否则泄漏到
+# 后续审计用例（它们断言 trace_id 为空串）。
+
+
+def test_add_trace_id_unbound_uses_placeholder() -> None:
+    """未绑定 trace_id（启动期 / 长驻 worker / 脚本）→ 占位符，不编造也不留空。"""
+    bind_context("")
+    try:
+        assert add_trace_id(None, "info", {})["trace_id"] == NO_TRACE_ID
+    finally:
+        bind_context("")
+
+
+def test_add_trace_id_injects_bound_id() -> None:
+    """请求入口绑定后 → 原样注入（主日志与审计底账靠它关联）。"""
+    bind_context("trace-xyz", session_id="s1")
+    try:
+        assert add_trace_id(None, "info", {})["trace_id"] == "trace-xyz"
+    finally:
+        bind_context("")
+
+
+def test_formatter_renders_trace_id_and_logger_name() -> None:
+    """端到端（handler → formatter）：日志行含 trace_id + logger 名 + 消息。
+
+    手工构造 LogRecord 直接 format——不经 handler，故不落盘、不污染真实日志目录。
+    """
+    formatter = _build_formatter()
+    bind_context("trace-e2e", session_id="s1")
+    try:
+        record = logging.LogRecord(
+            "src.demo.module", logging.INFO, __file__, 1, "消息 %s", ("x",), None
+        )
+        line = formatter.format(record)
+    finally:
+        bind_context("")
+
+    assert "trace_id=trace-e2e" in line
+    assert "[src.demo.module]" in line
+    assert "消息 x" in line
