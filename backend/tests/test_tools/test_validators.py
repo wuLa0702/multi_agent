@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from src.tools.guardrails import validators
+from src.tools.runtime import validators
 
 
 # ── validate_url ──

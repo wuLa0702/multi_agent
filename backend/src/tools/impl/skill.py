@@ -41,7 +41,7 @@ _SCRIPTS_SUBDIR = "scripts"
 
 def _invalid_script_path(script_name: str) -> str:
     """路径穿越 → 审计 + 返回拒绝文案（审计由 security 模块统一记）。"""
-    from src.tools.guardrails.audit import log_security_blocked
+    from src.tools.runtime.audit import log_security_blocked
 
     log_security_blocked(_TOOL_NAME, f"路径穿越：{script_name}")
     return "技能脚本路径不合法：仅允许 scripts/ 内相对文件名。"

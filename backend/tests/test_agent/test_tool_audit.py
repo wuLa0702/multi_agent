@@ -14,7 +14,7 @@ import httpx
 import pytest
 from langchain_core.messages import ToolMessage
 
-from src.tools.guardrails.audit import ToolAuditMiddleware
+from src.tools.runtime.audit import ToolAuditMiddleware
 
 
 def _make_request(name: str, args: dict | None = None, session_id: str = "s1"):
@@ -287,9 +287,9 @@ class TestFailurePaths:
         def _bad_emit(*a, **k):
             raise ValueError("审计字段与核心字段重名")
 
-        monkeypatch.setattr("src.tools.guardrails.audit.emit", _bad_emit)
+        monkeypatch.setattr("src.tools.runtime.audit.emit", _bad_emit)
 
-        with caplog.at_level("ERROR", logger="src.tools.guardrails.audit"):
+        with caplog.at_level("ERROR", logger="src.tools.runtime.audit"):
             result = await middleware.awrap_tool_call(
                 _make_request("internet_search"), _fake_handler
             )

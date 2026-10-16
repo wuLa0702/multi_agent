@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-from src.tools.guardrails.audit import security_audit
+from src.tools.runtime.audit import security_audit
 
 # ── URL（安全机制 D3）：纯 http/https + 无注入字符（空格/引号/分号/<>）──
 _SAFE_URL_RE = re.compile(r"^https?://[^\s\"'<>;]+$")

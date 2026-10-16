@@ -15,7 +15,7 @@ error_map.py  归一入契约  异常 / HTTP 状态 → ToolErrorCode（`ToolRes
 |---|---|---|
 | `result.py` | `ToolResult` / `render` / `exhausted_result` | 所有 `impl/` 工具 + 下游（审计/SSE/编排） |
 | `adapter.py` | `as_lc_tool` / `artifact_of` | `registry.py`（装配挂载形态时包在最外层） |
-| `error_map.py` | `classify_exception` / `code_for_http_status` | `result.py`（填 `retryable`）+ `guardrails/audit.py` |
+| `error_map.py` | `classify_exception` / `code_for_http_status` | `result.py`（填 `retryable`）+ `runtime/audit.py` |
 
 > 设计依据：`docs/决策/2026-10-14-设计-工具中心阶段2输出侧-v1.md`｜
 > 目录讨论见 `docs/临时/2026-10-14-汇总-工具中心分支开发笔记-v1.md`
