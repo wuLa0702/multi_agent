@@ -1,11 +1,12 @@
 # 多 Agent 项目 — 前后端架构目录 v2（拍板版）
 
 > 📋 **规范**：遵循 `docs/规则/文档规范.md`
-> 📌 **更新时间**：2026-10-15
+> 📌 **更新时间**：2026-10-16
 > 📝 **版本变更记录**（永久保存，只追加不删除）：
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.17 | 2026-10-16 | **§2 目录树按磁盘全面复核重写（修正长期脱节）**：① `tools/guardrails/` → **`tools/runtime/`**（co-creator 拍板：该目录实装 validators（有拦截权）+ audit（只记录）+ gateway（跨切面收口点），"护栏"名不副实；`git mv` 保历史 + 36 处引用同步，**零行为变更**）；② 删去**已不存在**的 `deploy/nginx.conf`·`deploy/.env.prod`·`skill-resources/`·`download/`·`docs/architecture|agent-manual|learnings/`·`backend/{pyproject.toml,docker-compose.yml,langgraph.json}`；③ **改位置**：`pyproject.toml`/`docker-compose.yml`/`.env.example`/`scripts/dev.sh|dev.bat|dev-restart.*` 均在**仓库根**（非 `backend/` 下），原树误挂 backend；④ 补漏 `frontend/scripts`·`frontend/src/lib/api`·`backend/assets`·`backend/examples`·`llm/cache.py`·`scripts/demo_interview.py`·仓库根 `main.py`/`README.md` 等；⑤ 标注 `api/sessions.py` **承担历史**（原树写的 `history.py` 不存在）、`auth/` 为**尚未创建**的蓝图；⑥ 标注 `db/session_repo.py` 仓库**唯一破例命名**；⑦ **清理 `src/mcp/` 空目录残留**（git 未跟踪的陈旧字节码，2026-10-15 已宣布收拢但目录未删）|
 > | v2.16 | 2026-10-16 | **§2 审计与可观测落地**：§2 目录树 `core/` 补 `audit.py`（唯一写入入口 `emit()`）与 `audit_stream.py`（双写第二路）；`db/` 仓储清单补 `audit`。**审计流由两条（`file_access_audit.jsonl` / `agent_trace.jsonl`）收敛为**：底账 JSONL 统一事件模型 + 派生索引 PG `audit_events` |
 > | v2.15 | 2026-10-15 | **§2 MCP 工具治理落地**：§2 目录树 `db/` 子树补 `mcp_meta_repository`；§2.1 能力落地表「远程 MCP 工具」行更新为**连接表 + 治理表**双表，并写明"未登记不挂载 + 市场安装自动登记"两条路径 |
 > | v2.14 | 2026-10-15 | **§2 工具中心一级收拢**：`tools/` 平铺的 6 个文件收进两个二级目录——`contract/`（`result`·`adapter`·`error_map`，工具"长什么样"）+ `guardrails/`（`validators`·`audit`·`gateway`，进/出边界的约束）；`registry.py` 留一级（门面）。纯移动（`git mv` 保历史）+ 40 处 import 路径同步，**零行为变更**（168 用例绿）|
@@ -104,26 +105,27 @@ flowchart TB
 
 ---
 
-## 2. 目录树（前后端完整）
+## 2. 目录树（前后端完整） 🔴 v2.17
+
+> 📌 **2026-10-16 按磁盘全面复核重写**：本节此前有多处与工作区**不符**（`deploy/nginx.conf`、`deploy/.env.prod`、`skill-resources/`、`download/`、`docs/architecture|agent-manual|learnings/`、`backend/{pyproject,docker-compose,langgraph.json}`、`api/history.py` 等，均已不存在或位置错误）。**本次以 `find`/`ls` 实测为准重建**，只列磁盘实有项。
+> ⚠️ **使用提醒**：本节是**结构真相源**，引用前请以磁盘为准；发现不符直接改本节（不再各处抄）。
 
 ```
 multi-agent-project/
-├── frontend/                       # 前端 React 19 + shadcn/ui（纯通用对话可视化，无业务）
+├── frontend/                       # 前端 React 19 + shadcn/ui
 │   ├── src/
-│   │   ├── pages/
-│   │   │   └── ChatPage.tsx        # 通用对话主界面：流式输出、工具调用链、人工审批
-│   │   ├── api/
-│   │   │   ├── client.ts           # SSE 流式请求封装
-│   │   │   └── types.ts            # 前后端通用事件协议
-│   │   ├── components/
-│   │   │   ├── ToolCallPanel.tsx   # 通用工具调用展示
-│   │   │   ├── AgentTree.tsx       # 多子Agent调用链可视化
-│   │   │   ├── ApproveDialog.tsx   # 通用人工中断审批弹窗
-│   │   │   └── HistorySidebar.tsx  # 会话历史侧边栏
-│   │   ├── lib/                    # shadcn/ui 通用组件工具
-│   │   └── main.tsx
-│   ├── vite.config.ts              # 前端反向代理配置
-│   └── package.json
+│   │   ├── pages/                  # ChatPage · SettingsPage · SkillsPage（3 页）
+│   │   ├── components/             # 11 子域：agent · agent-elements · chat · common · history
+│   │   │                           #   · layout · settings · shared · skills · todo · ui
+│   │   ├── lib/
+│   │   │   ├── api/                # client.ts · sse.ts · types.ts（事件协议）· mock.ts
+│   │   │   ├── hooks/ · stores/
+│   │   │   └── messageScroll.ts · navigation.ts · utils.ts
+│   │   ├── hooks/ · utils/ · test/ # use-mobile · useTheme / logger.ts / 前端测试
+│   │   └── App.tsx · main.tsx · index.css
+│   ├── scripts/mock-backend.mjs    # 前端 mock 后端（联调用）
+│   ├── vite.config.ts · package.json · pnpm-lock.yaml · tsconfig*.json · components.json
+│   └── dist/ · node_modules/       # 构建产物 / 依赖（不入库）
 │
 ├── backend/                        # 通用多Agent后端 FastAPI
 │   ├── src/
@@ -131,8 +133,10 @@ multi-agent-project/
 │   │   │   ├── main.py             # FastAPI 入口、CORS、路由注册
 │   │   │   ├── chat.py             # 流式对话、断点恢复
 │   │   │   ├── export.py           # wiki 双向通道 REST 路由
-│   │   │   ├── health.py · mcp_servers.py · skills.py · history 等
-│   │   │   └── auth/               # ⏳ 鉴权演进预留
+│   │   │   ├── sessions.py         #   会话 CRUD + 历史（⚠️ 无独立 history.py）
+│   │   │   ├── health.py · context_usage.py · cost.py · providers.py
+│   │   │   ├── settings.py · skills.py · mcp_servers.py · uploads.py   # 共 12 个模块
+│   │   │   └── auth/               #   ⏳ 鉴权演进预留（**尚未创建**）
 │   │   ├── agent/                  # 【编排层】根只允许 main_agent.py（见下 §2 对照表）
 │   │   │   ├── main_agent.py       # 主 Agent 编排入口（工具挂载 / 事件流 / 中间件装配）
 │   │   │   ├── hitl/               # 人在回路：审批配置（从工具登记表派生）+ 中断采集
@@ -149,16 +153,16 @@ multi-agent-project/
 │   │   │   │   ├── result.py       #   ToolResult 三态信封 + LLM 文本渲染
 │   │   │   │   ├── adapter.py      #   输出适配：ToolResult → content_and_artifact
 │   │   │   │   └── error_map.py    #   异常 / HTTP 状态 → 归一错误码
-│   │   │   ├── guardrails/         # 护栏（调用进/出边界的约束）
-│   │   │   │   ├── validators.py   #   入口校验（路径/URL 否定禁止收口）
-│   │   │   │   ├── audit.py        #   审计两行制（只审计不拦截）
-│   │   │   │   └── gateway.py      #   调度中心（失败回灌 LLM 的摘要口径）
+│   │   │   ├── runtime/            # 运行时：工具调用进/出边界的横切 🆕 2026-10-16 更名
+│   │   │   │   ├── validators.py   #   入口校验（**本目录唯一有拦截权的**）
+│   │   │   │   ├── audit.py        #   审计两行制（**只记录不拦截**）
+│   │   │   │   └── gateway.py      #   调度中心（**跨切面收口点**：未来超时/重试/脱敏挂此）
 │   │   │   ├── impl/               # 工具实现（11 个：搜索/抓取/沙箱 4/技能/wiki/研报 2/澄清）
 │   │   │   ├── channels/           # 接入协议通道（MCP 双向已实现；REST/A2A 占位）
 │   │   │   └── market/             # Skill Market（市场适配 + 安装）
 │   │   ├── wiki/                   # 【能力层】wiki 知识库 REST 双向通道（2026-10-15 下沉）
 │   │   ├── sandbox/                # 【能力层】沙箱适配层
-│   │   ├── llm/                    # 【底座层】LLM 适配（唯一 LLM 出口）+ 出站脱敏
+│   │   ├── llm/                    # 【底座层】adapter（唯一 LLM 出口）· redact（出站脱敏）· cache
 │   │   ├── core/                   # 【底座层】横切基建
 │   │   │   ├── audit.py            #   审计**唯一写入入口** emit()（2026-10-16 批次 1）
 │   │   │   ├── audit_stream.py     #   审计双写第二路：投递/worker/死信/重放/保留
@@ -167,36 +171,43 @@ multi-agent-project/
 │   │   ├── db/                     # 【底座层】唯一 SQL 出口
 │   │   │   ├── connection.py       # PG 连接池单例（2026-10-15 迁移；原 core/db.py）
 │   │   │   ├── schema.py           # 表结构集中定义
-│   │   │   └── *_repository.py     # 各域仓储（session/model/settings/skill/cost/mcp_meta/audit）
+│   │   │   └── 7 个仓储：audit · cost · mcp_meta · model · settings · skill
+│   │   │       └── + session_repo ⚠️（唯一破例命名，其余皆 *_repository.py）
 │   │   └── schemas/                # 【底座层】Pydantic 数据模型（2026-08-03 由 models/ 更名）
 │   ├── tests/                      # 分层测试（实际结构，按被测模块分）
 │   │   ├── test_agent/ test_api/ test_core/ test_mcp/
 │   │   ├── test_sandbox/ test_skills/ test_tools/    # test_tools 含分层不变量测试
 │   │   ├── fixtures/               # 共享测试数据
 │   │   └── conftest.py             # 共享 fixture：mock LLM / tmp_path / PG 独立 schema
-│   ├── scripts/                    # 开发/运维脚本
-│   │   ├── dev.sh dev.bat dev-restart.*   # 一键启动 / 快重启
-│   │   ├── lint_tools.py           # 工具静态检查（注解/命名/docstring）
-│   │   ├── check_no_bare_except.py # 裸捕获检查
-│   │   ├── audit_tool_descriptions.py · eval_harness.py · agent_demo.py
-│   ├── .env.example                # 通用环境变量模板（LLM、沙箱、数据库配置）
-│   ├── langgraph.json
-│   ├── pyproject.toml
-│   └── docker-compose.yml          # 通用容器编排
+│   ├── assets/                     # 静态资源：eval/ · skills/
+│   ├── examples/                   # 示例脚本 4 个：dynamic_subagents · event_streaming_v3
+│   │                               #   · interpreter_ptc · verify_subagent_structured_output
+│   ├── scripts/                    # **Python 开发工具**（⚠️ dev.sh 不在此处，见下方仓库根）
+│   │   ├── lint_tools.py           #   工具静态检查（注解/命名/docstring）
+│   │   ├── check_no_bare_except.py #   裸捕获检查
+│   │   └── audit_tool_descriptions.py · eval_harness.py · agent_demo.py · demo_interview.py
+│   └── （无 pyproject / docker-compose / langgraph.json —— 位置见下方仓库根）
 │
-├── deploy/                         # 通用部署配置，无业务定制
-│   ├── nginx.conf
-│   └── .env.prod
+├── scripts/                        # 一键启动脚本（⚠️ 在**仓库根**，**非 backend/ 下**）
+│   ├── dev.sh · dev.bat            # 一键启动（Docker 资源 + 前端 5176 + 后端 8010）
+│   ├── dev-restart.sh · dev-restart.bat   # 后端快重启
+│   └── lib/
 │
-├── skill-resources/                # 【空业务资源目录】使用者后续自定义业务技能配置存放处
-│                                   # 框架初始仅保留空文件夹，不预置业务文件
+├── deploy/                         # 部署配置
+│   └── opensandbox/sandbox.toml    # OpenSandbox 沙箱配置
 │
-├── download/                       # 沙箱文件统一输出目录，core/paths统一管控
+├── docs/                           # 项目文档（**全中文目录**，规划见 `docs/规则/文档治理规则.md`）
+│   └── 架构/ · 规则/ · 决策/ · 方案/ · 学习/ · 踩坑/ · 归档/ · 参考/ · 临时/ · 图片和附件/
 │
-└── docs/                           # 通用框架文档，无业务操作手册
-    ├── architecture/               # 整体分层架构、数据流说明
-    ├── agent-manual/              # 通用Agent、子Agent配置使用手册
-    └── learnings/                 # 框架开发踩坑记录
+├── data/                           # 运行时数据（gitignore；仅 data/memory/decisions.md 入库）
+├── logs/                           # 运行时日志（gitignore）
+├── 前端ui模仿图片/                  # 前端 UI 参考图
+│
+├── docker-compose.yml              # ⚠️ 容器编排在**仓库根**（非 backend/）
+├── pyproject.toml · requirements.txt
+├── .env.example                    # 环境模板（.env.dev / .env.prod 已 gitignore）
+├── main.py                         # ⚠️ PyCharm 默认示例脚本（非项目代码，可删）
+└── README.md · CLAUDE.md · AGENTS.md · BACKLOG.md · GEMINI.md · KIMI.md
 ```
 
 > **落地状态对照**（2026-10-15 按工作区实测复核；✅ 已落地 / ⏳ 演进预留 / ✏️ 实际偏差 / 📦 目录已不存在）：
@@ -211,9 +222,9 @@ multi-agent-project/
 > | agent/planner · summarizer · approve | ✏️ | 蓝图拟作独立模块，**实际内聚在别处**：任务清单=框架 `write_todos`；压缩=框架 summarizer；审批=`agent/hitl/` |
 > | agent/graph/（手写 LangGraph 主图） | ⏳ | 演进预留，**目录尚未创建**（蓝图保留，见 §6.1 决策 #1） |
 > | agent/memory · middlewares | ✅ | 已落地：memory（抽取/存储/队列）、middlewares（token 用量 / trace / **builder 唯一装配点**） |
-> | **tools/（工具中心）** | ✅ | **2026-10-14 收拢新增**（阶段 0–4 落地）：唯一登记处 registry + 输出契约 result/adapter + 审计 audit + 网关 gateway + 校验 validators + `impl/`（11 工具）+ `channels/`（协议通道）+ `market/`（Skill Market）|
+> | **tools/（工具中心）** | ✅ | **2026-10-14 收拢新增**（阶段 0–4 落地）：唯一登记处 `registry.py`（门面，留一级）+ `contract/`（result·adapter·error_map）+ **`runtime/`**（validators·audit·gateway，🆕 2026-10-16 由 `guardrails/` 更名）+ `impl/`（8 文件 / 11 工具）+ `channels/`（base·mcp_client·mcp_meta·mcp_server）+ `market/`（marketplace·installer·templates）|
 > | **wiki/（wiki 对接）** | ✅ | **2026-10-15 新增**：`export_service` / `read_service`（REST 双向），由 `agent/services/` 下沉（修 P13 分层违规） |
-> | ~~mcp/（registry · server · http_base · adapters · tools）~~ | 📦 | **目录已不存在**（2026-10-14 阶段 1.0 收拢）：工具实现 → `tools/impl/`；协议通道 → `tools/channels/`；注册表 → `tools/registry.py` |
+> | ~~mcp/（registry · server · http_base · adapters · tools）~~ | 📦 | **目录已不存在**（2026-10-14 阶段 1.0 收拢）：工具实现 → `tools/impl/`；协议通道 → `tools/channels/`；注册表 → `tools/registry.py`。<br>⚠️ **2026-10-16 实测更正**：此前"已不存在"只对**代码**成立——磁盘上仍留有 `src/mcp/` **空壳**（git 未跟踪的陈旧 `.pyc`，含早已迁走的 client/registry/server/sandbox_tool）。**本次已物理删除** |
 > | ~~src/skills/（marketplace · installer）~~ | 📦 | **目录已不存在**（同上）：Skill Market 业务层 → `tools/market/`（源目录已空并删除） |
 > | sandbox/adapter.py | ✏️ | OpenSandbox 实现内聚单文件（本地 docker / 云端仅换 URL），暂不拆 opensandbox/local_docker |
 > | sandbox/health · breaker · download | ⏳ | 演进预留（adapter 内已含超时语义）|
@@ -225,7 +236,7 @@ multi-agent-project/
 > | db/models · repositories | ⏳ | ORM 化演进预留 |
 > | schemas/ | ✅ | 2026-08-03 由 models/ 更名（events/message/session），.claude/rules/10-api.md 已同步 |
 > | tests/ 分层 | ✏️ | 实际 test_agent / test_api / test_core / test_mcp / test_sandbox / test_skills / test_tools（以 .claude/rules/20-testing.md 为准）|
-> | scripts/ | ✏️ | dev.sh/dev.bat/dev-restart.* 已落地；agent_demo.py 2026-08-03 由 agent/ 移入；smoke_test.py ⏳ |
+> | scripts/ | ✏️ | **分两处**：仓库根 `scripts/`（dev.sh/dev.bat/dev-restart.*/lib）+ `backend/scripts/`（lint_tools/check_no_bare_except/audit_tool_descriptions/eval_harness/agent_demo/demo_interview）；agent_demo.py 2026-08-03 由 agent/ 移入；smoke_test.py ⏳ |
 > | pyproject.toml · docker-compose.yml | ✏️ | 在项目根（非 backend/）——移动会破坏文档命令与 dev.sh |
 > | .env.example · langgraph.json | ⏳ | 待建（当前 .env.dev 已配置）|
 > | deploy/ | ✅ | 已有目录 |
