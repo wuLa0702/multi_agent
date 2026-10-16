@@ -45,9 +45,19 @@ class TraceEvent:
     session_id: str | None = None
 
     def to_json(self) -> dict:
-        """序列化为扁平 JSON 行（落盘形态）。"""
+        """序列化为扁平 JSON 行（落盘形态）。
+
+        `trace_id`（2026-10-16 审计落地批次 2 接入）：**审计与 trace 共享同一个
+        trace_id**（方向决策 D4）——trace 留 JSONL（可采样 / 短期）、审计进 PG
+        （全量 / 长期），两者靠这个 id 可互相定位（"这次报错对应的排障链在哪"）。
+
+        取当前 context 的值（请求入口中间件已绑定；未绑定 → **空串，如实不编造**）。
+        """
+        from src.core.audit import current_trace_id
+
         line = {
             "ts": self.ts,
+            "trace_id": current_trace_id(),
             "event": self.event,
             "name": self.name,
             "summary": self.summary,
