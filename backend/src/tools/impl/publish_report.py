@@ -11,12 +11,25 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
+from pydantic import Field
+
 from src.tools.contract.result import ToolResult
 
 _TOOL_NAME = "publish_report"
 
 
-def publish_report(report_content: str, title: str = "") -> ToolResult:
+def publish_report(
+    report_content: Annotated[
+        str,
+        Field(description="报告全文（Markdown）；会完整展示给用户审批，须是最终稿"),
+    ],
+    title: Annotated[
+        str,
+        Field(description="报告标题；用于审批卡片摘要展示，不传则为空"),
+    ] = "",
+) -> ToolResult:
     """提交研究报告供审核交付。
 
     研究报告完整生成后调用，请求用户审核确认后再交付。报告内容将展示

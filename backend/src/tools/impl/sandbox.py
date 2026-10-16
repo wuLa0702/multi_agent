@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Annotated
 
 from langchain_core.runnables import RunnableConfig
+from pydantic import Field
 
 from src.core.config import settings
 from src.core.errors import ToolErrorCode
@@ -134,7 +136,15 @@ def _output_result(raw: str, *, tool: str, data_key: str) -> ToolResult:
 
 
 def run_code_in_sandbox(
-    code: str, filename: str = "script.py", config: RunnableConfig | None = None
+    code: Annotated[
+        str,
+        Field(description="要执行的 Python 代码（完整可运行片段，必要的 import 要写全）；在工作区目录下执行"),
+    ],
+    filename: Annotated[
+        str,
+        Field(description="代码落盘时的文件名；不传默认 script.py（仅影响文件名，不影响执行）"),
+    ] = "script.py",
+    config: RunnableConfig | None = None,
 ) -> ToolResult:
     """在会话级沙箱中执行 Python 代码并返回输出（池化：复用 + 续期）。
 
@@ -201,7 +211,16 @@ def run_code_in_sandbox(
 
 
 def run_command_in_sandbox(
-    command: str, *, timeout: int = 60, config: RunnableConfig | None = None
+    command: Annotated[
+        str,
+        Field(description="要执行的 shell 命令（如 pip install pandas）；在工作区目录下执行，危险前缀（rm -rf 等）会被拒"),
+    ],
+    *,
+    timeout: Annotated[
+        int,
+        Field(description="命令超时秒数；不传默认 60，长耗时任务请显式调大（超时即中止并返回 error）"),
+    ] = 60,
+    config: RunnableConfig | None = None,
 ) -> ToolResult:
     """在会话级沙箱中执行 shell 命令（能力计划 §3.2/§3.4）。
 
@@ -238,7 +257,15 @@ def run_command_in_sandbox(
 
 
 def upload_workspace_file(
-    filename: str, content: str, config: RunnableConfig | None = None
+    filename: Annotated[
+        str,
+        Field(description="沙箱内目标文件名（workspace 相对路径）；**禁含 ../ 与绝对路径**（会被安全校验拦截）"),
+    ],
+    content: Annotated[
+        str,
+        Field(description="要写入的文本内容"),
+    ],
+    config: RunnableConfig | None = None,
 ) -> ToolResult:
     """上传（能力计划 §3.3）：内容写入沙箱内 /workspace/{filename}。
 
@@ -282,7 +309,11 @@ def upload_workspace_file(
 
 
 def download_sandbox_file(
-    filename: str, config: RunnableConfig | None = None
+    filename: Annotated[
+        str,
+        Field(description="沙箱内要取回的文件名（workspace 相对路径）；**禁含 ../ 与绝对路径**（会被安全校验拦截）"),
+    ],
+    config: RunnableConfig | None = None,
 ) -> ToolResult:
     """取回（能力计划 §3.3）：读取沙箱内 /workspace/{filename} 内容。
 

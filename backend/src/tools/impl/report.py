@@ -9,6 +9,10 @@ Word 渲染（沙箱 python-docx）为增强，当前以结构化 Markdown 交�
 
 from __future__ import annotations
 
+from typing import Annotated
+
+from pydantic import Field
+
 from src.core.errors import ToolErrorCode
 from src.tools.contract.result import ToolResult
 
@@ -18,7 +22,16 @@ _DEFAULT_TITLE = "研究报告"
 _SOURCE_NOTE = "_来源引用：请确保关键论断有可核验来源（编号引用）_"
 
 
-def generate_report(title: str, content: str) -> ToolResult:
+def generate_report(
+    title: Annotated[
+        str,
+        Field(description="报告标题；留空则用默认标题「研究报告」（仍算成功）"),
+    ],
+    content: Annotated[
+        str,
+        Field(description="报告正文（Markdown，可多章节）；**不得为空**，空内容返回 invalid_arg"),
+    ],
+) -> ToolResult:
     """生成结构化研报（标题 + 正文 + 来源占位）。
 
     Args:

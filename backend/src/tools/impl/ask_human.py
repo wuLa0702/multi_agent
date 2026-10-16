@@ -8,8 +8,17 @@
 
 from __future__ import annotations
 
+from typing import Annotated
 
-def ask_human(message: str) -> str:
+from pydantic import Field
+
+
+def ask_human(
+    message: Annotated[
+        str,
+        Field(description="要问用户的问题；**单一明确问题**（不要多个问题混成一条），可含必要的选项或背景"),
+    ],
+) -> str:
     """向用户提问澄清。
 
     当用户目标、范围、约束或交付形式模糊时调用，向用户提问澄清；
