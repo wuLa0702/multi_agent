@@ -181,9 +181,9 @@ def test_policy_backend_denies_skills_write(tmp_path, audit_records) -> None:
         wrapped.write("/skills/market/x.md", "content")
 
     rec = json.loads(audit_records[-1].getMessage())
-    assert rec["decision"] == "deny"
+    assert rec["policy_decision"] == "deny"
     assert rec["policy"] == "skills-readonly"
-    assert rec["thread_id"] == "t1"
+    assert rec["session_id"] == "t1"
 
 
 def test_policy_backend_allows_workspace_write(tmp_path, audit_records) -> None:
@@ -195,7 +195,7 @@ def test_policy_backend_allows_workspace_write(tmp_path, audit_records) -> None:
     assert (tmp_path / "note.txt").read_text(encoding="utf-8") == "hello"
 
     rec = json.loads(audit_records[-1].getMessage())
-    assert rec["decision"] == "allow"
+    assert rec["policy_decision"] == "allow"
 
 
 def test_policy_backend_async_write_guarded(tmp_path, audit_records) -> None:
@@ -259,7 +259,7 @@ def test_policy_backend_write_keyword_method_guarded(audit_records) -> None:
     ro = PolicyBackend(stub, SKILL_READONLY_POLICY)
     with pytest.raises(PermissionError):
         ro.mkdir("/skills/a/b")
-    assert json.loads(audit_records[-1].getMessage())["decision"] == "deny"
+    assert json.loads(audit_records[-1].getMessage())["policy_decision"] == "deny"
 
     w = PolicyBackend(stub, WORKSPACE_POLICY)
     assert w.mkdir("/proj") == "made /proj"
@@ -270,18 +270,30 @@ def test_policy_backend_write_keyword_method_guarded(audit_records) -> None:
 
 
 def test_audit_json_flat_fields(tmp_path, audit_records) -> None:
-    """修正 2：审计行为完整扁平 JSON（7 顶层字段，无嵌套 msg 包裹）。"""
+    """审计行为完整扁平 JSON：**核心 7 字段 + 本层自有字段**，无嵌套 msg 包裹。
+
+    批次 1 起核心字段由 `core.audit.emit()` 统一补齐，本层只负责自己的
+    `op` / `path` / `policy_decision` / `policy`——**精确锁住字段集**，
+    防止某天有人偷偷多塞字段或漏字段（下游契约会被打破）。
+    """
     wrapped = PolicyBackend(
         FilesystemBackend(root_dir=tmp_path, virtual_mode=True), WORKSPACE_POLICY, thread_id="t9"
     )
     wrapped.write("/f.txt", "x")
 
     rec = json.loads(audit_records[-1].getMessage())
-    assert set(rec) == {"ts", "thread_id", "layer", "op", "path", "decision", "policy"}
-    assert rec["layer"] == "policy_backend"
+    assert set(rec) == {
+        # 核心 7（emit 统一补齐）
+        "ts", "trace_id", "seq", "layer", "event", "status", "session_id",
+        # 本层自有
+        "op", "path", "policy_decision", "policy",
+    }
+    assert rec["layer"] == "file_access", "原 policy_backend → file_access（更直白）"
+    assert rec["event"] == "file_access.write", "事件名点分（含操作）"
     assert rec["op"] == "write"
     assert rec["path"] == "/f.txt"
-    assert rec["decision"] == "allow"
+    assert rec["policy_decision"] == "allow", "原 decision → policy_decision（消混淆）"
+    assert rec["session_id"] == "t9", "原 thread_id → session_id"
 
 
 def test_static_skills_default_path_is_builtin(monkeypatch) -> None:

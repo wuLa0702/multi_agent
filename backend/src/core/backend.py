@@ -10,8 +10,14 @@
 修正（评审拍板，2026-08-04）：
   1. PolicyBackend 白名单委托——读/查询方法白名单放行；写关键字方法先过策略；
      未知可调用 raise AttributeError（防新增方法绕过 __getattr__）
-  2. 审计输出统一扁平 JSON 行（ts/thread_id/layer/op/path/decision/policy 顶层）
+  2. 审计输出统一扁平 JSON 行（经 `core.audit.emit()` 唯一入口：
+     ts/trace_id/seq/layer/event/status/session_id 顶层 + op/path/policy_decision/policy）
   3. 内存模式（StateBackend）default 路由同样经策略包装，行为一致
+
+审计落地批次 1（2026-10-16）：写入改经 `core.audit.emit()`——`layer` 由
+`policy_backend` 改 `file_access`（更直白说明审的是什么），`decision(allow/deny)`
+→ `policy_decision`（原名易与"审计决定"混淆），`thread_id` → `session_id`，
+事件名点分 `file_access.<op>`。本模块不再持有 `audit_logger`。
 
 开关（config.py）：
   MEMORY_WORKSPACE         True → default 切 StateBackend（dev 测试兼容）
@@ -20,16 +26,15 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
 
+from src.core.audit import emit, is_configured as is_audit_configured
 from src.core.config import settings
 from src.core.paths import (
     get_exports_dir,
@@ -40,7 +45,6 @@ from src.core.paths import (
 )
 
 logger = logging.getLogger(__name__)
-audit_logger = logging.getLogger("audit")
 
 # 工作区临时文件过期天数（cleanup_workspace 默认）
 WORKSPACE_CLEANUP_DAYS = 30
@@ -239,25 +243,33 @@ class PolicyBackend:
         decision = self._policy.decide(op, path)
         self._audit(op, path, decision)
         if decision == "deny":
-            if not audit_logger.handlers:  # 审计未配置（未调 setup_logging）时回落模块日志
+            if not is_audit_configured():  # 审计未配置（未调 setup_logging）→ 补记模块日志
                 logger.warning(
-                    "backend 策略拦截：%s %s（thread=%s，policy=%s）——拒绝",
+                    "backend 策略拦截：%s %s（session=%s，policy=%s）——拒绝",
                     op, path, self._thread_id, self._policy.name,
                 )
             raise PermissionError(f"策略拒绝：{self._policy.name} 禁止 {op} {path}")
 
     def _audit(self, op: str, path: str, decision: str) -> None:
-        """扁平 JSON 审计行（修正 2）：字段全在顶层，每行一个完整 JSON 对象。"""
-        record = {
-            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "thread_id": self._thread_id,
-            "layer": "policy_backend",
-            "op": op,
-            "path": path,
-            "decision": decision,
-            "policy": self._policy.name,
-        }
-        audit_logger.info(json.dumps(record, ensure_ascii=False))
+        """文件访问审计行（经唯一入口 `emit()`）。
+
+        Args:
+            op: 操作（write / read / delete …）→ 拼进点分事件名 `file_access.<op>`
+            path: 访问路径
+            decision: 策略判定（allow / deny）→ 字段名 `policy_decision`
+                （原名 `decision` 易与"审计决定"混淆）
+        """
+        emit(
+            "file_access",
+            f"file_access.{op}",
+            # ⚠️ `self._thread_id` 是构造注入的会话标识（与 session_id 同值）——
+            # 属性本身未改名（`_wrap` / `create_backend` 的形参链沿用），只统一**字段名**
+            session_id=self._thread_id,
+            op=op,
+            path=path,
+            policy_decision=decision,
+            policy=self._policy.name,
+        )
 
 
 class ReadOnlyBackend(PolicyBackend):

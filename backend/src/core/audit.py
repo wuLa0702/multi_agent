@@ -85,6 +85,19 @@ def current_trace_id() -> str:
     return _TRACE_ID.get()
 
 
+def is_configured() -> bool:
+    """审计流是否已配置（`setup_logging()` 已给 `audit` logger 挂 handler）。
+
+    调用场景（`core/backend.py` 的拒绝分支）：审计**未配置**时，拦截这件事
+    在审计流里留不下痕——此时补记一条**模块日志 warning**，避免"拒绝了但没人知道"。
+    把"是否已配置"的判定收在本模块，避免各写入点各自去摸 `audit_logger.handlers`。
+
+    Returns:
+        True = 审计流可用（正常路径，`emit()` 能落盘）
+    """
+    return bool(audit_logger.handlers)
+
+
 def _next_seq() -> int:
     """取下一个序号；未 bind 过时惰性初始化（保证单测可直接用 emit）。"""
     counter = _SEQ.get()
