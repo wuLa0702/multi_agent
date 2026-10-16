@@ -12,20 +12,19 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from opensandbox.sync.sandbox import SandboxSync
 
+from src.core.audit import emit
 from src.core.config import settings
 from src.sandbox.adapter import OpenSandboxAdapter
 
 logger = logging.getLogger(__name__)
-audit_logger = logging.getLogger("audit")
 
 
 class SandboxFullError(RuntimeError):
@@ -149,15 +148,20 @@ class SandboxPool:
         self._audit("destroy", thread_id, self._sandbox_id(entry.sandbox))
 
     def _audit(self, event: str, thread_id: str, sandbox_id: str) -> None:
-        """生命周期审计（与 policy_backend 同构的扁平 JSON 行，layer=sandbox）。"""
-        record = {
-            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "thread_id": thread_id,
-            "layer": "sandbox",
-            "event": event,
-            "sandbox_id": sandbox_id,
-        }
-        audit_logger.info(json.dumps(record, ensure_ascii=False))
+        """沙箱池生命周期审计（经唯一入口 `emit()`）。
+
+        Args:
+            event: 生命周期动作（create / renew / destroy / full）
+                → 拼成点分事件名 `sandbox.<动作>`
+            thread_id: 会话标识（池的键，与 `session_id` 同值）
+            sandbox_id: 沙箱实例 id；`full`（池满拒绝）时无实例 → 空串
+        """
+        emit(
+            "sandbox",
+            f"sandbox.{event}",
+            session_id=thread_id,
+            sandbox_id=sandbox_id,
+        )
 
     @staticmethod
     def _sandbox_id(sandbox: SandboxSync) -> str:

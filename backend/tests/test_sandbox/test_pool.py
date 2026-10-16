@@ -126,14 +126,17 @@ def test_pool_disabled_returns_fresh(monkeypatch) -> None:
 
 
 def test_pool_audits_lifecycle(monkeypatch, audit_records) -> None:
-    """生命周期审计：create/destroy 事件写 layer=sandbox 扁平 JSON。"""
+    """生命周期审计：`sandbox.<动作>` 点分事件 + 核心字段由 emit 统一补齐。"""
     pool, _, _ = _make_pool(monkeypatch)
     sb = pool.get_sandbox("t1")
     pool.destroy("t1")
 
     events = [json.loads(r.getMessage()) for r in audit_records]
-    creates = [e for e in events if e["event"] == "create"]
-    destroys = [e for e in events if e["event"] == "destroy"]
+    creates = [e for e in events if e["event"] == "sandbox.create"]
+    destroys = [e for e in events if e["event"] == "sandbox.destroy"]
     assert len(creates) == 1 and creates[0]["layer"] == "sandbox"
-    assert creates[0]["thread_id"] == "t1"
+    assert creates[0]["session_id"] == "t1", "原 thread_id → session_id"
     assert destroys[0]["sandbox_id"] == sb.id
+
+    # 核心字段由 emit 统一补齐（本层只负责 sandbox_id 这类自有字段）
+    assert {"ts", "trace_id", "seq", "layer", "event", "status", "session_id"} <= set(creates[0])
