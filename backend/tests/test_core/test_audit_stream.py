@@ -285,3 +285,120 @@ class TestRepositoryOnPG:
 
         assert deleted == 1, "只删 sandbox 档"
         assert left == 1, "security 档保留（长期）"
+
+
+# ── 重放（T4.1） ──
+
+
+class TestRebuildFromJsonl:
+    """重放：底账 → PG，幂等且不因坏行中断。"""
+
+    def test_read_ledger_skips_bad_lines_not_abort(self, tmp_path) -> None:
+        """坏行**收集不中断**（重放不能因为一行坏数据整批失败）。"""
+        f = tmp_path / audit_stream.LEDGER_FILENAME
+        f.write_text('{"seq": 1}\n{坏行\n{"seq": 2}\n', encoding="utf-8")
+
+        records, errors = audit_stream.read_ledger([f])
+
+        assert [r["seq"] for r in records] == [1, 2], "好行照收"
+        assert len(errors) == 1 and "2" in errors[0], "坏行记明出处"
+
+    async def test_rebuild_is_idempotent(self, tmp_path) -> None:
+        """重放两次 → 第二次全 skipped（幂等，靠 PG 的唯一约束保证）。"""
+        f = tmp_path / audit_stream.LEDGER_FILENAME
+        f.write_text('{"seq": 1}\n{"seq": 2}\n', encoding="utf-8")
+        seen: set[int] = set()
+
+        async def insert(record):
+            if record["seq"] in seen:
+                return False
+            seen.add(record["seq"])
+            return True
+
+        first = await audit_stream.rebuild_from_jsonl(insert, files=[f])
+        second = await audit_stream.rebuild_from_jsonl(insert, files=[f])
+
+        assert (first["scanned"], first["inserted"], first["skipped"]) == (2, 2, 0)
+        assert (second["inserted"], second["skipped"]) == (0, 2), "重复执行安全"
+
+    async def test_rebuild_reports_insert_failures(self, tmp_path) -> None:
+        """单行入库失败 → 记错误但**继续**（不中断整次重放）。"""
+        f = tmp_path / audit_stream.LEDGER_FILENAME
+        f.write_text('{"seq": 1}\n{"seq": 2}\n', encoding="utf-8")
+
+        async def insert(record):
+            if record["seq"] == 1:
+                raise RuntimeError("boom")
+            return True
+
+        result = await audit_stream.rebuild_from_jsonl(insert, files=[f])
+
+        assert result["inserted"] == 1 and len(result["errors"]) == 1
+
+    async def test_ledger_files_includes_rotated(self, tmp_path, monkeypatch) -> None:
+        """重放必须覆盖**滚动历史**（否则"PG 丢了昨天"补不回来）。"""
+        monkeypatch.setattr(audit_stream, "get_log_dir", lambda: tmp_path)
+        (tmp_path / audit_stream.LEDGER_FILENAME).write_text("{}\n", encoding="utf-8")
+        (tmp_path / f"{audit_stream.LEDGER_FILENAME}.2026-10-15").write_text("{}\n", encoding="utf-8")
+
+        names = [p.name for p in audit_stream.ledger_files()]
+
+        assert names[0] == audit_stream.LEDGER_FILENAME, "当前文件在前"
+        assert any("2026-10-15" in n for n in names), "滚动文件也算"
+
+
+# ── 保留：底账归档（T4.2） ──
+
+
+class TestArchiveLedgers:
+    """旧滚动底账 → `.gz`（**压缩而非删除**：底账是权威凭证）。"""
+
+    async def test_archives_only_old_rolled_files(self, tmp_path) -> None:
+        import os
+        import time
+
+        current = tmp_path / audit_stream.LEDGER_FILENAME
+        current.write_text("{}\n", encoding="utf-8")
+        old = tmp_path / f"{audit_stream.LEDGER_FILENAME}.2026-01-01"
+        old.write_text("{}\n", encoding="utf-8")
+        stale = time.time() - 200 * 86400
+        os.utime(old, (stale, stale))
+
+        archived = await audit_stream.archive_old_ledgers(90, log_dir=tmp_path)
+
+        assert archived == 1
+        assert (tmp_path / f"{old.name}.gz").is_file(), "压缩保留"
+        assert not old.exists(), "原文件移走（已被 gz 取代）"
+        assert current.exists(), "**当前正在写的文件不归档**"
+
+
+# ── 脱敏（T4.3） ──
+
+
+class TestRedactRecord:
+    """审计出站脱敏：复用 `llm/redact.py` 同一规则表。"""
+
+    def test_redacts_secret_values_and_counts(self) -> None:
+        """密钥被替换 + `redacted` 记元信息（**不记原文**）。"""
+        out = audit.redact_record(
+            {"layer": "tool_call", "args": "key=sk-abcdefghijklmnopqrstuvwxyz1234"}
+        )
+
+        assert "sk-abcdefghijklmnopqrstuvwxyz1234" not in out["args"], "密钥必须脱敏"
+        assert out["redacted"], "必须记下'脱了几处/哪类'（否则审计失真）"
+        assert out["layer"] == "tool_call", "非敏感字段原样"
+
+    def test_non_string_values_untouched(self) -> None:
+        """数字/布尔/None 原样（避免误转类型）。"""
+        out = audit.redact_record({"seq": 3, "ok": True, "x": None})
+
+        assert out == {"seq": 3, "ok": True, "x": None}
+        assert "redacted" not in out, "没命中就不加字段"
+
+    def test_emit_applies_redaction(self, audit_records) -> None:
+        """端到端：`emit()` 落盘的行已脱敏。"""
+        audit.emit("tool_call", "tool_call.start", args="token sk-abcdefghijklmnopqrstuvwx")
+
+        line = audit_records[-1].getMessage()
+        assert "sk-abcdefghijklmnopqrstuvwx" not in line
+        assert "已脱敏" in line

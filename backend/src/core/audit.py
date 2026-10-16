@@ -194,6 +194,43 @@ def build_record(
     return record
 
 
+def redact_record(record: dict[str, Any]) -> dict[str, Any]:
+    """审计行出站前脱敏（**复用 `llm/redact.py` 的同一张规则表**）。
+
+    **为什么复用而不是另立**：本项目反复踩"同一件事两处写"——脱敏规则若分家
+    （出站脱敏一套、审计一套），迟早漂移。`redact()` 返回 `{类别: 次数}`，
+    这里把它累加成字段 `redacted`（**保留元信息**：脱了几处、哪类；
+    不记原文，否则日志本身成了泄漏源）。
+
+    只脱**字符串值**（键名保留）——数字/布尔等原样，避免误转类型。
+
+    Args:
+        record: 扁平审计行（原地不修改，返回副本）
+
+    Returns:
+        脱敏后的新行；有命中时附 `redacted` 字段
+    """
+    from src.core.config import settings
+    from src.llm.redact import redact
+
+    if not settings.redact_enabled:
+        return record
+
+    counts: dict[str, int] = {}
+    out: dict[str, Any] = {}
+    for key, value in record.items():
+        if isinstance(value, str):
+            cleaned, hits = redact(value)
+            out[key] = cleaned
+            for kind, n in hits.items():
+                counts[kind] = counts.get(kind, 0) + n
+        else:
+            out[key] = value
+    if counts:
+        out["redacted"] = counts
+    return out
+
+
 def emit(
     layer: str,
     event: str,
@@ -224,6 +261,8 @@ def emit(
         )
     except ValueError:
         raise  # 编程错误：当场暴露，不吞（吞了等于悄悄少记字段）
+    # 出站脱敏（设计稿 B4.3）：与出站 LLM 脱敏复用同一张规则表
+    record = redact_record(record)
     try:
         audit_logger.info(json.dumps(record, ensure_ascii=False, default=str))
     except Exception:  # noqa: BLE001 —— 旁路能力：写失败只告警，绝不断业务

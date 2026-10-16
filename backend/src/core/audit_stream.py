@@ -201,6 +201,156 @@ async def consume_batch(
     return ok
 
 
+#: 底账文件名（与 `core/logging.py` 的 audit handler 一致）
+LEDGER_FILENAME = "file_access_audit.jsonl"
+
+
+def ledger_files() -> list[Path]:
+    """底账文件列表（当前文件 + 滚动出的历史文件，按名排序）。
+
+    滚动文件由 `SizeTimedRotatingFileHandler` 产出，命名形如
+    `file_access_audit.jsonl.2026-10-15`——重放必须**一并覆盖**，
+    否则"PG 丢了昨天的数据"就补不回来。
+
+    Returns:
+        存在的底账文件（新 → 旧之外的顺序无关，重放幂等）
+    """
+    log_dir = Path(get_log_dir())
+    candidates = [log_dir / LEDGER_FILENAME]
+    candidates += sorted(log_dir.glob(f"{LEDGER_FILENAME}.*"), reverse=True)
+    return [p for p in candidates if p.is_file()]
+
+
+def read_ledger(files: list[Path] | None = None) -> tuple[list[dict], list[str]]:
+    """读底账文件 → `(记录列表, 坏行说明)`。
+
+    **坏行不中断**：审计底账里出现一行解析不了的内容，不能因此让整次重放失败
+    ——收集起来返回，由调用方决定告警或人工处置。
+
+    Args:
+        files: 指定文件；None → `ledger_files()` 全量
+
+    Returns:
+        `(records, errors)`；errors 是 `"文件:行号 原因"` 的人类可读串
+    """
+    records: list[dict] = []
+    errors: list[str] = []
+    for path in files if files is not None else ledger_files():
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                records.append(json.loads(line))
+            except Exception as exc:  # noqa: BLE001 —— 坏行收集，不中断
+                errors.append(f"{path.name}:{lineno} {type(exc).__name__}")
+    return records, errors
+
+
+async def rebuild_from_jsonl(
+    insert, *, files: list[Path] | None = None
+) -> dict[str, int | list[str]]:
+    """**重放**：底账 JSONL → PG（幂等）。
+
+    这是"PG 可重建"的落地——没有它，设计稿 §4.1.5 那句就只是口号。
+    用途：① PG 丢消息 ② 降级期补录 ③ 迁移重建 ④ 一致性校验。
+
+    幂等性来自 PG 的 `UNIQUE (trace_id, seq)` + `ON CONFLICT DO NOTHING`，
+    故**可安全重复执行**（重复的部分记为 skipped）。
+
+    Args:
+        insert: 异步入库函数 `insert(record) -> bool`
+        files: 指定底账文件；None → 全部（含滚动历史）
+
+    Returns:
+        `{"scanned": 总行数, "inserted": 新插入, "skipped": 幂等跳过, "errors": 坏行说明}`
+    """
+    records, errors = read_ledger(files)
+    inserted = skipped = 0
+    for record in records:
+        try:
+            was_new = await insert(record)
+        except Exception as exc:  # noqa: BLE001 —— 单行失败不中断整次重放
+            errors.append(f"insert failed: {type(exc).__name__}: {exc}")
+            continue
+        if was_new:
+            inserted += 1
+        else:
+            skipped += 1
+    logger.info(
+        "审计重放完成：扫描 %d / 新插 %d / 幂等跳过 %d / 坏行 %d",
+        len(records), inserted, skipped, len(errors),
+    )
+    return {
+        "scanned": len(records),
+        "inserted": inserted,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
+async def archive_old_ledgers(keep_days: int, *, log_dir: Path | None = None) -> int:
+    """把超期的**滚动底账**压缩归档为 `.gz`（不删除）。
+
+    底账是权威凭证，故**压缩而非删除**（压缩比通常 5–10×）。
+    当前正在写的 `file_access_audit.jsonl` **不归档**（还在追加）。
+
+    Args:
+        keep_days: 保留天数（更早的滚动文件转 .gz）
+        log_dir: 日志目录（测试注入）
+
+    Returns:
+        本次归档的文件数
+    """
+    import gzip
+    import shutil
+    import time
+
+    base = Path(log_dir) if log_dir is not None else Path(get_log_dir())
+    cutoff = time.time() - keep_days * 86400
+    archived = 0
+    for path in base.glob(f"{LEDGER_FILENAME}.*"):
+        if path.suffix == ".gz" or path.stat().st_mtime >= cutoff:
+            continue
+        try:
+            with open(path, "rb") as src, gzip.open(f"{path}.gz", "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            path.unlink()
+            archived += 1
+        except OSError:  # noqa: BLE001 —— 单个归档失败不影响其它
+            logger.warning("底账归档失败：%s", path.name, exc_info=True)
+    if archived:
+        logger.info("审计底账归档 %d 个文件为 .gz", archived)
+    return archived
+
+
+async def run_retention_loop(
+    purge, *, interval_seconds: float = 86400.0, keep_days: int = 90
+) -> None:
+    """常驻保留任务：按分档删 PG + 归档旧底账（lifespan 启动；一天一次）。
+
+    ⚠️ **不引入调度组件**（X2 拍板）：与记忆队列同款的低频后台循环已足够——
+    保留策略对时效性不敏感，晚跑几小时无影响。
+
+    Args:
+        purge: 异步清理函数 `purge(cutoff_days) -> int`（由装配方注入，负责
+            按 layer 分档调用仓储的 `delete_before`）
+        interval_seconds: 循环间隔（默认一天）
+        keep_days: 底账归档阈值（天）
+    """
+    import asyncio
+
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await purge()
+            await archive_old_ledgers(keep_days)
+        except asyncio.CancelledError:
+            logger.info("审计保留任务收到取消，退出")
+            raise
+        except Exception:  # noqa: BLE001 —— 保留任务不能因单次异常退出
+            logger.exception("审计保留任务单轮异常（继续下一轮）")
+
+
 async def run_worker(insert, *, poll_seconds: float = 1.0) -> None:
     """常驻消费 worker：循环 `consume_batch`（lifespan 启动）。
 

@@ -139,6 +139,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # 审计双写第二路（2026-10-16 设计 §5）：装投递 sink + 起消费 worker
     # ⚠️ 顺序：先确保消费组存在，再装 sink（否则先投递的消息无组可读）
     audit_task: asyncio.Task | None = None
+    audit_retention_task: asyncio.Task | None = None
     if settings.audit_stream_enabled:
         try:
             await asyncio.to_thread(audit_stream.ensure_group)
@@ -147,6 +148,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                 audit_task = asyncio.create_task(
                     audit_stream.run_worker(_audit_insert), name="audit-worker"
                 )
+            audit_retention_task = asyncio.create_task(
+                audit_stream.run_retention_loop(_audit_purge), name="audit-retention"
+            )
             logging.info(
                 "审计双写已启用（worker_mode=%s）", settings.audit_worker_mode
             )
@@ -172,6 +176,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     install_sink(None)
     if audit_task is not None:
         audit_task.cancel()
+    if audit_retention_task is not None:
+        audit_retention_task.cancel()
     await stop_memory_queue()
     await close_store()
     await close_checkpointer()
@@ -267,6 +273,38 @@ async def _audit_insert(record: dict) -> bool:
     """
     async with db_conn.connection() as conn:
         return await audit_repository.insert_event(conn, record)
+
+
+#: 保留期分档（设计稿 B4.1）：安全/审批类长期（追责），读类短
+_AUDIT_RETENTION_DAYS: dict[str, int] = {
+    "security": 365 * 3,
+    "hitl": 365 * 3,
+    "tool_call": 365,
+    "file_access": 365,
+    "api": 365,
+    "sandbox": 90,
+    "memory_agent": 90,
+}
+
+
+async def _audit_purge() -> int:
+    """按 layer 分档清理过期审计（保留任务调用）。
+
+    Returns:
+        删除行数合计
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    removed = 0
+    async with db_conn.connection() as conn:
+        for layer, days in _AUDIT_RETENTION_DAYS.items():
+            removed += await audit_repository.delete_before(
+                conn, now - timedelta(days=days), (layer,)
+            )
+    if removed:
+        logging.info("审计保留清理：删除 %d 条过期事件", removed)
+    return removed
 
 
 def _incoming_trace_id(scope: dict) -> str:
