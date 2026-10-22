@@ -176,7 +176,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="internet_search",
         fn=internet_search,
         domain="search",
-        description="博查网络搜索：关键词 → 结构化结果（标题/链接/摘要）",
+        description="网络搜索：关键词 → 标题/链接/摘要。需要时效性信息（新闻/版本/价格）或对自身知识没把握时用",
         is_idempotent=True,
         retry=RetryPolicy(extra_exceptions=(httpx.HTTPStatusError,)),
         fallback_to="fetch_url",
@@ -187,7 +187,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="fetch_url",
         fn=fetch_url,
         domain="search",
-        description="受控抓取网页正文（搜索发现 + 抓取获取 双工具分工）",
+        description="抓取指定 URL 的网页正文（自动清洗 HTML 并截断）。已从搜索拿到链接、需要读全文时用",
         is_idempotent=True,
         retry=RetryPolicy(extra_exceptions=(httpx.HTTPStatusError,)),
         mount_main=False,
@@ -197,7 +197,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="run_code_in_sandbox",
         fn=run_code_in_sandbox,
         domain="sandbox",
-        description="在隔离 OpenSandbox 沙箱执行 Python 代码并返回输出",
+        description="在隔离沙箱执行 Python 代码并返回 stdout。需要精确计算、处理数据或验证脚本时用（不污染本机）",
         risk_level="high",
         requires_approval=True,
         # 允许 edit：代码可以人类改完再跑，改比重写省事
@@ -207,7 +207,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="run_command_in_sandbox",
         fn=run_command_in_sandbox,
         domain="sandbox",
-        description="在沙箱执行 shell 命令并返回输出",
+        description="在隔离沙箱执行 shell 命令并返回输出。安装依赖、跑测试、查看沙箱文件时用",
         risk_level="high",
         requires_approval=True,
         # 不允许 edit：命令改了还是得重新执行，"改了照旧跑"没有意义
@@ -221,7 +221,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="upload_workspace_file",
         fn=upload_workspace_file,
         domain="file",
-        description="把会话工作区文件上传到沙箱",
+        description="把文本内容写入沙箱工作区的指定文件。要在沙箱里跑脚本/处理数据、需先把内容送进去时用",
         risk_level="medium",
         requires_approval=True,
         allowed_decisions=("approve", "reject"),
@@ -230,7 +230,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="download_sandbox_file",
         fn=download_sandbox_file,
         domain="file",
-        description="从沙箱取回文件到会话工作区",
+        description="把沙箱工作区里的文件取回。沙箱里生成了文件（脚本产物/报告）需要拿回结果时用",
         risk_level="medium",
         requires_approval=True,
         allowed_decisions=("approve", "reject"),
@@ -240,7 +240,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="run_skill_script",
         fn=run_skill_script,
         domain="skill",
-        description="执行技能脚本（读文件→沙箱→执行一步封装）",
+        description="执行已安装技能的脚本（读技能文件 → 沙箱执行，一步封装）。技能说明里提到某个脚本时用",
         size="big",  # 强事务：一个整体动作，非可自由编排的原子操作
         risk_level="high",
         requires_approval=True,
@@ -251,7 +251,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="write_wiki",
         fn=write_wiki,
         domain="wiki",
-        description="把内容写入 wiki 知识库（不可达时工具降级）",
+        description="把 Markdown 内容写入 wiki 知识库页面。需要长期保存/归档调研结论时用（wiki 不可达会降级）",
         risk_level="medium",
     ),
     # ── 研报域 ──
@@ -259,7 +259,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="generate_report",
         fn=generate_report,
         domain="report",
-        description="研报结构化生成（主 Agent 撰写 → 结构化 → 交付）",
+        description="把 Markdown 正文结构化生成研报（标题 + 来源占位）。要交付正式报告时用，通常再接 publish_report",
         size="big",
     ),
     # ── HITL 域（hitl_enabled 门控，见 hitl_tools）──
@@ -267,7 +267,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="ask_human",
         fn=ask_human,
         domain=HITL_DOMAIN,
-        description="向人类澄清需求 / 中途确认（HITL 决策出口）",
+        description="向人类提问澄清。目标/范围/交付形式**模糊**，或执行计划开始前需确认时用（一次只问一个明确问题）",
         requires_approval=True,
         # 只用 respond：人类回答即工具结果。**绝不配 approve/edit**
         # （官方警告：respond 仅限 ask-user 类工具）
@@ -277,7 +277,7 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         name="publish_report",
         fn=publish_report,
         domain=HITL_DOMAIN,
-        description="输出审核交付闸门（HITL 审批出口）",
+        description="提交研究报告请求人类审核后交付。报告定稿后调用（人类可批准 / 改后交付 / 驳回）",
         requires_approval=True,
         # 允许 edit：人类可直接改报告正文后交付
         allowed_decisions=("approve", "edit", "reject"),
@@ -349,7 +349,13 @@ def _with_output_adapter(spec: ToolSpec) -> ToolSpec:
     Returns:
         `fn` 替换为 `BaseTool` 的同名 `ToolSpec`（`name` 单一来源，不重复书写）
     """
-    return replace(spec, fn=as_lc_tool(spec.fn, name=spec.name))
+    return replace(
+        spec,
+        # `description` 必须显式传：langchain 默认取函数 docstring **全文**
+        # （含 Args / Returns 段），既啰嗦又和登记表那句话对不上。
+        # 2026-10-16 修 B13：以登记表为**唯一真相源**（一句话，省 token）。
+        fn=as_lc_tool(spec.fn, name=spec.name, description=spec.description),
+    )
 
 
 # 对外唯一真相源：键 → 挂载形态（裸实现 → 幂等门控包重试 → 包输出适配）。

@@ -58,6 +58,35 @@ def test_fallback_target_is_registered() -> None:
             assert spec.fallback_to in registry.TOOL_REGISTRY
 
 
+#: 描述长度上限：登记表口径是「一句话」，过长说明在把 docstring 往里搬
+MAX_DESCRIPTION_CHARS = 120
+
+
+def test_llm_facing_description_comes_from_registry() -> None:
+    """B13 守卫：LLM 看到的 description 必须**等于**登记表那句话。
+
+    此前 langchain 默认取函数 **docstring 全文**（含 `Args:` / `Returns:` 段），
+    `ToolSpec.description` 从未生效——同一件事写了两遍，且模型拿到的是啰嗦版。
+    2026-10-16 起由 `_with_output_adapter` 显式覆写，本测试锁死。
+    """
+    mismatched = [
+        (name, spec.description[:30], (spec.fn.description or "")[:30])
+        for name, spec in registry.TOOL_REGISTRY.items()
+        if spec.fn.description != spec.description
+    ]
+    assert not mismatched, f"描述与登记表不一致（LLM 会看到 docstring 全文）：{mismatched}"
+
+
+def test_tool_descriptions_are_concise() -> None:
+    """登记表描述必须是「一句话」：非空且 ≤ MAX_DESCRIPTION_CHARS 字。"""
+    bad = [
+        (name, len(spec.description))
+        for name, spec in registry._IMPL_SPECS.items()
+        if not spec.description.strip() or len(spec.description) > MAX_DESCRIPTION_CHARS
+    ]
+    assert not bad, f"以下工具描述为空或过长（上限 {MAX_DESCRIPTION_CHARS}）：{bad}"
+
+
 def test_approval_flag_matches_decisions() -> None:
     """不变量：`requires_approval=True` ⟺ `allowed_decisions` 已声明。
 

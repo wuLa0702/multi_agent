@@ -44,20 +44,32 @@ from langchain_core.tools import BaseTool, tool
 from src.tools.contract.result import ToolResult, render
 
 
-def as_lc_tool(fn: Callable[..., ToolResult], *, name: str) -> BaseTool:
+def as_lc_tool(
+    fn: Callable[..., ToolResult], *, name: str, description: str | None = None
+) -> BaseTool:
     """把 `-> ToolResult` 的函数适配为 langchain `content_and_artifact` 工具。
 
     Args:
         fn: 工具实现（返回 `ToolResult`）
         name: 暴露给 LLM 的工具名——须与 `TOOL_REGISTRY` 的键、HITL `interrupt_on`
             名单一致（审批按名匹配）
+        description: **给 LLM 看的一句话描述**。传了就**覆写**框架从 docstring
+            推断出的全文（见下方说明）；传 None 则沿用 docstring（旧行为）。
 
     Returns:
         声明了 `response_format="content_and_artifact"` 的 `BaseTool`；
-        入参 schema 由 `fn` 的签名推断，`description` 取自 `fn` 的 docstring
+        入参 schema 由 `fn` 的签名推断
+
+    Note:
+        **为什么要有 description 参数**（2026-10-16 修 B13）：
+        `tool()` 默认把函数的 **docstring 全文**（含 `Args:` / `Returns:` 段）
+        当作 LLM 可见描述；而 `ToolSpec.description` 是一句话。此前两处都写、
+        只有 docstring 生效，第 5 次"同一件事写两遍"。
+        现在由 `registry._with_output_adapter` 显式传入登记表那句话 → **登记表
+        是唯一真相源**，docstring 只留给人看（`help()` / IDE 提示）。
 
     Raises:
-        ValueError: `fn` 无 docstring（框架要求工具必须有描述，缺则 import 期即失败）
+        ValueError: `fn` 无 docstring 且未传 `description`（框架要求工具必须有描述）
     """
 
     @wraps(fn)
@@ -66,7 +78,12 @@ def as_lc_tool(fn: Callable[..., ToolResult], *, name: str) -> BaseTool:
         result = fn(*args, **kwargs)
         return render(result), artifact_of(result)
 
-    return tool(name, response_format="content_and_artifact")(_entry)
+    lc_tool = tool(name, response_format="content_and_artifact")(_entry)
+    if description:
+        # 覆写框架从 docstring 推断的**全文**（含 Args/Returns）——B13：
+        # 登记表的一句话才是给 LLM 看的口径，docstring 留给人看。
+        lc_tool.description = description
+    return lc_tool
 
 
 def artifact_of(result: ToolResult) -> dict[str, Any]:
