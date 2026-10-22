@@ -1,6 +1,8 @@
 # 与 pyproject.toml dependencies 保持一致（部署/CI 便捷入口）
 # 安装：pip install -r requirements.txt
-# 2026-08-12 更新：按 backend/.venv312 实际安装版本对齐（此前版本下限过旧，
+# 2026-10-16 更新：统一到项目根 `.venv`（Python 3.14.5）——原 backend/.venv312 已删除，
+# 消除双 venv 并存的依赖漂移隐患（见 docs/临时/2026-10-16-汇总问题-v1.md B11）
+# 2026-08-12 更新：按实际安装版本对齐（此前版本下限过旧，
 # 实际 deepagents 0.7.4 / langgraph 1.2.10 / langchain 1.3——0.5/0.2 下限会装错版本）
 
 # Web 层
@@ -41,7 +43,7 @@ pyyaml>=6.0             # 子代理 YAML 声明式
 structlog>=24.1         # 结构化日志 + 上下文变量注入（2026-10-16 接入，取代自研
                         # trace_id 注入；见 .claude/rules/08-dependency-policy）
 
-# 测试（backend/.venv312 实测；pip install -r requirements.txt -r requirements-dev.txt 或装测试）
+# 测试（根 .venv 实测；pip install -r requirements.txt -r requirements-dev.txt 或装测试）
 # pytest>=9.0 / pytest-asyncio>=1.0 / pytest-mock>=3.0（单测 376 全绿）
 
 # 已移除（2026-08-05 最小集审计）：
