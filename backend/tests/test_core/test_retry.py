@@ -156,12 +156,21 @@ class TestRegistryIntegration:
             _apply_retry(bad)
 
     def test_idempotent_tools_snapshot(self) -> None:
-        """快照：当前幂等工具恰好就是那两个读操作（改动时此断言会红→强制人工确认）。"""
+        """快照：当前幂等工具集合（改动时此断言会红→强制人工确认）。
+
+        2026-10-16 新增 3 个通用工具（calculate / current_time / json_extract）：
+        均为**无副作用的本地计算 / 解析**，重复执行结果一致，故标幂等。
+        注意——**幂等 ≠ 自动重试**：三者都没配 `retry`（本地计算重试无意义），
+        `is_idempotent` 在这里只表示"可安全重复执行"。
+        """
         from src.tools.registry import _IMPL_SPECS
 
         assert {n for n, s in _IMPL_SPECS.items() if s.is_idempotent} == {
             "internet_search",
             "fetch_url",
+            "calculate",
+            "current_time",
+            "json_extract",
         }
 
 
