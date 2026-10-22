@@ -666,6 +666,10 @@ async def _event_stream(
                 elif evt_type == "approve":
                     yield {"data": ApproveEvent(**evt).model_dump_json()}
         except Exception as exc:  # noqa: BLE001 - 流内错误统一转 error 事件
+            # 堆栈必须留痕（2026-10-16 修 B8）：此前只 yield error 事件、**不记任何日志**——
+            # 前端看到"对话失败"，后端查不到一条记录。LLM 主链路是降级矩阵里唯一会
+            # 断流的路径，恰是它最需要留痕。trace_id 已随主日志自动注入（B9）。
+            logger.exception("SSE 流内异常（已转 error 事件）：is_resume=%s", is_resume)
             yield _build_error_event(is_resume, exc)
             return
 

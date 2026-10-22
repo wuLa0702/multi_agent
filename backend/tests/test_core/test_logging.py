@@ -41,6 +41,8 @@ def test_size_rollover_creates_backup(tmp_path: Path) -> None:
     logger = logging.getLogger("test_roll_size")
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+    # 2026-10-16 修 B10：不关 propagate 会同时冒泡到 root → 写进**真实** logs/
+    logger.propagate = False
     for i in range(10):
         logger.info("记录 %d：" + "x" * 200, i)  # 每条 >300B，必触发滚动
     logger.removeHandler(handler)
@@ -58,6 +60,8 @@ def test_backup_count_respected(tmp_path: Path) -> None:
     )
     logger = logging.getLogger("test_roll_keep")
     logger.addHandler(handler)
+    # 2026-10-16 修 B10：同上——否则 60 条记录全冒泡进真实 logs/multi-agent.log
+    logger.propagate = False
     logger.setLevel(logging.INFO)
     for i in range(60):
         logger.info("记录 %d：" + "x" * 200, i)  # 多次滚动
@@ -81,7 +85,10 @@ def test_setup_logging_registers_audit_handler(tmp_path: Path, monkeypatch) -> N
     audit_handlers = list(audit.handlers)
     audit.propagate = True  # 还原时恢复到测试前状态（记录于 finally）
 
-    monkeypatch.setattr("src.core.paths.get_log_dir", lambda: tmp_path)
+    # 2026-10-16 修 B10：必须补 `src.core.logging` 自己绑定的名字。
+    # `core/logging.py` 是 `from src.core.paths import get_log_dir`（模块级名字绑定），
+    # 补源模块属性**改不动**已绑定的引用 → setup_logging() 仍写真实目录。
+    monkeypatch.setattr("src.core.logging.get_log_dir", lambda: tmp_path)
     try:
         root._multilog_configured = False  # 强制重新配置
         audit.handlers.clear()
