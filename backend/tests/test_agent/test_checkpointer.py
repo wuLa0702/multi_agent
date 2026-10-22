@@ -140,6 +140,46 @@ def test_stream_config_builds_thread_id(mocker) -> None:
     config = captured[0]["config"]
     assert config["configurable"]["thread_id"] == "sess-1"
     assert config["configurable"]["checkpoint_id"] == "cp-9"
+    assert "metadata" in config, "快通道也要带 LangSmith run metadata"
+
+
+def test_trace_metadata_carries_trace_id() -> None:
+    """LangSmith run metadata 带上本项目 trace_id（与审计底账可互相定位）。"""
+    from src.agent import main_agent
+    from src.core.audit import bind_context
+
+    bind_context("trace-xyz", session_id="sess-1")
+    try:
+        assert main_agent._trace_metadata() == {"trace_id": "trace-xyz"}
+    finally:
+        bind_context("")
+
+
+def test_trace_metadata_empty_when_unbound() -> None:
+    """边界：未绑定（启动期 / 脚本）→ 空串，**如实不编造**。"""
+    from src.agent import main_agent
+    from src.core.audit import bind_context
+
+    bind_context("")
+    try:
+        assert main_agent._trace_metadata() == {"trace_id": ""}
+    finally:
+        bind_context("")
+
+
+def test_stream_config_includes_trace_metadata() -> None:
+    """`_build_stream_config` 的 metadata 带 trace_id（LangSmith 据此可检索审计）。"""
+    from src.agent import main_agent
+    from src.core.audit import bind_context
+
+    bind_context("trace-abc", session_id="sess-1")
+    try:
+        ctx = main_agent.ChatContext(model_id=None, session_id="sess-1")
+        config = main_agent._build_stream_config(ctx, None, None)
+    finally:
+        bind_context("")
+
+    assert config["metadata"]["trace_id"] == "trace-abc"
 
 
 def test_stream_semaphore_configured() -> None:
@@ -172,7 +212,12 @@ def test_stream_semaphore_rebuilds_on_settings_change(monkeypatch) -> None:
 
 
 def test_stream_config_without_session_no_thread_id(mocker) -> None:
-    """边界：无 session_id 时不构造 thread_id config（不误传）。"""
+    """边界：无 session_id 时不构造 **thread_id** config（不误传）。
+
+    2026-10-16 修订：此前断言 `config is None`（实现细节）。接入 LangSmith
+    metadata 后 config 恒存在（含 `metadata.trace_id`），故改为断言**真正的不变量**：
+    `configurable`（thread_id / checkpoint_id）不得出现。
+    """
     from src.agent import main_agent
 
     captured: list[dict] = []
@@ -199,4 +244,6 @@ def test_stream_config_without_session_no_thread_id(mocker) -> None:
             pass
 
     asyncio.run(run())
-    assert captured[0]["config"] is None, "无 session_id 时不带 config"
+    config = captured[0]["config"]
+    assert "configurable" not in config, "无 session_id 时不得带 thread_id config"
+    assert "metadata" in config, "trace metadata 与 session 无关，始终携带"
