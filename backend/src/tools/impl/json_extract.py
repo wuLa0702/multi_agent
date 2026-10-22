@@ -27,10 +27,12 @@ Agent 只取需要的那一个字段（如 `results[0].title`），把上下文�
  空/非法   解析     截断长值    ok / error + error_code
 ```
 
-**三道防线**（缺任一条，LLM 都会拿到看不懂的报错）：
-1. JSON 语法错 → 回**出错位置**，不是一句 "invalid json"
+**四道防线**（缺任一条，LLM 都会拿到看不懂的报错）：
+1. JSON 语法错 → **先尝试修复**（`core/json_repair`，只修语法）；
+   修不了才回**出错行列**，不是一句 "invalid json"
 2. 路径走不通 → 回**当前层可用的键**（LLM 据此自我纠正，不用猜）
 3. 结果过长 → 截断并置 `degraded`（提示"不完整"，而不是假装没事）
+4. **修复过** → 同样置 `degraded`（提示"这份数据是修出来的，不完全可信"）
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ import json
 from typing import Annotated, Any
 
 from pydantic import Field
+
+from src.core.json_repair import JsonSyntaxError, loads as load_json
 
 from src.core.errors import ToolErrorCode
 from src.tools.contract.result import ToolResult
@@ -119,7 +123,12 @@ def _hint_keys(mapping: dict) -> str:
 def json_extract(
     data: Annotated[
         str,
-        Field(description="JSON 文本（对象或数组）；**必须是合法 JSON**，解析失败会返回出错位置"),
+        Field(
+            description=(
+                "JSON 文本（对象或数组）；**语法错误会先尝试自动修复**"
+                "（修复过则返回 degraded）；修不了才返回出错行列"
+            )
+        ),
     ],
     path: Annotated[
         str,
@@ -138,18 +147,21 @@ def json_extract(
         path: 路径（空串 = 整个文档）
 
     Returns:
-        `ok` 信封（`data` 带 value / path）；超长 → `degraded`；
-        JSON 非法 / 路径非法 / 路径走不通 → `error` 信封（附纠正提示）
+        `ok` 信封（`data` 带 value / path）；
+        **超长 或 修复过** → `degraded`；
+        JSON 修不了 / 路径非法 / 路径走不通 → `error` 信封（附纠正提示）
     """
+    # 先严格解析；语法非法时 `core/json_repair` 用第三方兜底（**只修语法**）
     try:
-        document = json.loads(data)
-    except json.JSONDecodeError as exc:
+        parsed = load_json(data)
+    except JsonSyntaxError as exc:
         return ToolResult(
             status="error",
-            message=f"解析失败：第 {exc.lineno} 行第 {exc.colno} 列 {exc.msg}",
+            message=f"解析失败：{exc.message}",
             error_code=ToolErrorCode.INVALID_ARG,
             tool=_TOOL_NAME,
         )
+    document = parsed.value
 
     if path.strip():
         try:
@@ -177,9 +189,16 @@ def json_extract(
     truncated = len(text) > _MAX_RESULT_CHARS
     if truncated:
         text = text[:_MAX_RESULT_CHARS] + "…"
+    # 截断过 / 修复过 → degraded（提示 LLM：数据不完整或来自修复，不完全可信）
+    degraded = truncated or parsed.repaired
     return ToolResult(
-        status="degraded" if truncated else "ok",
+        status="degraded" if degraded else "ok",
         message=text,
-        data={"path": path, "value": value, "truncated": truncated},
+        data={
+            "path": path,
+            "value": value,
+            "truncated": truncated,
+            "repaired": parsed.repaired,
+        },
         tool=_TOOL_NAME,
     )
