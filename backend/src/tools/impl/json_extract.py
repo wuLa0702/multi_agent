@@ -1,4 +1,8 @@
-"""json_extract 工具：按路径从 JSON 取值 —— **模板工具（handler 形态）**。
+"""json_extract 工具：按路径从 JSON 取值 —— **模板工具（完整处理链）**。
+
+> 📌 术语说明：这里的"完整处理链"**不是另一种代码类型**，只是比 `impl/calc.py`
+> 多了几步（解析 / 归一 / 多级错误提示）。本仓库真正的「**handler**」在别处：
+> HTTP handler 在 `api/`，MCP 端点 handler 在 `tools/channels/mcp_server.py`。
 
 ## 用在哪
 
