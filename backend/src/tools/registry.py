@@ -366,6 +366,19 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
 }
 
 
+def impl_specs() -> list[ToolSpec]:
+    """全部**实现层**声明（`_IMPL_SPECS` 的只读入口）。
+
+    为什么需要这个入口：`TOOL_REGISTRY` 的 `fn` 已被适配层包成 `BaseTool`，
+    **原始函数签名丢了**；需要「同源派生」的场景（如 `channels/mcp_server.py`
+    生成 MCP 端点）必须拿裸实现。开这个函数是为了让外部模块**不必摸私有表**。
+
+    Returns:
+        按登记顺序的 `ToolSpec` 列表（其中 `fn` 为**裸实现函数**）
+    """
+    return list(_IMPL_SPECS.values())
+
+
 def get_tool(name: str) -> BaseTool:
     """按名称取工具（挂载形态 `BaseTool`）。
 
