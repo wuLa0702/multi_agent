@@ -19,6 +19,10 @@ def test_tools_for_main_matches_legacy_manifest() -> None:
         "run_skill_script",
         "write_wiki",
         "generate_report",
+        # 2026-10-16 新增：通用工具域（门面 + 模板，无副作用、无需审批）
+        "calculate",
+        "current_time",
+        "json_extract",
     ]
     assert [t.name for t in registry.tools_for_main()] == expected
 

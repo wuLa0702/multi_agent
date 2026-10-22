@@ -47,7 +47,10 @@ from langchain_core.tools import BaseTool
 from src.core.retry import DEFAULT_DELAYS, DEFAULT_RETRIES, retry_tool
 from src.tools.contract.adapter import as_lc_tool
 from src.tools.impl.ask_human import ask_human
+from src.tools.impl.calc import calculate
+from src.tools.impl.clock import current_time
 from src.tools.impl.fetch import fetch_url
+from src.tools.impl.json_extract import json_extract
 from src.tools.impl.publish_report import publish_report
 from src.tools.impl.report import generate_report
 from src.tools.impl.sandbox import (
@@ -278,6 +281,32 @@ _IMPL_SPECS: dict[str, ToolSpec] = {
         requires_approval=True,
         # 允许 edit：人类可直接改报告正文后交付
         allowed_decisions=("approve", "edit", "reject"),
+    ),
+    # ── 通用工具域（2026-10-16 新增：门面 + 模板）──
+    # 三个都**无副作用且幂等**：不配 retry（纯本地计算/解析，重试无意义）、
+    # 不需要审批；挂主 Agent（`mount_main` 默认 True）——正是为了让主链路能直接用。
+    # 三者刻意覆盖三种实现粒度，供后续新工具对照抄写：
+    #   clock（最简）→ calc（纯函数 + 严格校验）→ json_extract（完整处理链）
+    "calculate": ToolSpec(
+        name="calculate",
+        fn=calculate,
+        domain="util",
+        description="安全算术计算（+ - * / // % ** 与括号）；算数/百分比/单位换算时用它，别心算",
+        is_idempotent=True,
+    ),
+    "current_time": ToolSpec(
+        name="current_time",
+        fn=current_time,
+        domain="util",
+        description="获取当前时间（可指定 IANA 时区）；回答「今天/现在/几天后」类问题前先查",
+        is_idempotent=True,
+    ),
+    "json_extract": ToolSpec(
+        name="json_extract",
+        fn=json_extract,
+        domain="util",
+        description="按路径（a.b[0].c）从 JSON 文本取单个字段；避免把整段 JSON 塞进上下文",
+        is_idempotent=True,
     ),
 }
 
