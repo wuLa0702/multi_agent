@@ -47,6 +47,7 @@ from src.agent.hitl.pending import register_interrupt
 from src.agent.middlewares.builder import build_middlewares
 from src.agent.prompts import build_system_prompt
 from src.agent.subagents.loader import load_subagents
+from src.core.audit import current_trace_id
 from src.core.backend import create_backend
 from src.core.config import settings
 from src.core.paths import get_memory_sources, get_skill_md_dir
@@ -505,6 +506,23 @@ def build_agent(model: BaseChatModel | None = None, thread_id: str = "default"):
     return get_agent(thread_id)
 
 
+def _trace_metadata() -> dict[str, str]:
+    """LangSmith run metadata：把本项目 `trace_id` 带进 trace。
+
+    **为什么需要**：LangSmith（SaaS、短期、可采样）与审计底账（自持、长期、
+    不可丢）是**两条独立的流**。没有共同的 ID，线上"某次对话出了什么问题"只能
+    在两边人工对时间。带上 `trace_id` 后，在 LangSmith 拿到该 ID 即可直接检索
+    审计底账里**同一请求**的全部事件（工具调用 / 文件访问 / 沙箱 / 记忆）。
+
+    **为什么标在 config 上**：langchain 把 `config["metadata"]` 透传给每次 run，
+    LangSmith 据此展示并可搜索；不需要改任何提示词或业务代码。
+
+    Returns:
+        `{"trace_id": <当前请求 ID>}`；未绑定（启动期 / 脚本）为空串——**如实不编造**
+    """
+    return {"trace_id": current_trace_id()}
+
+
 def _build_stream_config(
     context: ChatContext | None,
     checkpoint_id: str | None,
@@ -532,6 +550,8 @@ def _build_stream_config(
         **(config or {}),
         "stream_subgraphs": True,
         "recursion_limit": settings.agent_recursion_limit,
+        # 把本项目 trace_id 带进 LangSmith run（见 _trace_metadata 说明）
+        "metadata": _trace_metadata(),
     }
     if hitl_callback is not None:
         # HITL 中断检测唯一途径（设计 §3.3-② 实证：astream_events 不产 on_interrupt）
@@ -866,9 +886,10 @@ async def stream_agent_tokens(
         Exception: checkpoint_id 无效/不属于该 thread（由 API 层捕获转
             RESUME_NOT_FOUND 友好错误）
     """
-    config = None
+    # 快通道同样带上 trace_id（与主链路一致，见 _trace_metadata 说明）
+    config: dict = {"metadata": _trace_metadata()}
     if context is not None and context.session_id:
-        config = {"configurable": {"thread_id": context.session_id}}
+        config["configurable"] = {"thread_id": context.session_id}
         if checkpoint_id:
             config["configurable"]["checkpoint_id"] = checkpoint_id
 
