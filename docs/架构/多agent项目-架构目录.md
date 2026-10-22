@@ -6,6 +6,7 @@
 > 
 > | 版本 | 日期 | 具体改动（精确到二级标题） |
 > |------|------|------|
+> | v2.18 | 2026-10-16 | **§2 目录树 `core/` 补 `json_repair.py`**：LLM 输出 JSON 的**语法**兜底（B15，第三方 `json-repair`，只修语法不改语义；接在 `tools/impl/json_extract.py`）|
 > | v2.17 | 2026-10-16 | **§2 目录树按磁盘全面复核重写（修正长期脱节）**：① `tools/guardrails/` → **`tools/runtime/`**（co-creator 拍板：该目录实装 validators（有拦截权）+ audit（只记录）+ gateway（跨切面收口点），"护栏"名不副实；`git mv` 保历史 + 36 处引用同步，**零行为变更**）；② 删去**已不存在**的 `deploy/nginx.conf`·`deploy/.env.prod`·`skill-resources/`·`download/`·`docs/architecture|agent-manual|learnings/`·`backend/{pyproject.toml,docker-compose.yml,langgraph.json}`；③ **改位置**：`pyproject.toml`/`docker-compose.yml`/`.env.example`/`scripts/dev.sh|dev.bat|dev-restart.*` 均在**仓库根**（非 `backend/` 下），原树误挂 backend；④ 补漏 `frontend/scripts`·`frontend/src/lib/api`·`backend/assets`·`backend/examples`·`llm/cache.py`·`scripts/demo_interview.py`·仓库根 `main.py`/`README.md` 等；⑤ 标注 `api/sessions.py` **承担历史**（原树写的 `history.py` 不存在）、`auth/` 为**尚未创建**的蓝图；⑥ 标注 `db/session_repo.py` 仓库**唯一破例命名**；⑦ **清理 `src/mcp/` 空目录残留**（git 未跟踪的陈旧字节码，2026-10-15 已宣布收拢但目录未删）|
 > | v2.16 | 2026-10-16 | **§2 审计与可观测落地**：§2 目录树 `core/` 补 `audit.py`（唯一写入入口 `emit()`）与 `audit_stream.py`（双写第二路）；`db/` 仓储清单补 `audit`。**审计流由两条（`file_access_audit.jsonl` / `agent_trace.jsonl`）收敛为**：底账 JSONL 统一事件模型 + 派生索引 PG `audit_events` |
 > | v2.15 | 2026-10-15 | **§2 MCP 工具治理落地**：§2 目录树 `db/` 子树补 `mcp_meta_repository`；§2.1 能力落地表「远程 MCP 工具」行更新为**连接表 + 治理表**双表，并写明"未登记不挂载 + 市场安装自动登记"两条路径 |
@@ -168,6 +169,7 @@ multi-agent-project/
 │   │   │   ├── audit_stream.py     #   审计双写第二路：投递/worker/死信/重放/保留
 │   │   │   ├── config.py paths.py logging.py errors.py constants.py
 │   │   │   ├── redis.py retry.py permissions.py model_registry.py backend.py
+│   │   │   ├── json_repair.py      #   LLM 输出 JSON 的**语法**兜底（B15，只修语法）
 │   │   ├── db/                     # 【底座层】唯一 SQL 出口
 │   │   │   ├── connection.py       # PG 连接池单例（2026-10-15 迁移；原 core/db.py）
 │   │   │   ├── schema.py           # 表结构集中定义
