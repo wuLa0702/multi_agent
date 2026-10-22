@@ -44,6 +44,8 @@ structlog>=24.1         # 结构化日志 + 上下文变量注入（2026-10-16 �
                         # trace_id 注入；见 .claude/rules/08-dependency-policy）
 tzdata>=2024.1          # IANA 时区库（Windows 无系统时区库 → zoneinfo 依赖它；
                         # current_time 工具用）
+json-repair>=0.30       # LLM 输出 JSON 的**语法**兜底修复（core/json_repair.py；
+                        # 只修语法不改语义，见 docs/临时/…汇总问题 B15）
 
 # 测试（根 .venv 实测；pip install -r requirements.txt -r requirements-dev.txt 或装测试）
 # pytest>=9.0 / pytest-asyncio>=1.0 / pytest-mock>=3.0（单测 376 全绿）

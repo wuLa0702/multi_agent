@@ -37,6 +37,7 @@ dependencies = [
     "structlog>=24.1",              # 结构化日志 + 上下文注入（2026-10-16 接入，
                                     # 替换自研 trace_id 注入；见 .claude/rules/08）
     "tzdata>=2024.1",               # IANA 时区库（Windows 无系统时区库 → zoneinfo 依赖它）
+    "json-repair>=0.30",            # LLM 输出 JSON 的语法兜底修复（只修语法不改语义）
 
     # 已移除（2026-08-05 最小集审计，与 requirements.txt 对齐）：
     # - langsmith：src 无直接 import（tracing 由 langchain 传递依赖提供）

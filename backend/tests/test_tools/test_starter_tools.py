@@ -140,9 +140,13 @@ class TestJsonExtract:
         assert result.status == "error"
         assert "越界" in result.message
 
-    def test_invalid_json_points_at_position(self) -> None:
-        """错误路径：JSON 语法错 → 报行列，不是一句泛泛的 invalid。"""
-        result = json_extract('{"a": 1,}', "")
+    def test_unrepairable_json_points_at_position(self) -> None:
+        """错误路径：**修不了**的 JSON → 报行列，不是一句泛泛的 invalid。
+
+        2026-10-16 起（B15）：尾逗号 / 单引号等可修语法走 `core/json_repair`
+        → `degraded`；只有修不了的才落到 `error`。可修用例见 `test_json_repair.py`。
+        """
+        result = json_extract("not json", "")
         assert result.status == "error"
         assert "第" in result.message and "列" in result.message
 
